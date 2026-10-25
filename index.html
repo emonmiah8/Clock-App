@@ -97,7 +97,7 @@
   function tick() {
     const now = new Date();
     document.getElementById('time').textContent =
-      now.toLocaleTimeString('en-GB', { hour12: settings.hour12 });
+      now.toLocaleTimeString('en-GB', { hour12: settings.hour12 }).toUpperCase();
     document.getElementById('date').textContent =
       now.toLocaleDateString('en-GB', {
         weekday: 'long', day: 'numeric', month: 'long'
