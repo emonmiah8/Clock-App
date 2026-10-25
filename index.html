@@ -18,6 +18,7 @@
     font-family: sans-serif;
   }
   #time { font-size: var(--size); font-weight: 200; }
+  #analog { width: calc(var(--size) * 3.5); height: calc(var(--size) * 3.5); }
   #date { font-size: 5vw; opacity: 0.6; margin-top: 8px; }
 
   #gear {
@@ -40,19 +41,34 @@
     border: 2px solid #444; margin-right: 10px;
   }
   #size { width: 100%; }
-  #format {
+  .btn {
     background: #333; color: #fff; border: none;
     padding: 10px 18px; border-radius: 8px; font-size: 16px;
+    margin-right: 8px;
   }
 </style>
 </head>
 <body>
   <div id="time"></div>
+
+  <svg id="analog" viewBox="0 0 200 200" style="display:none">
+    <circle cx="100" cy="100" r="95" fill="none" stroke="currentColor" stroke-width="2" opacity="0.5"/>
+    <g id="ticks" stroke="currentColor"></g>
+    <line id="hourHand" x1="100" y1="100" x2="100" y2="55" stroke="currentColor" stroke-width="5" stroke-linecap="round"/>
+    <line id="minHand" x1="100" y1="100" x2="100" y2="30" stroke="currentColor" stroke-width="3" stroke-linecap="round"/>
+    <line id="secHand" x1="100" y1="110" x2="100" y2="22" stroke="#ff5252" stroke-width="1.5" stroke-linecap="round"/>
+    <circle cx="100" cy="100" r="4" fill="currentColor"/>
+  </svg>
+
   <div id="date"></div>
 
   <button id="gear">⚙</button>
 
   <div id="panel">
+    <div class="row">
+      <div class="label">Style</div>
+      <button class="btn" id="mode"></button>
+    </div>
     <div class="row">
       <div class="label">Color</div>
       <button class="swatch" data-color="#ffffff" style="background:#ffffff"></button>
@@ -66,16 +82,15 @@
       <input type="range" id="size" min="8" max="26" step="1">
     </div>
     <div class="row">
-      <div class="label">Time format</div>
-      <button id="format"></button>
+      <div class="label">Time format (digital)</div>
+      <button class="btn" id="format"></button>
     </div>
   </div>
 
 <script>
-  const defaults = { color: '#ffffff', size: 18, hour12: false };
+  const defaults = { color: '#ffffff', size: 18, hour12: false, mode: 'digital' };
   let settings = { ...defaults };
 
-  // Load saved settings
   try {
     const saved = localStorage.getItem('clockSettings');
     if (saved) settings = { ...defaults, ...JSON.parse(saved) };
@@ -85,26 +100,61 @@
     try { localStorage.setItem('clockSettings', JSON.stringify(settings)); } catch (e) {}
   }
 
+  // Draw the 12 tick marks once
+  (function drawTicks() {
+    const g = document.getElementById('ticks');
+    for (let i = 0; i < 12; i++) {
+      const line = document.createElementNS('http://www.w3.org/2000/svg', 'line');
+      line.setAttribute('x1', 100);
+      line.setAttribute('y1', 10);
+      line.setAttribute('x2', 100);
+      line.setAttribute('y2', i % 3 === 0 ? 24 : 18);
+      line.setAttribute('stroke-width', i % 3 === 0 ? 3 : 1.5);
+      line.setAttribute('transform', 'rotate(' + (i * 30) + ' 100 100)');
+      g.appendChild(line);
+    }
+  })();
+
   function apply() {
-    document.documentElement.style.setProperty('--color', settings.color);
-    document.documentElement.style.setProperty('--size', settings.size + 'vw');
+    const root = document.documentElement.style;
+    root.setProperty('--color', settings.color);
+    root.setProperty('--size', settings.size + 'vw');
     document.getElementById('size').value = settings.size;
+
+    const analog = settings.mode === 'analog';
+    document.getElementById('time').style.display = analog ? 'none' : 'block';
+    document.getElementById('analog').style.display = analog ? 'block' : 'none';
+
+    document.getElementById('mode').textContent =
+      analog ? 'Analog (tap for Digital)' : 'Digital (tap for Analog)';
     document.getElementById('format').textContent =
       settings.hour12 ? '12-hour (tap for 24)' : '24-hour (tap for 12)';
     tick();
   }
 
+  function rotate(id, deg) {
+    document.getElementById(id).setAttribute('transform', 'rotate(' + deg + ' 100 100)');
+  }
+
   function tick() {
     const now = new Date();
+
     document.getElementById('time').textContent =
       now.toLocaleTimeString('en-GB', { hour12: settings.hour12 }).toUpperCase();
+
     document.getElementById('date').textContent =
       now.toLocaleDateString('en-GB', {
         weekday: 'long', day: 'numeric', month: 'long'
       });
+
+    const h = now.getHours() % 12;
+    const m = now.getMinutes();
+    const s = now.getSeconds();
+    rotate('hourHand', h * 30 + m * 0.5);
+    rotate('minHand', m * 6 + s * 0.1);
+    rotate('secHand', s * 6);
   }
 
-  // Events
   document.getElementById('gear').onclick = () =>
     document.getElementById('panel').classList.toggle('open');
 
@@ -118,6 +168,11 @@
 
   document.getElementById('format').onclick = () => {
     settings.hour12 = !settings.hour12; save(); apply();
+  };
+
+  document.getElementById('mode').onclick = () => {
+    settings.mode = settings.mode === 'digital' ? 'analog' : 'digital';
+    save(); apply();
   };
 
   apply();
