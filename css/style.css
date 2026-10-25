@@ -46,3 +46,28 @@ body {
   padding: 10px 18px; border-radius: 8px; font-size: 16px;
   margin-right: 8px;
 }
+/* ---- Retro line digits ---- */
+:root { --bg: #000; }
+
+#time {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-wrap: nowrap;
+  font-size: calc(var(--size) * 0.3);
+}
+#time .dg {
+  height: calc(var(--size) * 0.8);
+  width: auto;
+  flex: none;
+  margin: 0 calc(var(--size) * 0.02);
+}
+#time .gap { width: calc(var(--size) * 0.15); }
+#time .ampm {
+  font-weight: 300;
+  font-size: calc(var(--size) * 0.3);
+}
+
+.l1 { stroke: currentColor; stroke-width: 15; }
+.l2 { stroke: var(--bg);    stroke-width: 9; }
+.l3 { stroke: currentColor; stroke-width: 3; }
