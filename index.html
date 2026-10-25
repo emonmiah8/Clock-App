@@ -1,0 +1,41 @@
+<!DOCTYPE html>
+<html lang="bn">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Clock</title>
+<style>
+  body {
+    margin: 0;
+    height: 100vh;
+    background: #000;
+    color: #fff;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    font-family: sans-serif;
+  }
+  #time { font-size: 18vw; font-weight: 200; }
+  #date { font-size: 5vw; opacity: 0.6; margin-top: 8px; }
+</style>
+</head>
+<body>
+  <div id="time"></div>
+  <div id="date"></div>
+
+<script>
+  function tick() {
+    const now = new Date();
+    document.getElementById('time').textContent =
+      now.toLocaleTimeString('en-GB');
+    document.getElementById('date').textContent =
+      now.toLocaleDateString('bn-BD', {
+        weekday: 'long', day: 'numeric', month: 'long'
+      });
+  }
+  tick();
+  setInterval(tick, 1000);
+</script>
+</body>
+</html>
