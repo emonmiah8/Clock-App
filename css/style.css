@@ -439,7 +439,7 @@ button:not(.tgl):active { transform: scale(0.95); }
           drop-shadow(0 1px 1px rgba(0, 0, 0, 0.8));
 }
 
-/* San Francisco Pro ফন্ট লোড করা */
+* San Francisco Pro ফন্ট লোড করা */
 @font-face {
   font-family: 'SF Pro Display';
   src: url('https://applesocial.s3.amazonaws.com/assets/styles/fonts/sanfrancisco/sanfrancisCopro-display-medium.woff') format('woff');
