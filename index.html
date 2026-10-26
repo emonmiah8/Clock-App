@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Clock</title>
-<link rel="stylesheet" href="css/style.css?v=4">
+<link rel="stylesheet" href="css/style.css?v=6">
 <link rel="manifest" href="manifest.json">
 <meta name="theme-color" content="#000000">
 <link rel="icon" href="icon-192.png">
@@ -12,11 +12,99 @@
 <body>
   <button id="add" aria-label="Add widget">+</button>
   <button id="cog" aria-label="Settings">&#9881;</button>
-  <div id="stage"></div>
+
+  <!-- HOME -->
+  <section id="v-home" class="view active">
+    <div id="stage"></div>
+  </section>
+
+  <!-- ALARM -->
+  <section id="v-alarm" class="view">
+    <div class="pane">
+      <div class="ptitle">Alarm</div>
+      <div id="alarmList"></div>
+      <div class="aform">
+        <input type="time" id="aTime" value="07:00">
+        <label class="chk"><input type="checkbox" id="aDaily" checked> Every day</label>
+        <button class="btn" id="aAdd">Add alarm</button>
+      </div>
+      <div class="note">Alarms ring only while this app is open. Turn on "Keep screen awake" in settings for bedside use.</div>
+    </div>
+  </section>
+
+  <!-- STOPWATCH -->
+  <section id="v-stopwatch" class="view">
+    <div class="pane center">
+      <div class="bigtime">
+        <div class="time" id="swMain"></div>
+        <span class="cs" id="swCs"></span>
+      </div>
+      <div class="ctrls">
+        <button class="btn" id="swLap">Lap</button>
+        <button class="btn big" id="swGo">Start</button>
+        <button class="btn" id="swReset">Reset</button>
+      </div>
+      <div id="laps"></div>
+    </div>
+  </section>
+
+  <!-- TIMER -->
+  <section id="v-timer" class="view">
+    <div class="pane center">
+      <div class="bigtime">
+        <div class="time" id="tmTime"></div>
+      </div>
+      <div class="chips" id="tmChips">
+        <button class="btn" data-min="1">1 min</button>
+        <button class="btn" data-min="5">5 min</button>
+        <button class="btn" data-min="10">10 min</button>
+        <button class="btn" data-min="15">15 min</button>
+        <button class="btn" data-min="30">30 min</button>
+      </div>
+      <div>
+        <input type="number" id="tmMin" placeholder="minutes" min="1" max="999" inputmode="numeric">
+        <button class="btn" id="tmSet">Set</button>
+      </div>
+      <div class="ctrls">
+        <button class="btn big" id="tmGo">Start</button>
+        <button class="btn" id="tmReset">Reset</button>
+      </div>
+    </div>
+  </section>
+
+  <!-- BOTTOM BAR -->
+  <nav id="nav">
+    <button data-tab="home" class="active">
+      <svg viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 11l9-8 9 8v10h-6v-6H9v6H3z"/></svg>
+      <span>Home</span>
+    </button>
+    <button data-tab="alarm">
+      <svg viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="13" r="8"/><path d="M12 9v4l3 2M4 4l3-2M20 4l-3-2"/></svg>
+      <span>Alarm</span>
+    </button>
+    <button data-tab="stopwatch">
+      <svg viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="14" r="7"/><path d="M12 14l3-3M10 3h4M12 3v4"/></svg>
+      <span>Stopwatch</span>
+    </button>
+    <button data-tab="timer">
+      <svg viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M6 3h12M6 21h12M7 3c0 5 5 6 5 9s-5 4-5 9M17 3c0 5-5 6-5 9s5 4 5 9"/></svg>
+      <span>Timer</span>
+    </button>
+  </nav>
+
+  <!-- RINGING SCREEN -->
+  <div id="ring">
+    <div id="ringTitle"></div>
+    <div>
+      <button class="btn big" id="ringSnooze">Snooze 5 min</button>
+      <button class="btn big" id="ringStop">Stop</button>
+    </div>
+  </div>
+
   <div id="overlay"></div>
   <div id="sheet"></div>
 
-<script src="js/main.js?v=4"></script>
+<script src="js/main.js?v=6"></script>
 <script>
   if ('serviceWorker' in navigator) {
     navigator.serviceWorker.register('sw.js');
