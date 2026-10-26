@@ -228,3 +228,91 @@ input[type=time], input[type=number] {
 /* leave room so content is not hidden behind the floating bar */
 #stage { padding-bottom: 120px; }
 .pane { padding-bottom: 120px; }
+/* ---- Modern system font ---- */
+body, button, input, select {
+  font-family: system-ui, -apple-system, "Roboto", "Segoe UI", Arial, sans-serif;
+}
+input[type=text] {
+  background: #333; color: #fff; border: none;
+  padding: 10px 14px; border-radius: 8px; font-size: 16px;
+  width: 100%;
+}
+.bigin { width: 100%; font-size: 28px; text-align: center; }
+
+/* ---- Alarm list (iOS style) ---- */
+.atop { display: flex; justify-content: space-between; align-items: center; }
+.link {
+  background: none; border: none; color: #ff9f0a;
+  font-size: 18px; padding: 6px 0;
+}
+.link.plus { font-size: 34px; line-height: 1; }
+.atitle { font-size: 34px; font-weight: 700; margin: 6px 0 12px; }
+
+.arow2 {
+  display: flex; align-items: center; gap: 12px;
+  padding: 14px 0; border-bottom: 1px solid #1f1f1f;
+}
+.arow2.off .atime { opacity: 0.4; }
+.arow2 .atime { flex: none; justify-content: flex-start; color: #fff; }
+.arow2 .atime .ampm { margin-left: 8px; align-self: flex-end; }
+.ainfo { flex: 1; min-width: 0; }
+.alabel { font-size: 14px; opacity: 0.55; margin-top: 2px; }
+
+.adel {
+  display: none;
+  width: 26px; height: 26px; flex: none; padding: 0;
+  border: none; border-radius: 50%;
+  background: #ff453a; color: #fff; font-size: 20px; line-height: 1;
+}
+.arow2.editing .adel { display: block; }
+
+.tgl {
+  width: 51px; height: 31px; flex: none; padding: 0;
+  border: none; border-radius: 999px;
+  background: #39393d; position: relative;
+}
+.tgl span {
+  position: absolute; top: 2px; left: 2px;
+  width: 27px; height: 27px; border-radius: 50%;
+  background: #fff; transition: transform 0.2s;
+}
+.tgl.on { background: #30d158; }
+.tgl.on span { transform: translateX(20px); }
+
+/* ---- Stopwatch dial ---- */
+.dialwrap {
+  position: relative;
+  width: min(86vw, 380px);
+  aspect-ratio: 1 / 1;
+  margin: 0 auto;
+}
+.dialwrap svg { width: 100%; height: 100%; display: block; }
+.dialtime {
+  position: absolute; left: 50%; top: 30%;
+  transform: translate(-50%, -50%);
+  display: flex; align-items: center; justify-content: center;
+  --size: 13vw;
+  color: #fff;
+  pointer-events: none;
+  white-space: nowrap;
+}
+.dialtime .cs {
+  font-size: calc(var(--size) * 0.3);
+  color: #4a8cf7;
+  margin-left: 6px;
+}
+
+.round-row { gap: 28px; margin-top: 8px; }
+.round {
+  width: 60px; height: 60px; padding: 0;
+  border: none; border-radius: 50%;
+  background: #262628; color: #fff;
+  display: flex; align-items: center; justify-content: center;
+}
+.round svg { width: 26px; height: 26px; }
+.round.main {
+  width: 78px; height: 78px;
+  background: #4a8cf7;
+  box-shadow: 0 0 24px rgba(74, 140, 247, 0.55);
+}
+.round.main svg { width: 32px; height: 32px; }
