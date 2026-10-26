@@ -1,5 +1,24 @@
 :root { --bg: #000; }
+/* Inter = SF Pro-এর সবচেয়ে কাছের ফ্রি ফন্ট (Android-এর জন্য) */
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap');
 
+:root {
+  --font-ui: -apple-system, BlinkMacSystemFont, "SF Pro Display",
+             "SF Pro Text", "Inter", "Segoe UI", Roboto, sans-serif;
+}
+
+html, body, button, input, select, textarea {
+  font-family: var(--font-ui);
+  -webkit-font-smoothing: antialiased;
+}
+
+/* সংখ্যা যেন নড়াচড়া না করে */
+.digital-time, #digitalTime {
+  font-family: var(--font-ui);
+  font-weight: 300;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.02em;
+}
 * { box-sizing: border-box; }
 
 html, body {
@@ -391,4 +410,44 @@ button:not(.tgl):active { transform: scale(0.95); }
 .dialtime {
   min-width: calc(var(--size) * 5.2);
   will-change: contents;
+}
+/* Stopwatch ডায়ালের কনটেইনার */
+.stopwatch-dial, #stopwatchDial {
+  position: relative;
+  isolation: isolate;          /* নতুন stacking context */
+}
+
+/* লেয়ার ১: ডায়ালের মুখ ও দাগ */
+.stopwatch-dial .dial-face,
+.stopwatch-dial .ticks {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+}
+
+/* লেয়ার ২: ডিজিটাল টাইম */
+.stopwatch-dial .digital-time {
+  position: absolute;
+  top: 34%;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 2;
+  text-shadow: 0 2px 6px rgba(0, 0, 0, 0.6);
+  pointer-events: none;
+}
+
+/* লেয়ার ৩: কাঁটা (ডিজিটাল টাইমের উপরে) */
+.stopwatch-dial .hand,
+.stopwatch-dial .second-hand,
+.stopwatch-dial .sub-hand {
+  position: absolute;
+  z-index: 3;
+  filter: drop-shadow(0 4px 5px rgba(0, 0, 0, 0.55))
+          drop-shadow(0 1px 1px rgba(0, 0, 0, 0.8));
+}
+
+/* কাঁটার কেন্দ্রের গোল বিন্দু সবার উপরে */
+.stopwatch-dial .hand-center {
+  z-index: 4;
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.7);
 }
