@@ -1,12 +1,5 @@
 :root { --bg: #000; }
-/* Inter = SF Pro-এর সবচেয়ে কাছের ফ্রি ফন্ট (Android-এর জন্য) */
-@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap');
-
-:root {
-  --font-ui: -apple-system, BlinkMacSystemFont, "SF Pro Display",
-             "SF Pro Text", "Inter", "Segoe UI", Roboto, sans-serif;
-}
-
+laswapp'p'r
 html, body, button, input, select, textarea {
   font-family: var(--font-ui);
   -webkit-font-smoothing: antialiased;
@@ -446,15 +439,28 @@ button:not(.tgl):active { transform: scale(0.95); }
           drop-shadow(0 1px 1px rgba(0, 0, 0, 0.8));
 }
 
-/* কাঁটার কেন্দ্রের গোল বিন্দু সবার উপরে */
-.stopwatch-dial .hand-center {
-  z-index: 4;
-  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.7);
+/* San Francisco Pro ফন্ট লোড করা */
+@font-face {
+  font-family: 'SF Pro Display';
+  src: url('https://applesocial.s3.amazonaws.com/assets/styles/fonts/sanfrancisco/sanfrancisCopro-display-medium.woff') format('woff');
+  font-weight: 500;
+  font-style: normal;
 }
-.stopwatch-dial .dial-face {
-  background: radial-gradient(circle at 50% 35%, #3a3a3d, #1c1c1e 70%);
-  box-shadow:
-    inset 0 2px 6px rgba(255, 255, 255, 0.08),
-    inset 0 -8px 20px rgba(0, 0, 0, 0.6),
-    0 20px 40px rgba(0, 0, 0, 0.7);
+
+/* ঘড়ির নাম্বার এবং স্টপওয়াচের ডিজিটাল নাম্বারে ফন্ট সেট করা */
+.clock-numbers, .digital-stopwatch, .numbers {
+  font-family: 'SF Pro Display', -apple-system, BlinkMacSystemFont, sans-serif !important;
 }
+
+/* ডিজিটাল স্টপওয়াচ বা ব্যাকগ্রাউন্ড এলিমেন্টের লেয়ার নিচে রাখা */
+.digital-stopwatch, .stopwatch-display {
+  position: relative;
+  z-index: 1;
+}
+
+/* অ্যানালগ ঘড়ির কাটা (Clock Hands) সবসময় উপরে রাখার জন্য ডেপথ ইফেক্ট */
+.clock-hand, .second-hand, .minute-hand, .hour-hand {
+  position: absolute;
+  z-index: 10;
+}
+
