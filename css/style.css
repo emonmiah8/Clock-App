@@ -204,3 +204,27 @@ input[type=time], input[type=number] {
 }
 #ring.open { display: flex; }
 #ringTitle { font-size: 28px; font-weight: 200; }
+/* ---- Floating capsule bar ---- */
+#nav {
+  left: 14px;
+  right: 14px;
+  bottom: calc(12px + env(safe-area-inset-bottom, 0px));
+  padding: 6px;
+  background: rgba(28, 30, 35, 0.88);
+  -webkit-backdrop-filter: blur(14px);
+  backdrop-filter: blur(14px);
+  border: 1px solid #2a2d33;
+  border-radius: 999px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.5);
+}
+#nav button {
+  border-radius: 999px;
+  padding: 8px 0 9px;
+}
+#nav button.active {
+  background: rgba(255, 255, 255, 0.1);
+}
+
+/* leave room so content is not hidden behind the floating bar */
+#stage { padding-bottom: 120px; }
+.pane { padding-bottom: 120px; }
