@@ -630,3 +630,17 @@ function csHtml(cs) {
 // redraw everything with the new font
 lastSwMain = ''; lastSwCs = ''; lastTm = '';
 applyDigitMode();
+/* ---- Stop the stopwatch readout from shaking ---- */
+.dialtime .cs {
+  display: inline-block;
+  width: 3ch;
+  margin-left: 8px;
+  text-align: left;
+  font-family: ui-monospace, "Roboto Mono", "SF Mono", Menlo, Consolas, monospace;
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: "tnum";
+}
+.dialtime {
+  min-width: calc(var(--size) * 5.2);
+  will-change: contents;
+}
