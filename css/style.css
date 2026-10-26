@@ -439,28 +439,23 @@ button:not(.tgl):active { transform: scale(0.95); }
           drop-shadow(0 1px 1px rgba(0, 0, 0, 0.8));
 }
 
-* San Francisco Pro ফন্ট লোড করা */
-@font-face {
-  font-family: 'SF Pro Display';
-  src: url('https://applesocial.s3.amazonaws.com/assets/styles/fonts/sanfrancisco/sanfrancisCopro-display-medium.woff') format('woff');
-  font-weight: 500;
-  font-style: normal;
+/* Google Fonts থেকে Oswald ফন্ট ইমপোর্ট করা */
+@import url('https://fonts.googleapis.com/css2?family=Oswald:wght@400;500;600;700&display=swap');
+
+/* অ্যাপের সমস্ত লেখা, নাম্বার এবং ঘড়ির ডিসপ্লেতে Oswald ফন্ট জোরপূর্বক প্রয়োগ */
+body, div, span, time, h1, h2, h3, h4, p, a, button, input {
+  font-family: 'Oswald', sans-serif !important;
 }
 
-/* ঘড়ির নাম্বার এবং স্টপওয়াচের ডিজিটাল নাম্বারে ফন্ট সেট করা */
-.clock-numbers, .digital-stopwatch, .numbers {
-  font-family: 'SF Pro Display', -apple-system, BlinkMacSystemFont, sans-serif !important;
+/* ডেপথ ইফেক্ট: ডিজিটাল স্টপওয়াচ বা নাম্বার নিচে (background layer) থাকবে */
+.digital-stopwatch, .stopwatch-display, [id*="stopwatch"], [class*="stopwatch"] {
+  position: relative !important;
+  z-index: 1 !important;
 }
 
-/* ডিজিটাল স্টপওয়াচ বা ব্যাকগ্রাউন্ড এলিমেন্টের লেয়ার নিচে রাখা */
-.digital-stopwatch, .stopwatch-display {
-  position: relative;
-  z-index: 1;
-}
-
-/* অ্যানালগ ঘড়ির কাটা (Clock Hands) সবসময় উপরে রাখার জন্য ডেপথ ইফেক্ট */
-.clock-hand, .second-hand, .minute-hand, .hour-hand {
-  position: absolute;
-  z-index: 10;
+/* অ্যানালগ ঘড়ির কাটা (Clock Hands) সবসময় নাম্বারের উপর দিয়ে যাওয়ার জন্য উপরে (top layer) থাকবে */
+.clock-hand, .second-hand, .minute-hand, .hour-hand, [id*="hand"], [class*="hand"], [class*="needle"] {
+  position: absolute !important;
+  z-index: 99999 !important;
 }
 
