@@ -404,3 +404,169 @@ button:not(.tgl):active { transform: scale(0.95); }
   min-width: calc(var(--size) * 5.2);
   will-change: contents;
 }
+/* ================= Round 4 ================= */
+:root {
+  --sf: -apple-system, BlinkMacSystemFont, "SF Pro Display", "SF Pro Text", "Inter", system-ui, "Roboto", "Segoe UI", Arial, sans-serif;
+  --card: #1c1c1e;
+  --muted: rgba(255, 255, 255, 0.55);
+}
+body, button, input, select { font-family: var(--sf); }
+
+/* ---- SF-style numbers ---- */
+.time .txt {
+  font-size: calc(var(--size) * 0.85);
+  font-weight: 200;
+  letter-spacing: -0.02em;
+  line-height: 1;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: "tnum" 1;
+}
+.time .colon { display: inline-block; transform: translateY(-0.07em); margin: 0 0.02em; }
+.time .ampm { margin-left: 0.2em; font-weight: 300; }
+
+body.sf .arow2 .atime .txt { font-size: calc(var(--size) * 1.1); font-weight: 300; }
+body.sf .arow2 .atime .ampm { font-size: calc(var(--size) * 0.5); }
+body.sf .bigtime .time .txt { font-weight: 300; }
+
+/* ---- Stopwatch: depth and equal-size milliseconds ---- */
+body.sf .dialtime .time .txt { font-size: calc(var(--size) * 0.8); font-weight: 600; }
+.dialtime { z-index: 1; text-shadow: 0 2px 8px rgba(0, 0, 0, 0.55); }
+.dialtime .dg { filter: drop-shadow(0 2px 3px rgba(0, 0, 0, 0.6)); }
+.dialtime .time.cs {
+  display: flex;
+  width: auto;
+  margin-left: 0;
+  font-family: inherit;
+  color: #4a8cf7;
+}
+#handsSvg {
+  position: absolute; left: 0; top: 0;
+  z-index: 2;
+  pointer-events: none;
+}
+
+/* ---- Settings icon (clock inside a toothed ring) ---- */
+#cog { padding: 5px 8px; line-height: 0; font-size: 0; opacity: 0.85; }
+#cog svg { width: 34px; height: 34px; display: block; }
+
+/* ---- Holidays and important dates ---- */
+#holidays { padding: 62px 0 0; animation: rise 0.45s var(--ease) both; }
+.hhead {
+  display: flex; justify-content: space-between; align-items: baseline;
+  padding: 0 20px 8px;
+  font-size: 13px; letter-spacing: 0.04em; text-transform: uppercase;
+  color: var(--muted);
+}
+.hsub { font-size: 11px; text-transform: none; }
+#hList {
+  display: flex; gap: 10px; overflow-x: auto;
+  padding: 0 20px 6px;
+  scroll-snap-type: x proximity;
+  scrollbar-width: none;
+}
+#hList::-webkit-scrollbar { display: none; }
+.hcard {
+  flex: none; width: 140px;
+  background: var(--card);
+  border-radius: 16px;
+  padding: 12px 12px 10px;
+  scroll-snap-align: start;
+  text-align: left;
+}
+.hdate { display: flex; align-items: baseline; gap: 6px; }
+.hmon { font-size: 12px; font-weight: 700; color: #ff6a5c; letter-spacing: 0.05em; }
+.hday { font-size: 30px; font-weight: 300; line-height: 1; }
+.hwd { font-size: 11px; color: var(--muted); margin-left: auto; }
+.hname { font-size: 14px; font-weight: 600; margin-top: 8px; line-height: 1.2; }
+.hbn { font-size: 12px; color: var(--muted); margin-top: 2px; }
+.hleft {
+  display: inline-block; margin-top: 8px;
+  font-size: 11px; padding: 3px 8px; border-radius: 999px;
+  background: rgba(128, 128, 128, 0.18);
+}
+.hleft.soon { background: rgba(255, 106, 92, 0.2); color: #ff6a5c; }
+#stage { padding-top: 16px; }
+
+/* ---- Timer (wheel picker) ---- */
+.tpane { display: flex; flex-direction: column; gap: 18px; }
+.picker {
+  position: relative; isolation: isolate;
+  display: flex; justify-content: center; align-items: flex-start;
+  height: 180px; width: 100%; max-width: 360px; margin: 0 auto; gap: 6px;
+}
+.pcol {
+  height: 180px; width: 90px; padding: 60px 0;
+  overflow-y: auto;
+  scroll-snap-type: y mandatory;
+  scrollbar-width: none;
+  -webkit-mask-image: linear-gradient(transparent, #000 30%, #000 70%, transparent);
+  mask-image: linear-gradient(transparent, #000 30%, #000 70%, transparent);
+}
+.pcol::-webkit-scrollbar { display: none; }
+.pi {
+  height: 60px; line-height: 60px; text-align: center;
+  font-size: 46px; font-weight: 300;
+  font-variant-numeric: tabular-nums;
+  scroll-snap-align: center;
+  opacity: 0.28;
+}
+.pi.sel { opacity: 1; font-weight: 600; }
+.psep { margin-top: 60px; height: 60px; line-height: 60px; width: 14px; font-size: 40px; font-weight: 600; text-align: center; }
+.pband {
+  position: absolute; left: 0; right: 0; top: 60px; height: 60px;
+  border-radius: 16px;
+  background: rgba(128, 128, 128, 0.14);
+  pointer-events: none; z-index: -1;
+}
+.tctrl { display: flex; align-items: center; justify-content: center; gap: 24px; }
+.fab {
+  width: 76px; height: 76px; padding: 0;
+  border: none; border-radius: 50%;
+  background: #2f3cf0; color: #fff;
+  display: flex; align-items: center; justify-content: center;
+  box-shadow: 0 8px 22px rgba(47, 60, 240, 0.45);
+}
+.fab svg { width: 32px; height: 32px; }
+#tmRun { justify-content: center; padding: 40px 0; }
+.phead {
+  display: flex; justify-content: space-between; align-items: center;
+  font-size: 14px; color: var(--muted); margin-top: 8px;
+}
+.phead button { background: none; border: none; color: #3d5afe; font-size: 15px; padding: 4px 0; }
+.preset {
+  display: flex; align-items: center; gap: 10px;
+  background: var(--card); border-radius: 14px;
+  padding: 18px 16px; margin-top: 10px;
+}
+.pn { flex: 1; text-align: left; font-size: 16px; }
+.pd { font-size: 15px; color: var(--muted); font-variant-numeric: tabular-nums; }
+.px { background: none; border: none; color: var(--muted); font-size: 20px; padding: 0 4px; opacity: 0.6; }
+
+/* ---- Light theme ---- */
+body.light { color: #111; --card: #ffffff; --muted: rgba(0, 0, 0, 0.5); }
+body.light #add, body.light #cog { color: #111; }
+body.light #nav {
+  background: rgba(255, 255, 255, 0.9);
+  border-color: #d9d9de;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.12);
+}
+body.light #nav button { color: #111; }
+body.light #nav button.active { background: rgba(0, 0, 0, 0.07); }
+body.light #sheet { background: #fff; color: #111; }
+body.light .btn { background: #ececf1; color: #111; }
+body.light .btn.big { background: #e3e3e8; }
+body.light .btn.danger { background: #ffe0dd; color: #b3261d; }
+body.light select,
+body.light input[type=time],
+body.light input[type=number],
+body.light input[type=text] { background: #ececf1; color: #111; }
+body.light .swatch { border-color: #c4c4c9; }
+body.light .arow2 { border-bottom-color: #e4e4e9; }
+body.light .tgl { background: #d1d1d6; }
+body.light .tgl.on { background: #30d158; }
+body.light .arow2 .atime, body.light .atime { color: #111; }
+body.light .bigtime { color: #111; }
+body.light #ring { background: rgba(255, 255, 255, 0.96); color: #111; }
+body.light .pband { background: rgba(0, 0, 0, 0.06); }
+body.light .preset, body.light .hcard { box-shadow: 0 1px 3px rgba(0, 0, 0, 0.07); }
