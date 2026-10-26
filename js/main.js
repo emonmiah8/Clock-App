@@ -352,3 +352,99 @@ document.getElementById('add').onclick = function () {
 // ======================= Start =======================
 renderAll();
 setInterval(tick, 1000);
+// ======================= Global settings =======================
+const GKEY = 'clockGlobal';
+const BGS = [
+  ['#000000', 'Black'],
+  ['#0e1014', 'Charcoal'],
+  ['#0b1426', 'Navy'],
+  ['#1a1410', 'Brown'],
+  ['#0f1a14', 'Forest']
+];
+let globalSet = { bg: '#000000', awake: false };
+
+try {
+  const g = localStorage.getItem(GKEY);
+  if (g) globalSet = Object.assign(globalSet, JSON.parse(g));
+} catch (e) {}
+
+function saveGlobal() {
+  try { localStorage.setItem(GKEY, JSON.stringify(globalSet)); } catch (e) {}
+}
+
+function applyTheme() {
+  document.documentElement.style.setProperty('--bg', globalSet.bg);
+  const m = document.querySelector('meta[name="theme-color"]');
+  if (m) m.setAttribute('content', globalSet.bg);
+}
+
+// ---- Keep screen awake ----
+let wakeLock = null;
+
+async function setAwake(on) {
+  try {
+    if (on) {
+      if ('wakeLock' in navigator && !wakeLock) {
+        wakeLock = await navigator.wakeLock.request('screen');
+        wakeLock.addEventListener('release', function () { wakeLock = null; });
+      }
+    } else if (wakeLock) {
+      await wakeLock.release();
+      wakeLock = null;
+    }
+  } catch (e) {}
+}
+
+document.addEventListener('visibilitychange', function () {
+  if (document.visibilityState === 'visible' && globalSet.awake) setAwake(true);
+});
+document.addEventListener('click', function () {
+  if (globalSet.awake && !wakeLock) setAwake(true);
+});
+
+// ---- Settings sheet ----
+function openSettings() {
+  let h = '<div class="title">Settings</div>';
+  h += '<div class="row"><div class="label">Background</div>' +
+    BGS.map(function (b) {
+      return '<button class="swatch" data-bg="' + b[0] + '" title="' + b[1] +
+        '" style="background:' + b[0] + ';border-color:#777"></button>';
+    }).join('') + '</div>';
+  h += '<div class="row"><button class="btn" id="awake"></button></div>';
+  h += '<div class="row"><button class="btn" id="fs">Toggle fullscreen</button></div>';
+  h += '<div class="row"><button class="btn" id="done">Done</button></div>';
+  openSheet(h);
+
+  function labels() {
+    document.getElementById('awake').textContent =
+      globalSet.awake ? 'Keep screen awake: ON' : 'Keep screen awake: OFF';
+  }
+  labels();
+
+  sheet.querySelectorAll('[data-bg]').forEach(function (b) {
+    b.onclick = function () {
+      globalSet.bg = b.dataset.bg;
+      saveGlobal(); applyTheme();
+    };
+  });
+
+  document.getElementById('awake').onclick = function () {
+    globalSet.awake = !globalSet.awake;
+    saveGlobal(); setAwake(globalSet.awake); labels();
+  };
+
+  document.getElementById('fs').onclick = function () {
+    if (document.fullscreenElement) {
+      document.exitFullscreen();
+    } else if (document.documentElement.requestFullscreen) {
+      document.documentElement.requestFullscreen().catch(function () {});
+    }
+  };
+
+  document.getElementById('done').onclick = closeSheet;
+}
+
+document.getElementById('cog').onclick = openSettings;
+
+applyTheme();
+if (globalSet.awake) setAwake(true);
