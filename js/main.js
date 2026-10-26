@@ -1427,3 +1427,323 @@ syncWheels();
 
 setInterval(updateCog, 1000);
 setInterval(renderHolidays, 60000);
+// ======================= Round 6: fonts, pen button, glass, haptics, live classic clock =======================
+
+// ---------- 1. Fonts and styles (injected, so no CSS file needs to be edited) ----------
+(function () {
+  if (!document.querySelector('link[data-r6]')) {
+    var l = document.createElement('link');
+    l.rel = 'stylesheet';
+    l.setAttribute('data-r6', '1');
+    l.href = 'https://fonts.googleapis.com/css2?family=Poppins:wght@600;700;800&display=swap';
+    document.head.appendChild(l);
+  }
+
+  var css = [
+    '@font-face{font-family:"ClockNum";src:url("digits.ttf") format("truetype");font-weight:100 900;font-style:normal;font-display:swap;unicode-range:U+0030-0039}',
+    ':root{--sf:"ClockNum","Poppins",system-ui,-apple-system,"Roboto",sans-serif}',
+    'html,body,button,input,select,textarea,svg text,.time .txt,.hcard,.preset,.btn{font-family:var(--sf)!important}',
+    '*{font-weight:700!important}',
+    '.atitle,.title,.hname{font-weight:800!important;letter-spacing:-0.03em}',
+    'body{letter-spacing:-0.01em}',
+    'body .time .txt{font-size:min(calc(var(--size)*1),20vw);letter-spacing:0;line-height:1}',
+    'body .time .n{width:auto!important;margin:0}',
+
+    /* soft colour behind everything so the glass has something to blur */
+    'body::before{content:"";position:fixed;inset:-10%;z-index:-1;pointer-events:none;background:' +
+      'radial-gradient(40% 28% at 12% 8%,rgba(255,106,92,.20),transparent 70%),' +
+      'radial-gradient(46% 34% at 92% 38%,rgba(74,140,247,.20),transparent 70%),' +
+      'radial-gradient(42% 30% at 28% 96%,rgba(48,209,88,.14),transparent 70%)}',
+    'body.light::before{opacity:.7}',
+
+    /* holidays: vertical glass list */
+    '#holidays{padding:4px 0 112px!important;animation:none!important}',
+    '.hhead{padding:0 22px 8px!important}',
+    '#hList{flex-direction:column!important;gap:10px!important;max-height:226px;overflow-y:auto!important;overflow-x:hidden!important;padding:0 16px 10px!important;scroll-snap-type:y proximity!important;overscroll-behavior:contain}',
+    '.hcard{width:auto!important;flex:none!important;display:flex!important;align-items:center;gap:14px;padding:12px 16px!important;border-radius:22px!important;scroll-snap-align:start;' +
+      'background:rgba(255,255,255,.07)!important;-webkit-backdrop-filter:blur(18px) saturate(1.6);backdrop-filter:blur(18px) saturate(1.6);' +
+      'border:1px solid rgba(255,255,255,.14);box-shadow:0 8px 24px rgba(0,0,0,.28),inset 0 1px 0 rgba(255,255,255,.2);transition:transform .12s ease}',
+    '.hcard:active{transform:scale(.97)}',
+    'body.light .hcard{background:rgba(255,255,255,.6)!important;border-color:rgba(255,255,255,.8);box-shadow:0 8px 24px rgba(0,0,0,.08),inset 0 1px 0 rgba(255,255,255,.9)}',
+    '.hd{display:flex;flex-direction:column;align-items:center;min-width:44px}',
+    '.hd .hmon{font-size:12px;letter-spacing:.06em}',
+    '.hd .hday{font-size:30px;line-height:1.05}',
+    '.hmid{flex:1;min-width:0}',
+    '.hmid .hname{margin-top:0;font-size:16px}',
+    '.hright{display:flex;flex-direction:column;align-items:flex-end;gap:6px}',
+    '.hright .hleft{margin-top:0}',
+    '.hwd{margin-left:0}',
+    '#stage{padding:64px 12px 12px!important}',
+
+    /* settings: blurred background and a glass panel under the pen icon */
+    '#overlay.open{background:rgba(0,0,0,.28)!important;-webkit-backdrop-filter:blur(14px);backdrop-filter:blur(14px)}',
+    'body.light #overlay.open{background:rgba(255,255,255,.25)!important}',
+    '#sheet{background:rgba(30,32,38,.62)!important;-webkit-backdrop-filter:blur(26px) saturate(1.6);backdrop-filter:blur(26px) saturate(1.6);' +
+      'border:1px solid rgba(255,255,255,.16);box-shadow:0 20px 50px rgba(0,0,0,.45),inset 0 1px 0 rgba(255,255,255,.2)}',
+    'body.light #sheet{background:rgba(255,255,255,.72)!important;border-color:rgba(255,255,255,.85);box-shadow:0 20px 50px rgba(0,0,0,.15),inset 0 1px 0 rgba(255,255,255,.9)}',
+    '@keyframes popIn{from{opacity:0;transform:scale(.86) translateY(-8px)}to{opacity:1;transform:none}}',
+    '#sheet.open.pop{left:auto!important;right:12px!important;bottom:auto!important;top:calc(64px + env(safe-area-inset-top,0px))!important;width:min(90vw,340px);max-height:calc(100vh - 150px);border-radius:24px!important;transform-origin:top right;animation:popIn .28s cubic-bezier(.22,.8,.25,1) both}',
+
+    /* the pen button (works like a click pen) */
+    '#cog{width:46px;height:46px;padding:4px!important;opacity:1!important;font-size:0}',
+    '.pen{position:relative;display:block;width:38px;height:38px}',
+    '.pen img{position:absolute;left:0;top:0;width:100%;height:100%;pointer-events:none;user-select:none;-webkit-user-drag:none;transition:transform .14s cubic-bezier(.3,1.8,.5,1)}',
+    '#cog.out .pt{transform:translate(-1.4px,1.4px)}',
+    '#cog.out .pc{transform:translate(-.7px,.7px)}',
+    '#cog.press .pr{transform:scale(.94)}',
+    '#cog.press .pc{transform:translate(-1.8px,1.8px)}',
+    '#cog.press .pb{transform:translate(-.5px,.5px)}',
+    '#cog.press .pt{transform:translate(-1px,1px)}',
+    'body.light .pen img{filter:invert(1)}',
+
+    /* classic clock widget */
+    '.clsvg{width:calc(var(--size)*3.5);height:calc(var(--size)*3.5);filter:drop-shadow(0 8px 18px rgba(0,0,0,.35))}'
+  ].join('\n');
+
+  var st = document.createElement('style');
+  st.id = 'r6css';
+  st.textContent = css;
+  document.head.appendChild(st);
+})();
+
+// ---------- 2. Haptic feedback (Android phones) ----------
+function haptic(p) {
+  try { if (navigator.vibrate) navigator.vibrate(p); } catch (e) {}
+}
+
+// ---------- 3. Settings: blurred background and a glass popover ----------
+function openSheet(html) {
+  sheet.classList.remove('pop');
+  sheet.innerHTML = html;
+  sheet.classList.add('open');
+  overlay.classList.add('open');
+}
+
+function relabelFont() {
+  var fb = document.getElementById('fontbtn');
+  if (fb) fb.textContent = digitMode === 'sf' ? 'Numbers: Bold style' : 'Numbers: Retro lines';
+}
+
+var prevOpenSettings = openSettings;
+openSettings = function () {
+  prevOpenSettings();
+  sheet.classList.add('pop');
+  var fb = document.getElementById('fontbtn');
+  if (fb) {
+    relabelFont();
+    fb.addEventListener('click', function () { setTimeout(relabelFont, 0); });
+  }
+};
+
+// ---------- 4. The pen button ----------
+var penOut = false;
+
+function setPenOut(on) {
+  if (on === penOut) return;
+  penOut = on;
+  var c = document.getElementById('cog');
+  if (c) c.classList.toggle('out', on);
+  haptic(on ? 8 : 10);
+}
+
+function buildPen() {
+  var cog = document.getElementById('cog');
+  if (!cog) return;
+  cog.innerHTML =
+    '<span class="pen">' +
+    '<img class="pr" src="pen-ring.png" alt="">' +
+    '<img class="pb" src="pen-body.png" alt="">' +
+    '<img class="pc" src="pen-cap.png" alt="">' +
+    '<img class="pt" src="pen-tip.png" alt="">' +
+    '</span>';
+  cog.setAttribute('aria-label', 'Settings');
+
+  cog.addEventListener('pointerdown', function () {
+    cog.classList.add('press');
+    haptic(10);
+  });
+  ['pointerup', 'pointercancel', 'pointerleave'].forEach(function (ev) {
+    cog.addEventListener(ev, function () { cog.classList.remove('press'); });
+  });
+  cog.onclick = function () { openSettings(); };
+
+  new MutationObserver(function () {
+    setPenOut(sheet.classList.contains('open') && sheet.classList.contains('pop'));
+  }).observe(sheet, { attributes: true, attributeFilter: ['class'] });
+}
+
+// ---------- 5. Holidays: vertical glass list with haptic ticks ----------
+function renderHolidays() {
+  var box = document.getElementById('hList');
+  if (!box || !HOLIDAYS) return;
+  var MON = ['JAN', 'FEB', 'MAR', 'APR', 'MAY', 'JUN', 'JUL', 'AUG', 'SEP', 'OCT', 'NOV', 'DEC'];
+  var now = new Date();
+  var today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  var items = [];
+
+  HOLIDAYS.forEach(function (h) {
+    var p = h.d.split('-');
+    var dt = new Date(Number(p[0]), Number(p[1]) - 1, Number(p[2]));
+    var diff = Math.round((dt - today) / 86400000);
+    if (diff >= 0) items.push({ h: h, dt: dt, diff: diff });
+  });
+  items.sort(function (a, b) { return a.dt - b.dt; });
+  items = items.slice(0, 7);
+
+  if (!items.length) {
+    box.innerHTML = '<div class="hcard"><div class="hmid"><div class="hname">No upcoming dates</div>' +
+      '<div class="hbn">Update the holiday list in js/main.js</div></div></div>';
+    return;
+  }
+
+  box.innerHTML = items.map(function (it) {
+    var left = it.diff === 0 ? 'Today' : (it.diff === 1 ? 'Tomorrow' : 'in ' + it.diff + ' days');
+    var wd = it.dt.toLocaleDateString('en-GB', { weekday: 'short' });
+    return '<div class="hcard">' +
+      '<div class="hd"><span class="hmon">' + MON[it.dt.getMonth()] + '</span>' +
+      '<span class="hday">' + (it.h.approx ? '~' : '') + it.dt.getDate() + '</span></div>' +
+      '<div class="hmid"><div class="hname">' + it.h.n + '</div>' +
+      '<div class="hbn">' + it.h.b + '</div></div>' +
+      '<div class="hright"><span class="hleft' + (it.diff <= 7 ? ' soon' : '') + '">' + left + '</span>' +
+      '<span class="hwd">' + wd + '</span></div>' +
+      '</div>';
+  }).join('');
+}
+
+function initHolidayList() {
+  var home = document.getElementById('v-home');
+  var hol = document.getElementById('holidays');
+  if (home && hol) home.appendChild(hol);      // clock first, list below it
+
+  var box = document.getElementById('hList');
+  if (!box) return;
+
+  var lastIdx = 0;
+  box.addEventListener('scroll', function () {
+    var first = box.querySelector('.hcard');
+    var rowH = first ? first.offsetHeight + 10 : 80;
+    var idx = Math.round(box.scrollTop / rowH);
+    if (idx !== lastIdx) {
+      lastIdx = idx;
+      haptic(7);
+    }
+  }, { passive: true });
+
+  box.addEventListener('click', function (e) {
+    if (e.target && e.target.closest && e.target.closest('.hcard')) haptic(10);
+  });
+}
+
+// ---------- 6. Classic clock widget (same face as the app icon, hands always moving) ----------
+TYPE_NAMES.classic = 'Classic clock';
+
+function newWidget(type) {
+  const base = {
+    id: 'w' + Date.now() + Math.floor(Math.random() * 1000),
+    type: type,
+    color: '#ffffff',
+    size: 18
+  };
+  if (type === 'digital') return Object.assign(base, { hour12: false, retro: false });
+  if (type === 'analog') return Object.assign(base, { size: 12 });
+  if (type === 'classic') return Object.assign(base, { size: 14 });
+  if (type === 'date') return Object.assign(base, { size: 14 });
+  return Object.assign(base, { size: 12, hour12: false, retro: false, zone: 'Europe/London' });
+}
+
+function classicSvg() {
+  var t = '';
+  for (var i = 0; i < 60; i++) {
+    var hr = i % 5 === 0;
+    t += '<line x1="100" y1="12" x2="100" y2="' + (hr ? 27 : 19) + '" stroke="' +
+      (hr ? '#4a4a4c' : '#c9c9cd') + '" stroke-width="' + (hr ? 3.2 : 1.6) +
+      '" transform="rotate(' + (i * 6) + ' 100 100)"/>';
+  }
+  var nums = [['12', 100, 62], ['3', 145, 107], ['6', 100, 152], ['9', 55, 107]];
+  var n = '';
+  nums.forEach(function (q) {
+    n += '<text x="' + q[1] + '" y="' + q[2] + '" text-anchor="middle" font-size="22" fill="#47474a">' + q[0] + '</text>';
+  });
+  return '<svg class="clsvg" viewBox="0 0 200 200">' +
+    '<rect x="4" y="4" width="192" height="192" rx="46" fill="#fbfbfb"/>' +
+    t + n +
+    '<line class="ch" x1="100" y1="106" x2="100" y2="62" stroke="#111113" stroke-width="7.5" stroke-linecap="round"/>' +
+    '<line class="cm" x1="100" y1="106" x2="100" y2="38" stroke="#111113" stroke-width="6" stroke-linecap="round"/>' +
+    '<line class="cs2" x1="100" y1="118" x2="100" y2="34" stroke="#ff9f0a" stroke-width="2.4" stroke-linecap="round"/>' +
+    '<circle cx="100" cy="100" r="6.5" fill="#111113"/>' +
+    '<circle cx="100" cy="100" r="2.6" fill="#ff9f0a"/></svg>';
+}
+
+function setClassic(el, now) {
+  var s = now.getSeconds() + now.getMilliseconds() / 1000;
+  var m = now.getMinutes() + s / 60;
+  var h = (now.getHours() % 12) + m / 60;
+  rotate(el, '.ch', h * 30);
+  rotate(el, '.cm', m * 6);
+  rotate(el, '.cs2', s * 6);
+}
+
+function buildWidget(w) {
+  const el = document.createElement('div');
+  el.className = 'widget';
+  el.dataset.id = w.id;
+  el.dataset.type = w.type;
+  let inner = '';
+  if (w.type === 'digital') {
+    inner = '<div class="time"></div>';
+  } else if (w.type === 'world') {
+    inner = '<div class="wlabel">' + zoneName(w.zone) + '</div><div class="time"></div>';
+  } else if (w.type === 'analog') {
+    inner = analogSvg();
+  } else if (w.type === 'classic') {
+    inner = classicSvg();
+  } else {
+    inner = '<div class="datetxt"><div class="wd"></div><div class="dm"></div></div>';
+  }
+  el.innerHTML = inner;
+  el.onclick = function () { openEdit(w.id); };
+  return el;
+}
+
+function updateWidget(w, el, now) {
+  if (w.type === 'digital' || w.type === 'world') {
+    const str = fmtTime(now, w, w.type === 'world' ? w.zone : null);
+    const key = str + '|' + w.retro;
+    const t = el.querySelector('.time');
+    if (t.dataset.key !== key) {
+      t.dataset.key = key;
+      t.innerHTML = timeHtml(str, w.retro);
+    }
+  } else if (w.type === 'analog') {
+    const h = now.getHours() % 12;
+    const m = now.getMinutes();
+    const s = now.getSeconds();
+    rotate(el, '.hh', h * 30 + m * 0.5);
+    rotate(el, '.mh', m * 6 + s * 0.1);
+    rotate(el, '.sh', s * 6);
+  } else if (w.type === 'classic') {
+    setClassic(el, now);
+  } else {
+    el.querySelector('.wd').textContent =
+      now.toLocaleDateString('en-GB', { weekday: 'long' });
+    el.querySelector('.dm').textContent =
+      now.toLocaleDateString('en-GB', { day: 'numeric', month: 'long' });
+  }
+}
+
+// smooth sweeping hands, about 60 times a second
+function sweepLoop() {
+  var list = document.querySelectorAll('[data-type="classic"]');
+  if (list.length) {
+    var now = new Date();
+    for (var i = 0; i < list.length; i++) setClassic(list[i], now);
+  }
+  requestAnimationFrame(sweepLoop);
+}
+
+// ---------- Start round 6 ----------
+buildPen();
+initHolidayList();
+renderHolidays();
+applyDigitMode();
+requestAnimationFrame(sweepLoop);
