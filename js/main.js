@@ -1427,3 +1427,63 @@ syncWheels();
 
 setInterval(updateCog, 1000);
 setInterval(renderHolidays, 60000);
+// ======================= Round 5: Oswald font =======================
+(function () {
+  var l = document.createElement('link');
+  l.rel = 'stylesheet';
+  l.href = 'https://fonts.googleapis.com/css2?family=Oswald:wght@200;300;400;500;600;700&display=swap';
+  document.head.appendChild(l);
+})();
+
+// Every digit sits in a fixed-width box, so the numbers never shake while counting.
+function timeHtml(str, retro) {
+  var i, ch, n = 0;
+
+  if (digitMode === 'sf') {
+    var main = '';
+    var suf = '';
+    for (i = 0; i < str.length; i++) {
+      ch = str.charAt(i);
+      if (ch === ':') {
+        main += '<span class="colon">:</span>';
+      } else if (ch >= '0' && ch <= '9') {
+        main += '<span class="n"' +
+          (retro ? ' style="color:' + RETRO[n % 3] + '"' : '') + '>' + ch + '</span>';
+        n++;
+      } else if (ch !== ' ') {
+        suf += ch;
+      }
+    }
+    return '<span class="txt">' + main + '</span>' +
+      (suf ? '<span class="ampm">' + suf + '</span>' : '');
+  }
+
+  var html = '';
+  for (i = 0; i < str.length; i++) {
+    ch = str.charAt(i);
+    if (ch === ':') {
+      html += COLON_SVG;
+    } else if (ch === ' ') {
+      html += '<span class="gap"></span>';
+    } else if (ch >= '0' && ch <= '9') {
+      html += digitSvg(ch, retro ? RETRO[n % 3] : null);
+      n++;
+    } else {
+      html += '<span class="ampm">' + ch + '</span>';
+    }
+  }
+  return html;
+}
+
+function csHtml(cs) {
+  if (digitMode === 'sf') {
+    return '<span class="txt">.<span class="n">' + cs.charAt(0) + '</span>' +
+      '<span class="n">' + cs.charAt(1) + '</span></span>';
+  }
+  return '<svg class="dg" viewBox="0 0 24 100"><circle cx="12" cy="90" r="5" fill="currentColor"/></svg>' +
+    timeHtml(cs, false);
+}
+
+// redraw everything with the new font
+lastSwMain = ''; lastSwCs = ''; lastTm = '';
+applyDigitMode();
