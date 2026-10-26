@@ -1,4 +1,4 @@
-const defaults = { color: '#ffffff', size: 18, hour12: false, mode: 'digital' };
+const defaults = { color: '#ffffff', size: 18, hour12: false, mode: 'digital', retro: false };
 let settings = { ...defaults };
 
 // Load saved settings
@@ -12,6 +12,8 @@ function save() {
 }
 
 // ---------- Retro line digits ----------
+const RETRO = ['#4aa3d8', '#ef5b55', '#f4f1ea'];   // blue, red, white
+
 const PATHS = {
   '0': 'M10 30 A20 20 0 0 1 50 30 V70 A20 20 0 0 1 10 70 Z',
   '1': 'M12 38 A28 28 0 0 1 40 10 V90',
@@ -24,11 +26,12 @@ const PATHS = {
   '8': 'M10 30 A20 20 0 0 1 50 30 A20 20 0 0 1 10 30 Z M10 70 A20 20 0 0 1 50 70 A20 20 0 0 1 10 70 Z'
 };
 
-function digitSvg(d) {
+function digitSvg(d, col) {
   const flip = d === '9';              // 9 is the 6 turned upside down
   const p = flip ? PATHS['6'] : PATHS[d];
   const g = flip ? ' transform="rotate(180 30 50)"' : '';
-  return '<svg class="dg" viewBox="0 0 60 100"><g' + g + ' fill="none" stroke-linejoin="round">' +
+  const style = col ? ' style="color:' + col + '"' : '';
+  return '<svg class="dg" viewBox="0 0 60 100"' + style + '><g' + g + ' fill="none" stroke-linejoin="round">' +
     '<path class="l1" d="' + p + '"/>' +
     '<path class="l2" d="' + p + '"/>' +
     '<path class="l3" d="' + p + '"/>' +
@@ -40,16 +43,26 @@ const COLON_SVG =
   '<circle cx="12" cy="35" r="5" fill="currentColor"/>' +
   '<circle cx="12" cy="65" r="5" fill="currentColor"/></svg>';
 
-let lastTimeStr = '';
+let lastKey = '';
 function renderTime(str) {
-  if (str === lastTimeStr) return;
-  lastTimeStr = str;
+  const key = str + '|' + settings.retro;
+  if (key === lastKey) return;
+  lastKey = key;
+
   let html = '';
+  let n = 0;                           // counts digits only
   for (const ch of str) {
-    if (ch === ':') html += COLON_SVG;
-    else if (ch === ' ') html += '<span class="gap"></span>';
-    else if (ch >= '0' && ch <= '9') html += digitSvg(ch);
-    else html += '<span class="ampm">' + ch + '</span>';
+    if (ch === ':') {
+      html += COLON_SVG;
+    } else if (ch === ' ') {
+      html += '<span class="gap"></span>';
+    } else if (ch >= '0' && ch <= '9') {
+      const col = settings.retro ? RETRO[n % 3] : null;
+      html += digitSvg(ch, col);
+      n++;
+    } else {
+      html += '<span class="ampm">' + ch + '</span>';
+    }
   }
   document.getElementById('time').innerHTML = html;
 }
@@ -83,6 +96,8 @@ function apply() {
     analog ? 'Analog (tap for Digital)' : 'Digital (tap for Analog)';
   document.getElementById('format').textContent =
     settings.hour12 ? '12-hour (tap for 24)' : '24-hour (tap for 12)';
+  document.getElementById('retro').textContent =
+    settings.retro ? 'Retro colors: ON (tap to turn off)' : 'Retro colors: OFF (tap to turn on)';
   tick();
 }
 
@@ -129,6 +144,10 @@ document.getElementById('format').onclick = () => {
 document.getElementById('mode').onclick = () => {
   settings.mode = settings.mode === 'digital' ? 'analog' : 'digital';
   save(); apply();
+};
+
+document.getElementById('retro').onclick = () => {
+  settings.retro = !settings.retro; save(); apply();
 };
 
 apply();
