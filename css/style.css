@@ -1,36 +1,101 @@
-:root { --color: #ffffff; --size: 18vw; }
+:root { --bg: #000; }
+
+* { box-sizing: border-box; }
+
+html, body {
+  margin: 0;
+  background: var(--bg);
+}
 
 body {
-  margin: 0;
-  height: 100vh;
-  background: #000;
+  min-height: 100vh;
+  color: #fff;
+  font-family: sans-serif;
+  display: flex;
+  flex-direction: column;
+  -webkit-tap-highlight-color: transparent;
+}
+
+/* ---- Add button ---- */
+#add {
+  position: fixed; top: 12px; left: 14px; z-index: 5;
+  background: none; border: none; color: #fff;
+  font-size: 36px; line-height: 1; opacity: 0.5;
+  padding: 4px 10px;
+}
+
+/* ---- Widget area ---- */
+#stage {
+  margin: auto;
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6vw;
+  padding: 70px 12px 90px;
+}
+.empty { opacity: 0.4; font-size: 18px; }
+
+.widget {
   color: var(--color);
   display: flex;
   flex-direction: column;
   align-items: center;
+  cursor: pointer;
+}
+.wlabel { font-size: 4vw; opacity: 0.55; margin-bottom: 2vw; }
+
+/* ---- Digital time ---- */
+.time {
+  display: flex;
+  align-items: center;
   justify-content: center;
-  font-family: sans-serif;
+  flex-wrap: nowrap;
+  font-size: calc(var(--size) * 0.3);
+}
+.time .dg {
+  height: calc(var(--size) * 0.8);
+  width: auto;
+  flex: none;
+  margin: 0 calc(var(--size) * 0.02);
+}
+.time .gap { width: calc(var(--size) * 0.15); }
+.time .ampm { font-weight: 300; font-size: calc(var(--size) * 0.3); }
+
+.l1 { stroke: currentColor; stroke-width: 15; }
+.l2 { stroke: var(--bg);    stroke-width: 9; }
+.l3 { stroke: currentColor; stroke-width: 3; }
+
+/* ---- Analog ---- */
+.analog {
+  width: calc(var(--size) * 3.5);
+  height: calc(var(--size) * 3.5);
 }
 
-#time { font-size: var(--size); font-weight: 200; }
-#analog { width: calc(var(--size) * 3.5); height: calc(var(--size) * 3.5); }
-#date { font-size: 5vw; opacity: 0.6; margin-top: 8px; }
+/* ---- Date ---- */
+.datetxt { text-align: center; }
+.datetxt .wd { font-size: calc(var(--size) * 0.45); font-weight: 200; }
+.datetxt .dm { font-size: calc(var(--size) * 0.3); opacity: 0.6; margin-top: 4px; }
 
-#gear {
-  position: fixed; top: 12px; right: 16px;
-  background: none; border: none;
-  color: #fff; font-size: 28px; opacity: 0.5;
-}
-
-#panel {
+/* ---- Bottom sheet ---- */
+#overlay {
   display: none;
-  position: fixed; bottom: 0; left: 0; right: 0;
+  position: fixed; inset: 0; z-index: 10;
+  background: rgba(0, 0, 0, 0.6);
+}
+#overlay.open { display: block; }
+
+#sheet {
+  display: none;
+  position: fixed; left: 0; right: 0; bottom: 0; z-index: 11;
+  max-height: 80vh; overflow-y: auto;
   background: #151515; color: #fff;
   padding: 16px 20px 28px;
   border-radius: 16px 16px 0 0;
 }
-#panel.open { display: block; }
+#sheet.open { display: block; }
 
+.title { font-size: 18px; margin-bottom: 4px; }
 .row { margin: 16px 0; }
 .label { font-size: 14px; opacity: 0.6; margin-bottom: 8px; }
 
@@ -39,35 +104,17 @@ body {
   border: 2px solid #444; margin-right: 10px;
 }
 
-#size { width: 100%; }
+#sz { width: 100%; }
+
+select {
+  background: #333; color: #fff; border: none;
+  padding: 10px 14px; border-radius: 8px; font-size: 16px;
+}
 
 .btn {
   background: #333; color: #fff; border: none;
   padding: 10px 18px; border-radius: 8px; font-size: 16px;
-  margin-right: 8px;
+  margin-right: 8px; margin-bottom: 8px;
 }
-/* ---- Retro line digits ---- */
-:root { --bg: #000; }
-
-#time {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  flex-wrap: nowrap;
-  font-size: calc(var(--size) * 0.3);
-}
-#time .dg {
-  height: calc(var(--size) * 0.8);
-  width: auto;
-  flex: none;
-  margin: 0 calc(var(--size) * 0.02);
-}
-#time .gap { width: calc(var(--size) * 0.15); }
-#time .ampm {
-  font-weight: 300;
-  font-size: calc(var(--size) * 0.3);
-}
-
-.l1 { stroke: currentColor; stroke-width: 15; }
-.l2 { stroke: var(--bg);    stroke-width: 9; }
-.l3 { stroke: currentColor; stroke-width: 3; }
+.btn.block { display: block; width: 100%; text-align: left; margin: 8px 0; }
+.btn.danger { background: #5a1d1d; }
