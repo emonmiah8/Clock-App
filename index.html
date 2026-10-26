@@ -4,17 +4,24 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Clock</title>
-<link rel="stylesheet" href="css/style.css?v=8">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@200;300;400;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="css/style.css?v=11">
 <link rel="manifest" href="manifest.json">
 <meta name="theme-color" content="#000000">
 <link rel="icon" href="icon-192.png">
 </head>
 <body>
   <button id="add" aria-label="Add widget">+</button>
-  <button id="cog" aria-label="Settings">&#9881;</button>
+  <button id="cog" aria-label="Settings"><svg id="cogSvg" viewBox="0 0 40 40" aria-hidden="true"></svg></button>
 
   <!-- HOME -->
   <section id="v-home" class="view active">
+    <div id="holidays">
+      <div class="hhead"><span>Holidays &amp; Important Dates</span><span class="hsub">~ moon-dependent</span></div>
+      <div id="hList"></div>
+    </div>
     <div id="stage"></div>
   </section>
 
@@ -42,31 +49,56 @@
   <section id="v-stopwatch" class="view">
     <div class="pane center">
       <div class="dialwrap">
+        <!-- layer 1: dial face -->
         <svg viewBox="0 0 300 300" aria-hidden="true">
           <defs>
-            <radialGradient id="dg" cx="50%" cy="40%" r="65%">
-              <stop offset="0" stop-color="#3a3a3c"/>
-              <stop offset="1" stop-color="#171718"/>
+            <radialGradient id="dg" cx="50%" cy="38%" r="70%">
+              <stop offset="0" stop-color="#3d3d40"/>
+              <stop offset="1" stop-color="#151516"/>
             </radialGradient>
+            <linearGradient id="bz" x1="0" y1="0" x2="1" y2="1">
+              <stop offset="0" stop-color="#6a6a6e"/>
+              <stop offset="1" stop-color="#101011"/>
+            </linearGradient>
+            <linearGradient id="rc" x1="0" y1="0" x2="1" y2="1">
+              <stop offset="0" stop-color="#0b0b0c"/>
+              <stop offset="1" stop-color="#3a3a3d"/>
+            </linearGradient>
           </defs>
-          <circle cx="150" cy="150" r="146" fill="url(#dg)" stroke="#3c3c3e" stroke-width="3"/>
+          <circle cx="150" cy="150" r="148" fill="url(#bz)"/>
+          <circle cx="150" cy="150" r="143" fill="url(#dg)"/>
+          <circle cx="150" cy="150" r="140" fill="none" stroke="url(#rc)" stroke-width="3"/>
           <g id="dialTicks"></g>
-          <circle cx="150" cy="208" r="40" fill="#161617" stroke="#2c2c2e" stroke-width="1.5"/>
+          <circle cx="150" cy="208" r="41" fill="#131314"/>
+          <circle cx="150" cy="208" r="40" fill="#161617" stroke="url(#rc)" stroke-width="2"/>
           <g id="subTicks"></g>
-          <g id="swHand2">
-            <line x1="150" y1="208" x2="150" y2="182" stroke="#ffffff" stroke-width="2.5" stroke-linecap="round"/>
-            <circle cx="150" cy="208" r="4.5" fill="#ffffff"/>
-          </g>
-          <g id="swHand">
-            <line x1="150" y1="170" x2="150" y2="20" stroke="#4a8cf7" stroke-width="3" stroke-linecap="round"/>
-            <circle cx="150" cy="150" r="9" fill="#4a8cf7"/>
-            <circle cx="150" cy="150" r="3.5" fill="#161617"/>
-          </g>
         </svg>
+
+        <!-- layer 2: digital readout -->
         <div class="dialtime">
           <div class="time" id="swMain"></div>
-          <span class="cs" id="swCs"></span>
+          <div class="time cs" id="swCs"></div>
         </div>
+
+        <!-- layer 3: hands, drawn above the numbers, with a shadow -->
+        <svg id="handsSvg" viewBox="0 0 300 300" aria-hidden="true">
+          <defs>
+            <filter id="hs" filterUnits="userSpaceOnUse" x="0" y="0" width="300" height="300">
+              <feDropShadow dx="3" dy="5" stdDeviation="3.5" flood-color="#000" flood-opacity="0.65"/>
+            </filter>
+          </defs>
+          <g filter="url(#hs)">
+            <g id="swHand2">
+              <line x1="150" y1="208" x2="150" y2="182" stroke="#ffffff" stroke-width="2.5" stroke-linecap="round"/>
+              <circle cx="150" cy="208" r="4.5" fill="#ffffff"/>
+            </g>
+            <g id="swHand">
+              <line x1="150" y1="170" x2="150" y2="20" stroke="#4a8cf7" stroke-width="3" stroke-linecap="round"/>
+              <circle cx="150" cy="150" r="9" fill="#4a8cf7"/>
+              <circle cx="150" cy="150" r="3.5" fill="#161617"/>
+            </g>
+          </g>
+        </svg>
       </div>
 
       <div class="ctrls round-row">
@@ -86,24 +118,36 @@
 
   <!-- TIMER -->
   <section id="v-timer" class="view">
-    <div class="pane center">
-      <div class="bigtime">
+    <div class="pane tpane">
+      <div id="tmPicker" class="picker">
+        <div class="pband"></div>
+        <div class="pcol" id="pH"></div>
+        <div class="psep">:</div>
+        <div class="pcol" id="pM"></div>
+        <div class="psep">:</div>
+        <div class="pcol" id="pS"></div>
+      </div>
+
+      <div id="tmRun" class="bigtime" style="display:none">
         <div class="time" id="tmTime"></div>
       </div>
-      <div class="chips" id="tmChips">
-        <button class="btn" data-min="1">1 min</button>
-        <button class="btn" data-min="5">5 min</button>
-        <button class="btn" data-min="10">10 min</button>
-        <button class="btn" data-min="15">15 min</button>
-        <button class="btn" data-min="30">30 min</button>
+
+      <div class="tctrl">
+        <button class="round" id="tmReset" style="display:none" aria-label="Reset">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12a9 9 0 1 0 3-6.7"/><path d="M3 4v5h5"/></svg>
+        </button>
+        <button class="fab" id="tmGo" aria-label="Start or pause">
+          <svg viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z"/></svg>
+        </button>
       </div>
-      <div>
-        <input type="number" id="tmMin" placeholder="minutes" min="1" max="999" inputmode="numeric">
-        <button class="btn" id="tmSet">Set</button>
-      </div>
-      <div class="ctrls">
-        <button class="btn big" id="tmGo">Start</button>
-        <button class="btn" id="tmReset">Reset</button>
+
+      <div class="phead"><span>Frequently used timers</span><button id="pAdd">Add</button></div>
+      <div id="presetList"></div>
+
+      <!-- kept hidden so older code finds these -->
+      <div style="display:none">
+        <input type="number" id="tmMin">
+        <button id="tmSet"></button>
       </div>
     </div>
   </section>
@@ -140,7 +184,7 @@
   <div id="overlay"></div>
   <div id="sheet"></div>
 
-<script src="js/main.js?v=8"></script>
+<script src="js/main.js?v=9"></script>
 <script>
   if ('serviceWorker' in navigator) {
     navigator.serviceWorker.register('sw.js');
