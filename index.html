@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Clock</title>
-<link rel="stylesheet" href="css/style.css?v=6">
+<link rel="stylesheet" href="css/style.css?v=8">
 <link rel="manifest" href="manifest.json">
 <meta name="theme-color" content="#000000">
 <link rel="icon" href="icon-192.png">
@@ -21,28 +21,64 @@
   <!-- ALARM -->
   <section id="v-alarm" class="view">
     <div class="pane">
-      <div class="ptitle">Alarm</div>
-      <div id="alarmList"></div>
-      <div class="aform">
-        <input type="time" id="aTime" value="07:00">
-        <label class="chk"><input type="checkbox" id="aDaily" checked> Every day</label>
-        <button class="btn" id="aAdd">Add alarm</button>
+      <div class="atop">
+        <button class="link" id="aEdit">Edit</button>
+        <button class="link plus" id="aPlus" aria-label="Add alarm">+</button>
       </div>
+      <div class="atitle">Alarms</div>
+      <div id="alarmList"></div>
       <div class="note">Alarms ring only while this app is open. Turn on "Keep screen awake" in settings for bedside use.</div>
+
+      <!-- kept hidden so older code finds these -->
+      <div style="display:none">
+        <input type="time" id="aTime" value="07:00">
+        <input type="checkbox" id="aDaily" checked>
+        <button id="aAdd"></button>
+      </div>
     </div>
   </section>
 
   <!-- STOPWATCH -->
   <section id="v-stopwatch" class="view">
     <div class="pane center">
-      <div class="bigtime">
-        <div class="time" id="swMain"></div>
-        <span class="cs" id="swCs"></span>
+      <div class="dialwrap">
+        <svg viewBox="0 0 300 300" aria-hidden="true">
+          <defs>
+            <radialGradient id="dg" cx="50%" cy="40%" r="65%">
+              <stop offset="0" stop-color="#3a3a3c"/>
+              <stop offset="1" stop-color="#171718"/>
+            </radialGradient>
+          </defs>
+          <circle cx="150" cy="150" r="146" fill="url(#dg)" stroke="#3c3c3e" stroke-width="3"/>
+          <g id="dialTicks"></g>
+          <circle cx="150" cy="208" r="40" fill="#161617" stroke="#2c2c2e" stroke-width="1.5"/>
+          <g id="subTicks"></g>
+          <g id="swHand2">
+            <line x1="150" y1="208" x2="150" y2="182" stroke="#ffffff" stroke-width="2.5" stroke-linecap="round"/>
+            <circle cx="150" cy="208" r="4.5" fill="#ffffff"/>
+          </g>
+          <g id="swHand">
+            <line x1="150" y1="170" x2="150" y2="20" stroke="#4a8cf7" stroke-width="3" stroke-linecap="round"/>
+            <circle cx="150" cy="150" r="9" fill="#4a8cf7"/>
+            <circle cx="150" cy="150" r="3.5" fill="#161617"/>
+          </g>
+        </svg>
+        <div class="dialtime">
+          <div class="time" id="swMain"></div>
+          <span class="cs" id="swCs"></span>
+        </div>
       </div>
-      <div class="ctrls">
-        <button class="btn" id="swLap">Lap</button>
-        <button class="btn big" id="swGo">Start</button>
-        <button class="btn" id="swReset">Reset</button>
+
+      <div class="ctrls round-row">
+        <button class="round" id="swLap" aria-label="Lap">
+          <svg viewBox="0 0 24 24" fill="currentColor"><path d="M5 3v18h2v-7h5l1 2h6V5h-5l-1-2z"/></svg>
+        </button>
+        <button class="round main" id="swGo" aria-label="Start or pause">
+          <svg viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z"/></svg>
+        </button>
+        <button class="round" id="swReset" aria-label="Reset">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12a9 9 0 1 0 3-6.7"/><path d="M3 4v5h5"/></svg>
+        </button>
       </div>
       <div id="laps"></div>
     </div>
@@ -104,7 +140,7 @@
   <div id="overlay"></div>
   <div id="sheet"></div>
 
-<script src="js/main.js?v=6"></script>
+<script src="js/main.js?v=8"></script>
 <script>
   if ('serviceWorker' in navigator) {
     navigator.serviceWorker.register('sw.js');
