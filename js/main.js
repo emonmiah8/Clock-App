@@ -448,3 +448,298 @@ document.getElementById('cog').onclick = openSettings;
 
 applyTheme();
 if (globalSet.awake) setAwake(true);
+// ======================= Tabs (bottom bar) =======================
+const TABS = ['home', 'alarm', 'stopwatch', 'timer'];
+
+function showTab(name) {
+  TABS.forEach(function (t) {
+    document.getElementById('v-' + t).classList.toggle('active', t === name);
+    document.querySelector('#nav [data-tab="' + t + '"]').classList.toggle('active', t === name);
+  });
+  document.getElementById('add').style.display = name === 'home' ? 'block' : 'none';
+  window.scrollTo(0, 0);
+  closeSheet();
+}
+
+document.querySelectorAll('#nav [data-tab]').forEach(function (b) {
+  b.onclick = function () { showTab(b.dataset.tab); };
+});
+
+function pad(n) { return String(n).padStart(2, '0'); }
+function dayKey(d) { return d.getFullYear() + '-' + pad(d.getMonth() + 1) + '-' + pad(d.getDate()); }
+
+// ======================= Sound and ringing =======================
+let actx = null;
+
+function unlockAudio() {
+  try {
+    if (!actx) actx = new (window.AudioContext || window.webkitAudioContext)();
+    if (actx.state === 'suspended') actx.resume();
+  } catch (e) {}
+}
+['click', 'touchstart'].forEach(function (ev) {
+  document.addEventListener(ev, unlockAudio, { passive: true });
+});
+
+function beep() {
+  if (!actx) return;
+  try {
+    const o = actx.createOscillator();
+    const g = actx.createGain();
+    o.type = 'sine';
+    o.frequency.value = 880;
+    g.gain.value = 0.25;
+    o.connect(g);
+    g.connect(actx.destination);
+    o.start();
+    o.stop(actx.currentTime + 0.25);
+  } catch (e) {}
+}
+
+let ringTimer = null;
+let ringSnoozeFn = null;
+
+function startRing(title, snoozeFn) {
+  stopRing();
+  document.getElementById('ringTitle').textContent = title;
+  document.getElementById('ringSnooze').style.display = snoozeFn ? 'inline-block' : 'none';
+  ringSnoozeFn = snoozeFn;
+  document.getElementById('ring').classList.add('open');
+  const go = function () {
+    beep();
+    if (navigator.vibrate) navigator.vibrate(300);
+  };
+  go();
+  ringTimer = setInterval(go, 800);
+}
+
+function stopRing() {
+  if (ringTimer) { clearInterval(ringTimer); ringTimer = null; }
+  document.getElementById('ring').classList.remove('open');
+}
+
+document.getElementById('ringStop').onclick = stopRing;
+document.getElementById('ringSnooze').onclick = function () {
+  const f = ringSnoozeFn;
+  stopRing();
+  if (f) f();
+};
+
+// ======================= Alarm =======================
+const AKEY = 'clockAlarms';
+let alarms = [];
+try {
+  const a = JSON.parse(localStorage.getItem(AKEY));
+  if (Array.isArray(a)) alarms = a;
+} catch (e) {}
+
+function saveAlarms() {
+  try { localStorage.setItem(AKEY, JSON.stringify(alarms)); } catch (e) {}
+}
+
+let snoozeAt = 0;
+function snoozeFive() { snoozeAt = Date.now() + 5 * 60 * 1000; }
+
+function renderAlarms() {
+  const box = document.getElementById('alarmList');
+  if (!alarms.length) {
+    box.innerHTML = '<div class="empty">No alarms yet</div>';
+    return;
+  }
+  box.innerHTML = '';
+  alarms.forEach(function (a) {
+    const row = document.createElement('div');
+    row.className = 'arow' + (a.on ? '' : ' off');
+    row.innerHTML =
+      '<div class="time atime" style="--size:11vw">' + timeHtml(a.time, false) + '</div>' +
+      '<div class="ameta">' + (a.daily ? 'Every day' : 'Once') + '</div>' +
+      '<button class="btn" data-act="tog">' + (a.on ? 'On' : 'Off') + '</button>' +
+      '<button class="btn danger" data-act="del">Delete</button>';
+    row.querySelector('[data-act="tog"]').onclick = function () {
+      a.on = !a.on; saveAlarms(); renderAlarms();
+    };
+    row.querySelector('[data-act="del"]').onclick = function () {
+      alarms = alarms.filter(function (x) { return x !== a; });
+      saveAlarms(); renderAlarms();
+    };
+    box.appendChild(row);
+  });
+}
+
+document.getElementById('aAdd').onclick = function () {
+  const t = document.getElementById('aTime').value;
+  if (!t) return;
+  const now = new Date();
+  const a = {
+    id: 'a' + Date.now(),
+    time: t,
+    on: true,
+    daily: document.getElementById('aDaily').checked,
+    last: ''
+  };
+  // do not ring immediately if set to the current minute
+  if (t === pad(now.getHours()) + ':' + pad(now.getMinutes())) a.last = dayKey(now) + t;
+  alarms.push(a);
+  alarms.sort(function (x, y) { return x.time < y.time ? -1 : 1; });
+  saveAlarms(); renderAlarms();
+};
+
+function checkAlarms() {
+  const now = new Date();
+  const hm = pad(now.getHours()) + ':' + pad(now.getMinutes());
+  const dk = dayKey(now);
+  alarms.forEach(function (a) {
+    if (a.on && a.time === hm && a.last !== dk + hm) {
+      a.last = dk + hm;
+      if (!a.daily) a.on = false;
+      saveAlarms(); renderAlarms();
+      startRing('Alarm ' + a.time, snoozeFive);
+    }
+  });
+  if (snoozeAt && Date.now() >= snoozeAt) {
+    snoozeAt = 0;
+    startRing('Alarm (snoozed)', snoozeFive);
+  }
+}
+
+// ======================= Stopwatch =======================
+let sw = { running: false, start: 0, elapsed: 0, laps: [] };
+
+function swMs() { return sw.elapsed + (sw.running ? Date.now() - sw.start : 0); }
+
+function fmtMs(ms) {
+  const t = Math.floor(ms / 10);
+  const cs = t % 100;
+  const s = Math.floor(t / 100) % 60;
+  const m = Math.floor(t / 6000) % 60;
+  const h = Math.floor(t / 360000);
+  return { main: (h ? pad(h) + ':' : '') + pad(m) + ':' + pad(s), cs: pad(cs) };
+}
+
+let lastSwMain = '';
+function renderSw() {
+  const f = fmtMs(swMs());
+  if (f.main !== lastSwMain) {
+    lastSwMain = f.main;
+    document.getElementById('swMain').innerHTML = timeHtml(f.main, false);
+  }
+  document.getElementById('swCs').textContent = '.' + f.cs;
+  document.getElementById('swGo').textContent = sw.running ? 'Pause' : 'Start';
+}
+
+function renderLaps() {
+  const box = document.getElementById('laps');
+  box.innerHTML = '';
+  for (let i = sw.laps.length - 1; i >= 0; i--) {
+    const total = fmtMs(sw.laps[i]);
+    const prev = i > 0 ? sw.laps[i - 1] : 0;
+    const split = fmtMs(sw.laps[i] - prev);
+    const row = document.createElement('div');
+    row.className = 'lap';
+    row.textContent = 'Lap ' + (i + 1) + '   +' + split.main + '.' + split.cs +
+      '   ' + total.main + '.' + total.cs;
+    box.appendChild(row);
+  }
+}
+
+document.getElementById('swGo').onclick = function () {
+  if (sw.running) {
+    sw.elapsed += Date.now() - sw.start;
+    sw.running = false;
+  } else {
+    sw.start = Date.now();
+    sw.running = true;
+  }
+  renderSw();
+};
+document.getElementById('swLap').onclick = function () {
+  if (swMs() > 0) { sw.laps.push(swMs()); renderLaps(); }
+};
+document.getElementById('swReset').onclick = function () {
+  sw = { running: false, start: 0, elapsed: 0, laps: [] };
+  renderSw(); renderLaps();
+};
+
+// ======================= Timer =======================
+const TKEY = 'clockTimer';
+let tm = { total: 300000, remaining: 300000, running: false, endAt: 0 };
+try {
+  const t = JSON.parse(localStorage.getItem(TKEY));
+  if (t && typeof t.total === 'number') tm = Object.assign(tm, t);
+} catch (e) {}
+
+function saveTm() {
+  try { localStorage.setItem(TKEY, JSON.stringify(tm)); } catch (e) {}
+}
+
+function tmLeft() {
+  return tm.running ? Math.max(0, tm.endAt - Date.now()) : tm.remaining;
+}
+
+function fmtTimer(ms) {
+  const s = Math.ceil(ms / 1000);
+  const h = Math.floor(s / 3600);
+  const m = Math.floor((s % 3600) / 60);
+  const sec = s % 60;
+  return (h ? pad(h) + ':' : '') + pad(m) + ':' + pad(sec);
+}
+
+let lastTm = '';
+function renderTm() {
+  const ms = tmLeft();
+  const str = fmtTimer(ms);
+  if (str !== lastTm) {
+    lastTm = str;
+    document.getElementById('tmTime').innerHTML = timeHtml(str, false);
+  }
+  document.getElementById('tmGo').textContent = tm.running ? 'Pause' : 'Start';
+  if (tm.running && ms <= 0) {
+    tm.running = false;
+    tm.remaining = tm.total;
+    saveTm();
+    renderTm();
+    startRing('Timer finished', null);
+  }
+}
+
+function setTimer(ms) {
+  if (ms <= 0) return;
+  tm.total = ms;
+  tm.remaining = ms;
+  tm.running = false;
+  saveTm(); renderTm();
+}
+
+document.querySelectorAll('#tmChips [data-min]').forEach(function (b) {
+  b.onclick = function () { setTimer(Number(b.dataset.min) * 60000); };
+});
+document.getElementById('tmSet').onclick = function () {
+  const v = Number(document.getElementById('tmMin').value);
+  if (v > 0) setTimer(Math.min(v, 999) * 60000);
+};
+document.getElementById('tmGo').onclick = function () {
+  if (tm.running) {
+    tm.remaining = tmLeft();
+    tm.running = false;
+  } else {
+    if (tm.remaining <= 0) tm.remaining = tm.total;
+    tm.endAt = Date.now() + tm.remaining;
+    tm.running = true;
+  }
+  saveTm(); renderTm();
+};
+document.getElementById('tmReset').onclick = function () {
+  tm.running = false;
+  tm.remaining = tm.total;
+  saveTm(); renderTm();
+};
+
+// ======================= Start tabs =======================
+renderAlarms();
+renderSw();
+renderLaps();
+renderTm();
+setInterval(checkAlarms, 1000);
+setInterval(function () { if (sw.running) renderSw(); }, 50);
+setInterval(function () { if (tm.running) renderTm(); }, 200);
+showTab('home');
