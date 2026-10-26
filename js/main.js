@@ -743,3 +743,179 @@ setInterval(checkAlarms, 1000);
 setInterval(function () { if (sw.running) renderSw(); }, 50);
 setInterval(function () { if (tm.running) renderTm(); }, 200);
 showTab('home');
+// ======================= Alarm screen (iOS style) and dial stopwatch =======================
+var alarmEditMode = false;
+
+function escapeAttr(s) {
+  return String(s).replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;');
+}
+
+function renderAlarms() {
+  var box = document.getElementById('alarmList');
+  if (!box) return;
+  if (!alarms.length) {
+    box.innerHTML = '<div class="empty">No alarms yet. Tap + to add one.</div>';
+    return;
+  }
+  box.innerHTML = '';
+  alarms.forEach(function (a) {
+    var p = a.time.split(':');
+    var h = Number(p[0]);
+    var m = p[1];
+    var ap = h >= 12 ? 'PM' : 'AM';
+    var h12 = h % 12;
+    if (h12 === 0) h12 = 12;
+
+    var row = document.createElement('div');
+    row.className = 'arow2' + (a.on ? '' : ' off') + (alarmEditMode ? ' editing' : '');
+    row.innerHTML =
+      '<button class="adel" aria-label="Delete">&minus;</button>' +
+      '<div class="ainfo">' +
+        '<div class="time atime" style="--size:13vw">' + timeHtml(h12 + ':' + m, false) +
+        '<span class="ampm">' + ap + '</span></div>' +
+        '<div class="alabel">' + escapeAttr(a.label || 'Alarm') + (a.daily ? ', Every day' : ', Once') + '</div>' +
+      '</div>' +
+      '<button class="tgl' + (a.on ? ' on' : '') + '" aria-label="On or off"><span></span></button>';
+
+    row.querySelector('.tgl').onclick = function () {
+      a.on = !a.on; saveAlarms(); renderAlarms();
+    };
+    row.querySelector('.adel').onclick = function () {
+      alarms = alarms.filter(function (x) { return x !== a; });
+      saveAlarms(); renderAlarms();
+    };
+    row.querySelector('.ainfo').onclick = function () { openAlarmSheet(a); };
+    box.appendChild(row);
+  });
+}
+
+function openAlarmSheet(a) {
+  var isNew = !a;
+  var draft = a
+    ? { time: a.time, label: a.label || '', daily: a.daily }
+    : { time: '07:00', label: '', daily: true };
+
+  var h = '<div class="title">' + (isNew ? 'Add alarm' : 'Edit alarm') + '</div>' +
+    '<div class="row"><input type="time" id="asTime" class="bigin" value="' + draft.time + '"></div>' +
+    '<div class="row"><input type="text" id="asLabel" placeholder="Label (optional)" maxlength="30" value="' + escapeAttr(draft.label) + '"></div>' +
+    '<div class="row"><button class="btn" id="asRepeat"></button></div>' +
+    '<div class="row"><button class="btn" id="asSave">Save</button>' +
+    (isNew ? '' : '<button class="btn danger" id="asDel">Delete</button>') +
+    '<button class="btn" id="asCancel">Cancel</button></div>';
+  openSheet(h);
+
+  function lab() {
+    document.getElementById('asRepeat').textContent =
+      draft.daily ? 'Repeat: Every day' : 'Repeat: Once';
+  }
+  lab();
+
+  document.getElementById('asRepeat').onclick = function () {
+    draft.daily = !draft.daily; lab();
+  };
+
+  document.getElementById('asSave').onclick = function () {
+    var t = document.getElementById('asTime').value;
+    if (!t) return;
+    var lbl = document.getElementById('asLabel').value.trim();
+    var now = new Date();
+    var guard = (t === pad(now.getHours()) + ':' + pad(now.getMinutes())) ? dayKey(now) + t : '';
+    if (isNew) {
+      alarms.push({ id: 'a' + Date.now(), time: t, on: true, daily: draft.daily, label: lbl, last: guard });
+    } else {
+      a.time = t; a.label = lbl; a.daily = draft.daily; a.on = true; a.last = guard;
+    }
+    alarms.sort(function (x, y) { return x.time < y.time ? -1 : 1; });
+    saveAlarms(); renderAlarms(); closeSheet();
+  };
+
+  var del = document.getElementById('asDel');
+  if (del) del.onclick = function () {
+    alarms = alarms.filter(function (x) { return x !== a; });
+    saveAlarms(); renderAlarms(); closeSheet();
+  };
+
+  document.getElementById('asCancel').onclick = closeSheet;
+}
+
+// ---- Stopwatch dial ----
+function iconPlay() {
+  return '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z"/></svg>';
+}
+function iconPause() {
+  return '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M7 5h4v14H7zM13 5h4v14h-4z"/></svg>';
+}
+
+function buildDial() {
+  var g = document.getElementById('dialTicks');
+  var sg = document.getElementById('subTicks');
+  if (!g || !sg) return;
+
+  var s = '';
+  for (var i = 0; i < 60; i++) {
+    var big = i % 5 === 0;
+    s += '<line x1="150" y1="14" x2="150" y2="' + (big ? 27 : 21) + '" stroke="' +
+      (big ? '#d4d4d4' : '#6b6b6b') + '" stroke-width="' + (big ? 2.4 : 1.4) +
+      '" transform="rotate(' + (i * 6) + ' 150 150)"/>';
+  }
+  for (var k = 1; k <= 12; k++) {
+    var a = k * 30 * Math.PI / 180;
+    var x = 150 + 108 * Math.sin(a);
+    var y = 150 - 108 * Math.cos(a);
+    s += '<text x="' + x.toFixed(1) + '" y="' + (y + 5).toFixed(1) +
+      '" text-anchor="middle" font-size="15" font-weight="700" fill="#ececec">' + (k * 5) + '</text>';
+  }
+  g.innerHTML = s;
+
+  var t = '';
+  for (var j = 0; j < 30; j++) {
+    t += '<line x1="150" y1="172" x2="150" y2="' + (j % 5 === 0 ? 178 : 175) +
+      '" stroke="#7a7a7a" stroke-width="1" transform="rotate(' + (j * 12) + ' 150 208)"/>';
+  }
+  var labels = ['30', '5', '10', '15', '20', '25'];
+  for (var q = 0; q < 6; q++) {
+    var b = q * 60 * Math.PI / 180;
+    var lx = 150 + 25 * Math.sin(b);
+    var ly = 208 - 25 * Math.cos(b);
+    t += '<text x="' + lx.toFixed(1) + '" y="' + (ly + 3).toFixed(1) +
+      '" text-anchor="middle" font-size="9" font-weight="700" fill="#cfcfcf">' + labels[q] + '</text>';
+  }
+  sg.innerHTML = t;
+}
+
+function renderSw() {
+  var ms = swMs();
+  var f = fmtMs(ms);
+  if (f.main !== lastSwMain) {
+    lastSwMain = f.main;
+    var main = document.getElementById('swMain');
+    if (main) main.innerHTML = timeHtml(f.main, false);
+  }
+  var cs = document.getElementById('swCs');
+  if (cs) cs.textContent = '.' + f.cs;
+
+  var go = document.getElementById('swGo');
+  if (go) {
+    var k = sw.running ? 'pause' : 'play';
+    if (go.getAttribute('data-k') !== k) {
+      go.setAttribute('data-k', k);
+      go.innerHTML = sw.running ? iconPause() : iconPlay();
+    }
+  }
+
+  var h1 = document.getElementById('swHand');
+  if (h1) h1.setAttribute('transform', 'rotate(' + ((ms % 60000) / 60000 * 360).toFixed(2) + ' 150 150)');
+  var h2 = document.getElementById('swHand2');
+  if (h2) h2.setAttribute('transform', 'rotate(' + (((ms / 60000) % 30) / 30 * 360).toFixed(2) + ' 150 208)');
+}
+
+document.getElementById('aPlus').onclick = function () { openAlarmSheet(null); };
+document.getElementById('aEdit').onclick = function () {
+  alarmEditMode = !alarmEditMode;
+  this.textContent = alarmEditMode ? 'Done' : 'Edit';
+  renderAlarms();
+};
+
+buildDial();
+renderAlarms();
+renderSw();
