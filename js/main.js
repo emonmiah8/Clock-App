@@ -919,3 +919,511 @@ document.getElementById('aEdit').onclick = function () {
 buildDial();
 renderAlarms();
 renderSw();
+// ======================= Round 4: SF numbers, light theme, holidays, timer, clock icon =======================
+
+// ---------- Number style (retro lines or SF look) ----------
+var digitMode = 'retro';   // set properly at the end of this block
+
+function timeHtml(str, retro) {
+  var i, ch, n = 0;
+
+  if (digitMode === 'sf') {
+    var main = '';
+    var suf = '';
+    for (i = 0; i < str.length; i++) {
+      ch = str.charAt(i);
+      if (ch === ':') {
+        main += '<span class="colon">:</span>';
+      } else if (ch >= '0' && ch <= '9') {
+        main += retro
+          ? '<span style="color:' + RETRO[n % 3] + '">' + ch + '</span>'
+          : ch;
+        n++;
+      } else if (ch !== ' ') {
+        suf += ch;
+      }
+    }
+    return '<span class="txt">' + main + '</span>' +
+      (suf ? '<span class="ampm">' + suf + '</span>' : '');
+  }
+
+  var html = '';
+  for (i = 0; i < str.length; i++) {
+    ch = str.charAt(i);
+    if (ch === ':') {
+      html += COLON_SVG;
+    } else if (ch === ' ') {
+      html += '<span class="gap"></span>';
+    } else if (ch >= '0' && ch <= '9') {
+      html += digitSvg(ch, retro ? RETRO[n % 3] : null);
+      n++;
+    } else {
+      html += '<span class="ampm">' + ch + '</span>';
+    }
+  }
+  return html;
+}
+
+var lastSwCs = '';
+
+function applyDigitMode() {
+  document.body.classList.toggle('sf', digitMode === 'sf');
+  renderAll();
+  lastSwMain = ''; lastSwCs = ''; renderSw();
+  lastTm = ''; renderTm();
+  renderAlarms();
+}
+
+// ---------- Theme (dark / light) ----------
+var BGS_LIGHT = [
+  ['#ffffff', 'White'],
+  ['#f2f2f7', 'Gray'],
+  ['#fbf5ea', 'Cream'],
+  ['#eaf2ff', 'Sky'],
+  ['#eaf6ee', 'Mint']
+];
+
+function applyTheme() {
+  var light = globalSet.theme === 'light';
+  var bg = light ? (globalSet.bgLight || '#f2f2f7') : (globalSet.bg || '#000000');
+  document.documentElement.style.setProperty('--bg', bg);
+  document.body.classList.toggle('light', light);
+  RETRO[2] = light ? '#2b2b2e' : '#f4f1ea';
+  var m = document.querySelector('meta[name="theme-color"]');
+  if (m) m.setAttribute('content', bg);
+}
+
+// white widgets turn dark automatically on the light theme
+function applyStyle(w) {
+  var el = widgetEl(w.id);
+  if (!el) return;
+  var light = document.body.classList.contains('light');
+  var c = (light && w.color === '#ffffff') ? '#111111' : w.color;
+  el.style.setProperty('--color', c);
+  el.style.setProperty('--size', w.size + 'vw');
+}
+
+// ---------- Settings ----------
+function openSettings() {
+  var light = globalSet.theme === 'light';
+  var list = light ? BGS_LIGHT : BGS;
+
+  var h = '<div class="title">Settings</div>';
+  h += '<div class="row"><button class="btn" id="themebtn"></button></div>';
+  h += '<div class="row"><div class="label">Background</div>' +
+    list.map(function (b) {
+      return '<button class="swatch" data-bg="' + b[0] + '" title="' + b[1] +
+        '" style="background:' + b[0] + ';border-color:#888"></button>';
+    }).join('') + '</div>';
+  h += '<div class="row"><button class="btn" id="fontbtn"></button></div>';
+  h += '<div class="row"><button class="btn" id="awake"></button></div>';
+  h += '<div class="row"><button class="btn" id="fs">Toggle fullscreen</button></div>';
+  h += '<div class="row"><button class="btn" id="done">Done</button></div>';
+  openSheet(h);
+
+  function labels() {
+    document.getElementById('themebtn').textContent =
+      globalSet.theme === 'light' ? 'Theme: Light' : 'Theme: Dark';
+    document.getElementById('awake').textContent =
+      globalSet.awake ? 'Keep screen awake: ON' : 'Keep screen awake: OFF';
+    document.getElementById('fontbtn').textContent =
+      digitMode === 'sf' ? 'Numbers: SF style' : 'Numbers: Retro lines';
+  }
+  labels();
+
+  document.getElementById('themebtn').onclick = function () {
+    globalSet.theme = globalSet.theme === 'light' ? 'dark' : 'light';
+    saveGlobal(); applyTheme(); renderAll();
+    openSettings();
+  };
+
+  sheet.querySelectorAll('[data-bg]').forEach(function (b) {
+    b.onclick = function () {
+      if (globalSet.theme === 'light') globalSet.bgLight = b.dataset.bg;
+      else globalSet.bg = b.dataset.bg;
+      saveGlobal(); applyTheme();
+    };
+  });
+
+  document.getElementById('fontbtn').onclick = function () {
+    digitMode = digitMode === 'sf' ? 'retro' : 'sf';
+    globalSet.font = digitMode;
+    saveGlobal(); applyDigitMode(); labels();
+  };
+
+  document.getElementById('awake').onclick = function () {
+    globalSet.awake = !globalSet.awake;
+    saveGlobal(); setAwake(globalSet.awake); labels();
+  };
+
+  document.getElementById('fs').onclick = function () {
+    if (document.fullscreenElement) {
+      document.exitFullscreen();
+    } else if (document.documentElement.requestFullscreen) {
+      document.documentElement.requestFullscreen().catch(function () {});
+    }
+  };
+
+  document.getElementById('done').onclick = closeSheet;
+}
+
+// ---------- Settings icon: a live clock inside a toothed ring ----------
+function buildCog() {
+  var s = document.getElementById('cogSvg');
+  if (!s) return;
+  var t = '';
+  for (var i = 0; i < 12; i++) {
+    var big = i % 3 === 0;
+    t += '<line x1="20" y1="' + (big ? 0.8 : 2.2) + '" x2="20" y2="' + (big ? 5.6 : 4.6) +
+      '" stroke-width="' + (big ? 2.6 : 1.8) + '" transform="rotate(' + (i * 30) + ' 20 20)"/>';
+  }
+  s.innerHTML =
+    '<g stroke="currentColor" stroke-linecap="round">' + t + '</g>' +
+    '<circle cx="20" cy="20" r="13.5" fill="none" stroke="currentColor" stroke-width="1.8"/>' +
+    '<line id="cogH" x1="20" y1="20" x2="20" y2="13" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"/>' +
+    '<line id="cogM" x1="20" y1="20" x2="20" y2="10.5" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/>' +
+    '<line id="cogS" x1="20" y1="22.5" x2="20" y2="9.5" stroke="#ff5252" stroke-width="0.9" stroke-linecap="round"/>' +
+    '<circle cx="20" cy="20" r="1.3" fill="currentColor"/>';
+}
+
+function rot(id, deg) {
+  var e = document.getElementById(id);
+  if (e) e.setAttribute('transform', 'rotate(' + deg.toFixed(1) + ' 20 20)');
+}
+
+function updateCog() {
+  var n = new Date();
+  var s = n.getSeconds();
+  var m = n.getMinutes();
+  var h = n.getHours() % 12;
+  rot('cogH', h * 30 + m * 0.5);
+  rot('cogM', m * 6 + s * 0.1);
+  rot('cogS', s * 6);
+}
+
+// ---------- Stopwatch: milliseconds same size as minutes and seconds ----------
+function csHtml(cs) {
+  if (digitMode === 'sf') return '<span class="txt">.' + cs + '</span>';
+  return '<svg class="dg" viewBox="0 0 24 100"><circle cx="12" cy="90" r="5" fill="currentColor"/></svg>' +
+    timeHtml(cs, false);
+}
+
+function renderSw() {
+  var ms = swMs();
+  var f = fmtMs(ms);
+  if (f.main !== lastSwMain) {
+    lastSwMain = f.main;
+    var main = document.getElementById('swMain');
+    if (main) main.innerHTML = timeHtml(f.main, false);
+  }
+  if (f.cs !== lastSwCs) {
+    lastSwCs = f.cs;
+    var cs = document.getElementById('swCs');
+    if (cs) cs.innerHTML = csHtml(f.cs);
+  }
+
+  var go = document.getElementById('swGo');
+  if (go) {
+    var k = sw.running ? 'pause' : 'play';
+    if (go.getAttribute('data-k') !== k) {
+      go.setAttribute('data-k', k);
+      go.innerHTML = sw.running ? iconPause() : iconPlay();
+    }
+  }
+
+  var h1 = document.getElementById('swHand');
+  if (h1) h1.setAttribute('transform', 'rotate(' + ((ms % 60000) / 60000 * 360).toFixed(2) + ' 150 150)');
+  var h2 = document.getElementById('swHand2');
+  if (h2) h2.setAttribute('transform', 'rotate(' + (((ms / 60000) % 30) / 30 * 360).toFixed(2) + ' 150 208)');
+}
+
+// ---------- Timer: wheel picker + frequently used timers ----------
+var ITEM_H = 60;
+var wheelTimer = null;
+var selIdx = { pH: -1, pM: -1, pS: -1 };
+var lastRun = false;
+var PKEY = 'clockPresets';
+var presets = [];
+
+function wheelIndex(id) {
+  var el = document.getElementById(id);
+  return el ? Math.round(el.scrollTop / ITEM_H) : 0;
+}
+
+function wheelMs() {
+  return (wheelIndex('pH') * 3600 + wheelIndex('pM') * 60 + wheelIndex('pS')) * 1000;
+}
+
+function markSelected() {
+  ['pH', 'pM', 'pS'].forEach(function (id) {
+    var el = document.getElementById(id);
+    if (!el || !el.children.length) return;
+    var idx = Math.max(0, Math.min(el.children.length - 1, Math.round(el.scrollTop / ITEM_H)));
+    if (idx !== selIdx[id]) {
+      if (el.children[selIdx[id]]) el.children[selIdx[id]].classList.remove('sel');
+      el.children[idx].classList.add('sel');
+      selIdx[id] = idx;
+    }
+  });
+}
+
+function readWheels() {
+  if (tm.running || tm.remaining !== tm.total) return;
+  var ms = wheelMs();
+  tm.total = ms;
+  tm.remaining = ms;
+  saveTm();
+}
+
+function onWheelScroll() {
+  markSelected();
+  clearTimeout(wheelTimer);
+  wheelTimer = setTimeout(readWheels, 120);
+}
+
+function buildWheels() {
+  [['pH', 24], ['pM', 60], ['pS', 60]].forEach(function (c) {
+    var el = document.getElementById(c[0]);
+    if (!el) return;
+    var html = '';
+    for (var i = 0; i < c[1]; i++) html += '<div class="pi">' + pad(i) + '</div>';
+    el.innerHTML = html;
+    el.addEventListener('scroll', onWheelScroll, { passive: true });
+  });
+}
+
+function setWheel(id, i) {
+  var el = document.getElementById(id);
+  if (el) el.scrollTop = i * ITEM_H;
+}
+
+function syncWheels() {
+  var total = Math.round(tm.total / 1000);
+  setWheel('pH', Math.floor(total / 3600) % 24);
+  setWheel('pM', Math.floor((total % 3600) / 60));
+  setWheel('pS', total % 60);
+  markSelected();
+}
+
+function renderTm() {
+  var ms = tmLeft();
+  var inRun = tm.running || tm.remaining !== tm.total;
+
+  var pk = document.getElementById('tmPicker');
+  var rn = document.getElementById('tmRun');
+  var rs = document.getElementById('tmReset');
+  if (pk) pk.style.display = inRun ? 'none' : 'flex';
+  if (rn) rn.style.display = inRun ? 'flex' : 'none';
+  if (rs) rs.style.display = inRun ? 'flex' : 'none';
+  if (lastRun && !inRun) setTimeout(syncWheels, 30);
+  lastRun = inRun;
+
+  if (inRun) {
+    var str = fmtTimer(ms);
+    if (str !== lastTm) {
+      lastTm = str;
+      var t = document.getElementById('tmTime');
+      if (t) t.innerHTML = timeHtml(str, false);
+    }
+  }
+
+  var go = document.getElementById('tmGo');
+  if (go) {
+    var k = tm.running ? 'pause' : 'play';
+    if (go.getAttribute('data-k') !== k) {
+      go.setAttribute('data-k', k);
+      go.innerHTML = tm.running ? iconPause() : iconPlay();
+    }
+  }
+
+  if (tm.running && ms <= 0) {
+    tm.running = false;
+    tm.remaining = tm.total;
+    saveTm();
+    renderTm();
+    startRing('Timer finished', null);
+  }
+}
+
+function fmtHMS(s) {
+  return pad(Math.floor(s / 3600)) + ':' + pad(Math.floor((s % 3600) / 60)) + ':' + pad(s % 60);
+}
+
+function loadPresets() {
+  try {
+    var p = JSON.parse(localStorage.getItem(PKEY));
+    if (Array.isArray(p)) return p;
+  } catch (e) {}
+  return [
+    { id: 'p1', name: 'Brush teeth', s: 120 },
+    { id: 'p2', name: 'Face mask', s: 900 },
+    { id: 'p3', name: 'Boil eggs', s: 600 },
+    { id: 'p4', name: 'Nap', s: 1800 }
+  ];
+}
+
+function savePresets() {
+  try { localStorage.setItem(PKEY, JSON.stringify(presets)); } catch (e) {}
+}
+
+function pickPreset(ms) {
+  tm.running = false;
+  tm.total = ms;
+  tm.remaining = ms;
+  saveTm(); renderTm(); syncWheels();
+}
+
+function renderPresets() {
+  var box = document.getElementById('presetList');
+  if (!box) return;
+  box.innerHTML = '';
+  presets.forEach(function (p) {
+    var row = document.createElement('div');
+    row.className = 'preset';
+    row.innerHTML =
+      '<span class="pn">' + escapeAttr(p.name) + '</span>' +
+      '<span class="pd">' + fmtHMS(p.s) + '</span>' +
+      '<button class="px" aria-label="Delete">&times;</button>';
+    row.onclick = function () { pickPreset(p.s * 1000); };
+    row.querySelector('.px').onclick = function (e) {
+      e.stopPropagation();
+      presets = presets.filter(function (x) { return x !== p; });
+      savePresets(); renderPresets();
+    };
+    box.appendChild(row);
+  });
+}
+
+function openPresetSheet() {
+  function opts(n) {
+    var o = '';
+    for (var i = 0; i < n; i++) o += '<option value="' + i + '">' + pad(i) + '</option>';
+    return o;
+  }
+  var h = '<div class="title">Add timer</div>' +
+    '<div class="row"><input type="text" id="ptName" placeholder="Name (for example Tea)" maxlength="24"></div>' +
+    '<div class="row"><div class="label">Hours, minutes, seconds</div>' +
+    '<select id="ptH">' + opts(24) + '</select> ' +
+    '<select id="ptM">' + opts(60) + '</select> ' +
+    '<select id="ptS">' + opts(60) + '</select></div>' +
+    '<div class="row"><button class="btn" id="ptSave">Save</button>' +
+    '<button class="btn" id="ptCancel">Cancel</button></div>';
+  openSheet(h);
+  document.getElementById('ptM').value = '5';
+
+  document.getElementById('ptSave').onclick = function () {
+    var s = Number(document.getElementById('ptH').value) * 3600 +
+      Number(document.getElementById('ptM').value) * 60 +
+      Number(document.getElementById('ptS').value);
+    if (s <= 0) return;
+    var name = document.getElementById('ptName').value.trim() || 'Timer';
+    presets.push({ id: 'p' + Date.now(), name: name, s: s });
+    savePresets(); renderPresets(); closeSheet();
+  };
+  document.getElementById('ptCancel').onclick = closeSheet;
+}
+
+function timerGo() {
+  unlockAudio();
+  if (tm.running) {
+    tm.remaining = tmLeft();
+    tm.running = false;
+  } else {
+    if (tm.remaining === tm.total) {
+      var ms = wheelMs();
+      tm.total = ms;
+      tm.remaining = ms;
+    }
+    if (tm.remaining <= 0) return;
+    tm.endAt = Date.now() + tm.remaining;
+    tm.running = true;
+  }
+  saveTm(); renderTm();
+}
+
+// ---------- Tabs: refresh the timer wheels and holidays when shown ----------
+function showTab(name) {
+  TABS.forEach(function (t) {
+    document.getElementById('v-' + t).classList.toggle('active', t === name);
+    document.querySelector('#nav [data-tab="' + t + '"]').classList.toggle('active', t === name);
+  });
+  document.getElementById('add').style.display = name === 'home' ? 'block' : 'none';
+  window.scrollTo(0, 0);
+  closeSheet();
+  if (name === 'timer') setTimeout(syncWheels, 50);
+  if (name === 'home') renderHolidays();
+}
+
+// ---------- Holidays and important dates ----------
+// Dates marked approx are moon-dependent; update this list when the government publishes the new gazette.
+var HOLIDAYS = [
+  { d: '2026-12-16', n: 'Victory Day', b: 'বিজয় দিবস' },
+  { d: '2026-12-25', n: 'Christmas Day', b: 'বড়দিন' },
+  { d: '2027-01-25', n: 'Shab-e-Barat', b: 'শবে বরাত', approx: true },
+  { d: '2027-02-21', n: 'Shaheed Day', b: 'শহীদ ও মাতৃভাষা দিবস' },
+  { d: '2027-03-10', n: 'Eid-ul-Fitr', b: 'ঈদুল ফিতর', approx: true },
+  { d: '2027-03-26', n: 'Independence Day', b: 'স্বাধীনতা দিবস' },
+  { d: '2027-04-14', n: 'Pohela Boishakh', b: 'পহেলা বৈশাখ' },
+  { d: '2027-05-01', n: 'May Day', b: 'মে দিবস' },
+  { d: '2027-05-17', n: 'Eid-ul-Adha', b: 'ঈদুল আযহা', approx: true },
+  { d: '2027-08-05', n: 'July Uprising Day', b: 'জুলাই গণ-অভ্যুত্থান দিবস' },
+  { d: '2027-12-16', n: 'Victory Day', b: 'বিজয় দিবস' },
+  { d: '2027-12-25', n: 'Christmas Day', b: 'বড়দিন' }
+];
+
+function renderHolidays() {
+  var box = document.getElementById('hList');
+  if (!box || !HOLIDAYS) return;
+  var MON = ['JAN', 'FEB', 'MAR', 'APR', 'MAY', 'JUN', 'JUL', 'AUG', 'SEP', 'OCT', 'NOV', 'DEC'];
+  var now = new Date();
+  var today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  var items = [];
+
+  HOLIDAYS.forEach(function (h) {
+    var p = h.d.split('-');
+    var dt = new Date(Number(p[0]), Number(p[1]) - 1, Number(p[2]));
+    var diff = Math.round((dt - today) / 86400000);
+    if (diff >= 0) items.push({ h: h, dt: dt, diff: diff });
+  });
+  items.sort(function (a, b) { return a.dt - b.dt; });
+  items = items.slice(0, 7);
+
+  if (!items.length) {
+    box.innerHTML = '<div class="hcard"><div class="hname">No upcoming dates</div>' +
+      '<div class="hbn">Update the holiday list in js/main.js</div></div>';
+    return;
+  }
+
+  box.innerHTML = items.map(function (it) {
+    var left = it.diff === 0 ? 'Today' : (it.diff === 1 ? 'Tomorrow' : 'in ' + it.diff + ' days');
+    var wd = it.dt.toLocaleDateString('en-GB', { weekday: 'short' });
+    return '<div class="hcard">' +
+      '<div class="hdate"><span class="hmon">' + MON[it.dt.getMonth()] + '</span>' +
+      '<span class="hday">' + (it.h.approx ? '~' : '') + it.dt.getDate() + '</span>' +
+      '<span class="hwd">' + wd + '</span></div>' +
+      '<div class="hname">' + it.h.n + '</div>' +
+      '<div class="hbn">' + it.h.b + '</div>' +
+      '<div class="hleft' + (it.diff <= 7 ? ' soon' : '') + '">' + left + '</div>' +
+      '</div>';
+  }).join('');
+}
+
+// ---------- Start round 4 ----------
+presets = loadPresets();
+digitMode = globalSet.font === 'retro' ? 'retro' : 'sf';
+applyTheme();
+
+document.getElementById('cog').onclick = openSettings;
+document.getElementById('pAdd').onclick = openPresetSheet;
+document.getElementById('tmGo').onclick = timerGo;
+
+buildWheels();
+buildCog();
+updateCog();
+applyDigitMode();
+renderPresets();
+renderHolidays();
+syncWheels();
+
+setInterval(updateCog, 1000);
+setInterval(renderHolidays, 60000);
