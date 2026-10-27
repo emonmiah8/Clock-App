@@ -1903,3 +1903,52 @@ showTab = function (name) {
 
 renderHolidays();
 queueFade();
+// ======================= Round 8: liquid glass stopwatch + orange accent =======================
+(function () {
+  var css = [
+    ':root{--outer:0 12px 26px rgba(0,0,0,.38),0 2px 6px rgba(0,0,0,.3)}',
+    'body.light{--outer:0 10px 22px rgba(0,0,0,.20),0 2px 5px rgba(0,0,0,.14)}',
+
+    /* ---- orange accent: seconds hand and the milliseconds text ---- */
+    '#swHand line{stroke:#ff9f0a!important}',
+    '#swHand circle:first-of-type{fill:#ff9f0a!important}',
+    '.dialtime .cs,.dialtime .time.cs{color:#ff9f0a!important}',
+
+    /* ---- the dial: smoked liquid glass ---- */
+    '.dialwrap{isolation:isolate}',
+    '#dg stop{stop-opacity:.82}',
+    '#bz stop{stop-opacity:.92}',
+    '.dialwrap::before{content:"";position:absolute;inset:.8%;border-radius:50%;z-index:-1;' +
+      'background:rgba(255,255,255,.05);-webkit-backdrop-filter:blur(22px) saturate(1.9) brightness(.6);backdrop-filter:blur(22px) saturate(1.9) brightness(.6);' +
+      'box-shadow:0 26px 50px rgba(0,0,0,.45),0 8px 18px rgba(0,0,0,.35)}',
+    '.dialwrap::after{content:"";position:absolute;inset:.8%;border-radius:50%;z-index:3;pointer-events:none;' +
+      'background:radial-gradient(50% 32% at 28% 9%,rgba(255,255,255,.24),rgba(255,255,255,0) 72%),' +
+      'radial-gradient(55% 36% at 72% 96%,rgba(255,255,255,.10),rgba(255,255,255,0) 72%),' +
+      'linear-gradient(155deg,rgba(255,255,255,.10),rgba(255,255,255,0) 38%);' +
+      'box-shadow:inset 0 2px 2px rgba(255,255,255,.55),inset 0 -3px 6px rgba(255,255,255,.12),inset 0 0 0 1.5px rgba(255,255,255,.14),' +
+      'inset 10px 14px 34px rgba(255,255,255,.06),inset -14px -20px 44px rgba(0,0,0,.40)}',
+
+    /* ---- the buttons: liquid glass ---- */
+    '.round{position:relative;isolation:isolate;' +
+      'background:linear-gradient(150deg,rgba(130,134,148,.55),rgba(26,28,34,.74))!important;' +
+      '-webkit-backdrop-filter:blur(16px) saturate(1.9);backdrop-filter:blur(16px) saturate(1.9);' +
+      'border:1px solid rgba(255,255,255,.28)!important;' +
+      'box-shadow:inset 0 1.5px 1px rgba(255,255,255,.7),inset 0 -2px 3px rgba(255,255,255,.12),inset 0 0 16px rgba(255,255,255,.08),inset -6px -8px 14px rgba(0,0,0,.30),var(--outer)!important;' +
+      'transition:transform .22s cubic-bezier(.3,1.6,.5,1),box-shadow .2s ease!important}',
+    '.round::before{content:"";position:absolute;left:15%;right:15%;top:5%;height:42%;border-radius:50%;background:linear-gradient(rgba(255,255,255,.5),rgba(255,255,255,0));pointer-events:none}',
+    '.round:active{transform:scale(.92)!important}',
+    '.round svg{position:relative;filter:drop-shadow(0 1px 1.5px rgba(0,0,0,.45))}',
+
+    /* play / pause: orange liquid glass */
+    '.round.main{' +
+      'background:linear-gradient(150deg,rgba(255,200,120,.96),rgba(255,150,30,.82) 55%,rgba(236,112,0,.74))!important;' +
+      'border-color:rgba(255,236,205,.65)!important;' +
+      'box-shadow:inset 0 2px 1.5px rgba(255,255,255,.9),inset 0 -3px 5px rgba(255,255,255,.22),inset 0 0 22px rgba(255,255,255,.2),inset -8px -10px 20px rgba(170,70,0,.38),0 14px 34px rgba(255,140,20,.45),0 0 30px rgba(255,159,10,.35)!important}',
+    '.round.main::before{top:4%;height:44%;background:linear-gradient(rgba(255,255,255,.62),rgba(255,255,255,0))}'
+  ].join('\n');
+
+  var st = document.createElement('style');
+  st.id = 'r8css';
+  st.textContent = css;
+  document.head.appendChild(st);
+})();
