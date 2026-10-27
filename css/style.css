@@ -644,25 +644,18 @@ applyDigitMode();
   min-width: calc(var(--size) * 5.2);
   will-change: contents;
 }
-/* হেডার: কোনো ব্লার, ব্যাকগ্রাউন্ড বা বর্ডার নয় */
-.upcoming-header {
-  position: sticky;
-  top: 0;
-  z-index: 2;
-  background: none;
-  border: 0;
-  box-shadow: none;
-  -webkit-backdrop-filter: none;
-  backdrop-filter: none;
-}
-
-/* কার্ডের লিস্ট: উপরের দিকে নরমভাবে ফেড */
-.upcoming-list {
-  --fade: 28px; /* ফেডের উচ্চতা, ইচ্ছেমতো বদলান */
-  -webkit-mask-image: linear-gradient(to bottom, transparent 0, #000 var(--fade));
-  mask-image: linear-gradient(to bottom, transparent 0, #000 var(--fade));
-  -webkit-mask-size: 100% 100%;
-  mask-size: 100% 100%;
-  -webkit-mask-repeat: no-repeat;
-  mask-repeat: no-repeat;
+.page {
+  --fade-top: 90px; /* হেডারের নিচ পর্যন্ত উচ্চতা */
+  -webkit-mask-image: linear-gradient(
+    to bottom,
+    transparent 0,
+    transparent calc(var(--fade-top) - 28px),
+    #000 var(--fade-top)
+  );
+  mask-image: linear-gradient(
+    to bottom,
+    transparent 0,
+    transparent calc(var(--fade-top) - 28px),
+    #000 var(--fade-top)
+  );
 }
