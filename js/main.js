@@ -2204,3 +2204,64 @@ function updateHolidayFade() {
 })();
 
 queueFade();
+// ======================= Round 10: seamless fade at the top and bottom of "Upcoming" =======================
+(function () {
+  var mask = 'linear-gradient(to bottom,transparent 0,transparent var(--ft,34px),#000 calc(var(--ft,34px) + 50px),' +
+    '#000 calc(100% - var(--fb,92px) - 98px),transparent calc(100% - var(--fb,92px)))';
+  var css = [
+    /* no more blurred strip behind the heading (its edges were visible) */
+    '.hhead::before{display:none!important}',
+    /* the list itself dissolves smoothly into the background at both ends */
+    '#hList{padding-top:calc(var(--ft,34px) + 52px)!important;padding-bottom:calc(var(--fb,92px) + 134px)!important;' +
+      '-webkit-mask-image:' + mask + ';mask-image:' + mask + '}'
+  ].join('\n');
+
+  var st = document.createElement('style');
+  st.id = 'r10css';
+  st.textContent = css;
+  document.head.appendChild(st);
+})();
+
+var lastFt = -1;
+var lastFb = -1;
+
+// The mask does the fading; this adds the blur and a slight shrink as a card leaves.
+function updateHolidayFade() {
+  fadeQueued = false;
+  var box = document.getElementById('hList');
+  if (!box || !box.offsetParent) return;           // Home tab is not showing
+
+  var br = box.getBoundingClientRect();
+  var head = document.querySelector('.hhead');
+  var nav = document.getElementById('nav');
+
+  var ft = head ? Math.max(head.getBoundingClientRect().bottom - br.top - 4, 20) : 34;
+  var navTop = nav ? nav.getBoundingClientRect().top : window.innerHeight;
+  var fb = Math.max(br.bottom - navTop + 8, 0);
+  ft = Math.round(ft);
+  fb = Math.round(fb);
+  if (ft !== lastFt) { lastFt = ft; box.style.setProperty('--ft', ft + 'px'); }
+  if (fb !== lastFb) { lastFb = fb; box.style.setProperty('--fb', fb + 'px'); }
+
+  var topClear = br.top + ft;          // above this line the list is fully transparent
+  var bottomClear = br.bottom - fb;    // below this line the list is fully transparent
+
+  var cards = box.children;
+  for (var i = 0; i < cards.length; i++) {
+    var c = cards[i];
+    var r = c.getBoundingClientRect();
+    var mid = r.top + r.height / 2;
+    var k = Math.min(clamp01((mid - topClear) / 80), clamp01((bottomClear - mid) / 80));
+    k = k * k * (3 - 2 * k);
+    c.style.opacity = '';
+    if (k > 0.995) {
+      c.style.filter = 'none';
+      c.style.transform = 'none';
+    } else {
+      c.style.filter = 'blur(' + ((1 - k) * 9).toFixed(1) + 'px)';
+      c.style.transform = 'scale(' + (0.94 + 0.06 * k).toFixed(3) + ')';
+    }
+  }
+}
+
+queueFade();
