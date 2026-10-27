@@ -644,18 +644,3 @@ applyDigitMode();
   min-width: calc(var(--size) * 5.2);
   will-change: contents;
 }
-.page {
-  --fade-top: 90px; /* হেডারের নিচ পর্যন্ত উচ্চতা */
-  -webkit-mask-image: linear-gradient(
-    to bottom,
-    transparent 0,
-    transparent calc(var(--fade-top) - 28px),
-    #000 var(--fade-top)
-  );
-  mask-image: linear-gradient(
-    to bottom,
-    transparent 0,
-    transparent calc(var(--fade-top) - 28px),
-    #000 var(--fade-top)
-  );
-}
