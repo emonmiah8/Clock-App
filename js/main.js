@@ -1952,3 +1952,114 @@ queueFade();
   st.textContent = css;
   document.head.appendChild(st);
 })();
+// ======================= Round 9: orange accent, clear glass buttons, light + haptic on press =======================
+(function () {
+  var ORANGE = '#ff9f0a';
+
+  /* 1. colour the SVG pieces directly (does not depend on any stylesheet) */
+  function paint() {
+    var lines = document.querySelectorAll('#swHand line');
+    for (var i = 0; i < lines.length; i++) lines[i].setAttribute('stroke', ORANGE);
+    var hub = document.querySelector('#swHand circle');
+    if (hub) hub.setAttribute('fill', ORANGE);
+    var cs = document.getElementById('swCs');
+    if (cs) cs.style.setProperty('color', ORANGE, 'important');
+  }
+  paint();
+
+  /* 2. styles */
+  var GLASS_ORANGE = 'linear-gradient(150deg,rgba(255,200,120,.96),rgba(255,150,30,.82) 55%,rgba(236,112,0,.74))';
+  var ORANGE_SHADOW = 'inset 0 2px 1.5px rgba(255,255,255,.9),inset 0 -3px 5px rgba(255,255,255,.22),inset 0 0 22px rgba(255,255,255,.2),inset -8px -10px 20px rgba(170,70,0,.38),0 14px 34px rgba(255,140,20,.45),0 0 30px rgba(255,159,10,.35)';
+
+  var css = [
+    ':root{--outer:0 12px 26px rgba(0,0,0,.38),0 2px 6px rgba(0,0,0,.3)}',
+    'body.light{--outer:0 10px 22px rgba(0,0,0,.20),0 2px 5px rgba(0,0,0,.14)}',
+
+    /* orange: seconds hand, hub, milliseconds */
+    '#swHand line{stroke:#ff9f0a!important}',
+    '#swHand circle:first-of-type{fill:#ff9f0a!important}',
+    '.dialtime .cs,.dialtime .time.cs,#swCs{color:#ff9f0a!important}',
+
+    /* dial: smoked liquid glass */
+    '.dialwrap{isolation:isolate}',
+    '#dg stop{stop-opacity:.82}',
+    '#bz stop{stop-opacity:.92}',
+    '.dialwrap::before{content:"";position:absolute;inset:.8%;border-radius:50%;z-index:-1;' +
+      'background:rgba(255,255,255,.05);-webkit-backdrop-filter:blur(22px) saturate(1.9) brightness(.6);backdrop-filter:blur(22px) saturate(1.9) brightness(.6);' +
+      'box-shadow:0 26px 50px rgba(0,0,0,.45),0 8px 18px rgba(0,0,0,.35)}',
+    '.dialwrap::after{content:"";position:absolute;inset:.8%;border-radius:50%;z-index:3;pointer-events:none;' +
+      'background:radial-gradient(50% 32% at 28% 9%,rgba(255,255,255,.24),rgba(255,255,255,0) 72%),' +
+      'radial-gradient(55% 36% at 72% 96%,rgba(255,255,255,.10),rgba(255,255,255,0) 72%),' +
+      'linear-gradient(155deg,rgba(255,255,255,.10),rgba(255,255,255,0) 38%);' +
+      'box-shadow:inset 0 2px 2px rgba(255,255,255,.55),inset 0 -3px 6px rgba(255,255,255,.12),inset 0 0 0 1.5px rgba(255,255,255,.14),' +
+      'inset 10px 14px 34px rgba(255,255,255,.06),inset -14px -20px 44px rgba(0,0,0,.40)}',
+
+    /* all round buttons: shared shape, press feel, shine */
+    '.round,.fab{position:relative;isolation:isolate;transition:transform .22s cubic-bezier(.3,1.6,.5,1),box-shadow .2s ease!important}',
+    '.round::before,.fab::before{content:"";position:absolute;left:15%;right:15%;top:5%;height:42%;border-radius:50%;background:linear-gradient(rgba(255,255,255,.5),rgba(255,255,255,0));pointer-events:none}',
+    '.round:active,.fab:active{transform:scale(.92)!important}',
+    '.round svg,.fab svg{position:relative;filter:drop-shadow(0 1px 1.5px rgba(0,0,0,.45))}',
+
+    /* flag and reset: clear glass */
+    '.round:not(.main){' +
+      'background:linear-gradient(150deg,rgba(255,255,255,.24),rgba(255,255,255,.05) 55%,rgba(255,255,255,.13))!important;' +
+      '-webkit-backdrop-filter:blur(20px) saturate(2);backdrop-filter:blur(20px) saturate(2);' +
+      'border:1px solid rgba(255,255,255,.38)!important;' +
+      'box-shadow:inset 0 1.5px 1px rgba(255,255,255,.8),inset 0 -2px 3px rgba(255,255,255,.18),inset 0 0 18px rgba(255,255,255,.12),inset -5px -7px 12px rgba(255,255,255,.06),var(--outer)!important}',
+    'body.light .round:not(.main){' +
+      'background:linear-gradient(150deg,rgba(255,255,255,.75),rgba(255,255,255,.28) 55%,rgba(255,255,255,.55))!important;' +
+      'border-color:rgba(255,255,255,.95)!important;color:#1c1c1e;' +
+      'box-shadow:inset 0 1.5px 1px rgba(255,255,255,.95),inset 0 -2px 3px rgba(0,0,0,.06),inset 0 0 16px rgba(255,255,255,.5),var(--outer)!important}',
+    'body.light .round:not(.main) svg{filter:drop-shadow(0 1px 1px rgba(255,255,255,.7))}',
+
+    /* play / pause (stopwatch) and play (timer): orange liquid glass */
+    '.round.main,.fab{' +
+      'background:' + GLASS_ORANGE + '!important;' +
+      'border:1px solid rgba(255,236,205,.65)!important;color:#fff;' +
+      'box-shadow:' + ORANGE_SHADOW + '!important}',
+    '.round.main::before,.fab::before{top:4%;height:44%;background:linear-gradient(rgba(255,255,255,.62),rgba(255,255,255,0))}',
+
+    /* the small "Add" link on the timer page */
+    '.phead button{color:#ff9f0a!important}',
+
+    /* light that spreads out when a button is pressed */
+    '@keyframes waveOrange{0%{opacity:.9;transform:scale(1);box-shadow:0 0 0 0 rgba(255,159,10,.7),0 0 26px 8px rgba(255,170,40,.75)}100%{opacity:0;transform:scale(2.2);box-shadow:0 0 0 0 rgba(255,159,10,0),0 0 46px 20px rgba(255,170,40,0)}}',
+    '@keyframes waveWhite{0%{opacity:.9;transform:scale(1);box-shadow:0 0 0 0 rgba(255,255,255,.55),0 0 22px 6px rgba(255,255,255,.55)}100%{opacity:0;transform:scale(1.9);box-shadow:0 0 0 0 rgba(255,255,255,0),0 0 40px 16px rgba(255,255,255,0)}}',
+    '@keyframes waveGray{0%{opacity:.9;transform:scale(1);box-shadow:0 0 0 0 rgba(90,100,130,.35),0 0 22px 6px rgba(90,100,130,.35)}100%{opacity:0;transform:scale(1.9);box-shadow:0 0 0 0 rgba(90,100,130,0),0 0 40px 16px rgba(90,100,130,0)}}',
+    '@keyframes waveNav{0%{opacity:.95;transform:scale(.88);box-shadow:0 0 16px 3px rgba(255,255,255,.55)}100%{opacity:0;transform:scale(1.35);box-shadow:0 0 30px 10px rgba(255,255,255,0)}}',
+    '@keyframes waveNavGray{0%{opacity:.95;transform:scale(.88);box-shadow:0 0 16px 3px rgba(90,100,130,.35)}100%{opacity:0;transform:scale(1.35);box-shadow:0 0 30px 10px rgba(90,100,130,0)}}',
+
+    '.round::after,.fab::after{content:"";position:absolute;inset:0;border-radius:50%;pointer-events:none;opacity:0}',
+    '.round.main.lit::after,.fab.lit::after{animation:waveOrange .65s cubic-bezier(.2,.7,.3,1) both}',
+    '.round:not(.main).lit::after{animation:waveWhite .6s cubic-bezier(.2,.7,.3,1) both}',
+    'body.light .round:not(.main).lit::after{animation-name:waveGray}',
+
+    '#nav button{position:relative}',
+    '#nav button::after{content:"";position:absolute;inset:2px 6px;border-radius:999px;pointer-events:none;opacity:0}',
+    '#nav button.lit::after{animation:waveNav .55s cubic-bezier(.2,.7,.3,1) both}',
+    'body.light #nav button.lit::after{animation-name:waveNavGray}'
+  ].join('\n');
+
+  var st = document.createElement('style');
+  st.id = 'r9css';
+  st.textContent = css;
+  document.head.appendChild(st);
+
+  /* 3. press: light + haptic */
+  function lightUp(el) {
+    el.classList.remove('lit');
+    void el.offsetWidth;                 // restart the animation
+    el.classList.add('lit');
+    clearTimeout(el._litT);
+    el._litT = setTimeout(function () { el.classList.remove('lit'); }, 700);
+  }
+
+  document.addEventListener('pointerdown', function (e) {
+    var t = (e.target && e.target.closest)
+      ? e.target.closest('#swGo,#tmGo,.round,.fab,#nav button') : null;
+    if (!t) return;
+    var strong = t.id === 'swGo' || t.id === 'tmGo';
+    if (typeof haptic === 'function') haptic(strong ? 16 : 8);
+    lightUp(t);
+  }, true);
+})();
