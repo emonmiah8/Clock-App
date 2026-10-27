@@ -1747,3 +1747,159 @@ initHolidayList();
 renderHolidays();
 applyDigitMode();
 requestAnimationFrame(sweepLoop);
+// ======================= Round 7: "Upcoming" list with fade-and-blur scrolling =======================
+
+// ---------- 1. Layout and styles ----------
+(function () {
+  var css = [
+    /* the list now fills the space down to the bottom bar; the heading floats above it */
+    '#holidays{position:relative!important;flex:1 1 auto!important;display:flex!important;flex-direction:column;min-height:300px;padding:0!important}',
+    '.hhead{position:absolute!important;left:0;right:0;top:0;z-index:3;display:flex!important;justify-content:space-between;align-items:center;padding:12px 22px 10px!important;white-space:nowrap;pointer-events:none;font-size:13px;letter-spacing:.08em}',
+    '.hhead::before{content:"";position:absolute;left:0;right:0;top:0;bottom:-30px;z-index:-1;-webkit-backdrop-filter:blur(14px);backdrop-filter:blur(14px);-webkit-mask-image:linear-gradient(#000 52%,transparent);mask-image:linear-gradient(#000 52%,transparent)}',
+    '.hsub{font-size:11px;letter-spacing:0;white-space:nowrap}',
+    '#hList{flex:1 1 0!important;min-height:220px;max-height:none!important;padding:48px 16px 132px!important;scroll-snap-type:none!important}',
+    '#stage{margin:0 auto!important}',
+
+    /* cards: smooth press effect, colour by type */
+    '.hcard{transition:scale .12s ease!important;will-change:opacity,filter,transform}',
+    '.hcard:active{scale:.97}',
+    '.t-h .hmon{color:#ff6a5c}',
+    '.t-i .hmon{color:#4a8cf7}',
+    '.t-r .hmon{color:#30d158}'
+  ].join('\n');
+
+  var st = document.createElement('style');
+  st.id = 'r7css';
+  st.textContent = css;
+  document.head.appendChild(st);
+})();
+
+// ---------- 2. Upcoming dates: holidays AND other important days ----------
+// t: h = public holiday, i = important day, r = religious.  approx = moon-dependent date.
+// Update this list when the government publishes the next year's gazette.
+HOLIDAYS = [
+  { d: '2026-12-10', n: 'Human Rights Day', b: 'মানবাধিকার দিবস', t: 'i' },
+  { d: '2026-12-14', n: 'Martyred Intellectuals Day', b: 'শহীদ বুদ্ধিজীবী দিবস', t: 'i' },
+  { d: '2026-12-16', n: 'Victory Day', b: 'বিজয় দিবস', t: 'h' },
+  { d: '2026-12-25', n: 'Christmas Day', b: 'বড়দিন', t: 'h' },
+  { d: '2027-01-01', n: 'New Year’s Day', b: 'ইংরেজি নববর্ষ', t: 'i' },
+  { d: '2027-01-25', n: 'Shab-e-Barat', b: 'শবে বরাত', t: 'h', approx: true },
+  { d: '2027-02-09', n: 'Ramadan begins', b: 'রমজান শুরু', t: 'r', approx: true },
+  { d: '2027-02-13', n: 'Pohela Falgun', b: 'পহেলা ফাল্গুন', t: 'i' },
+  { d: '2027-02-21', n: 'Shaheed Day', b: 'শহীদ ও মাতৃভাষা দিবস', t: 'h' },
+  { d: '2027-03-08', n: 'Women’s Day', b: 'আন্তর্জাতিক নারী দিবস', t: 'i' },
+  { d: '2027-03-10', n: 'Eid-ul-Fitr', b: 'ঈদুল ফিতর', t: 'h', approx: true },
+  { d: '2027-03-25', n: 'Genocide Remembrance Day', b: 'গণহত্যা দিবস', t: 'i' },
+  { d: '2027-03-26', n: 'Independence Day', b: 'স্বাধীনতা দিবস', t: 'h' },
+  { d: '2027-04-14', n: 'Pohela Boishakh', b: 'পহেলা বৈশাখ', t: 'h' },
+  { d: '2027-05-01', n: 'May Day', b: 'মে দিবস', t: 'h' },
+  { d: '2027-05-17', n: 'Eid-ul-Adha', b: 'ঈদুল আযহা', t: 'h', approx: true },
+  { d: '2027-08-05', n: 'July Uprising Day', b: 'জুলাই গণ-অভ্যুত্থান দিবস', t: 'h' },
+  { d: '2027-12-10', n: 'Human Rights Day', b: 'মানবাধিকার দিবস', t: 'i' },
+  { d: '2027-12-14', n: 'Martyred Intellectuals Day', b: 'শহীদ বুদ্ধিজীবী দিবস', t: 'i' },
+  { d: '2027-12-16', n: 'Victory Day', b: 'বিজয় দিবস', t: 'h' },
+  { d: '2027-12-25', n: 'Christmas Day', b: 'বড়দিন', t: 'h' }
+];
+
+function renderHolidays() {
+  var box = document.getElementById('hList');
+  if (!box || !HOLIDAYS) return;
+  var MON = ['JAN', 'FEB', 'MAR', 'APR', 'MAY', 'JUN', 'JUL', 'AUG', 'SEP', 'OCT', 'NOV', 'DEC'];
+  var LABEL = { h: 'Holiday', i: 'Important', r: 'Religious' };
+  var now = new Date();
+  var today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  var items = [];
+
+  HOLIDAYS.forEach(function (h) {
+    var p = h.d.split('-');
+    var dt = new Date(Number(p[0]), Number(p[1]) - 1, Number(p[2]));
+    var diff = Math.round((dt - today) / 86400000);
+    if (diff >= 0) items.push({ h: h, dt: dt, diff: diff });
+  });
+  items.sort(function (a, b) { return a.dt - b.dt; });
+  items = items.slice(0, 7);
+
+  if (!items.length) {
+    box.innerHTML = '<div class="hcard"><div class="hmid"><div class="hname">No upcoming dates</div>' +
+      '<div class="hbn">Update the list in js/main.js</div></div></div>';
+    return;
+  }
+
+  box.innerHTML = items.map(function (it) {
+    var t = it.h.t || 'i';
+    var left = it.diff === 0 ? 'Today' : (it.diff === 1 ? 'Tomorrow' : 'in ' + it.diff + ' days');
+    var wd = it.dt.toLocaleDateString('en-GB', { weekday: 'short' });
+    return '<div class="hcard t-' + t + '">' +
+      '<div class="hd"><span class="hmon">' + MON[it.dt.getMonth()] + '</span>' +
+      '<span class="hday">' + (it.h.approx ? '~' : '') + it.dt.getDate() + '</span></div>' +
+      '<div class="hmid"><div class="hname">' + it.h.n + '</div>' +
+      '<div class="hbn">' + it.h.b + '</div></div>' +
+      '<div class="hright"><span class="hleft' + (it.diff <= 7 ? ' soon' : '') + '">' + left + '</span>' +
+      '<span class="hwd">' + wd + ' · ' + LABEL[t] + '</span></div>' +
+      '</div>';
+  }).join('');
+
+  queueFade();
+}
+
+// ---------- 3. Cards fade out and blur as they slide under the heading and the bottom bar ----------
+var fadeQueued = false;
+
+function clamp01(x) { return x < 0 ? 0 : (x > 1 ? 1 : x); }
+
+function updateHolidayFade() {
+  fadeQueued = false;
+  var box = document.getElementById('hList');
+  if (!box || !box.offsetParent) return;           // Home tab is not showing
+
+  var br = box.getBoundingClientRect();
+  var head = document.querySelector('.hhead');
+  var nav = document.getElementById('nav');
+  var topEdge = (head ? head.getBoundingClientRect().bottom : br.top + 40) - 22;
+  var navTop = nav ? nav.getBoundingClientRect().top : window.innerHeight;
+  var bottomEdge = Math.min(br.bottom, navTop) + 6;
+
+  var cards = box.children;
+  for (var i = 0; i < cards.length; i++) {
+    var c = cards[i];
+    var r = c.getBoundingClientRect();
+    var mid = r.top + r.height / 2;
+    var k = Math.min(clamp01((mid - topEdge) / 50), clamp01((bottomEdge - mid) / 80));
+    k = k * k * (3 - 2 * k);
+    c.style.opacity = k.toFixed(3);
+    if (k > 0.995) {
+      c.style.filter = 'none';
+      c.style.transform = 'none';
+    } else {
+      c.style.filter = 'blur(' + ((1 - k) * 10).toFixed(1) + 'px)';
+      c.style.transform = 'scale(' + (0.94 + 0.06 * k).toFixed(3) + ')';
+    }
+  }
+}
+
+function queueFade() {
+  if (fadeQueued) return;
+  fadeQueued = true;
+  requestAnimationFrame(updateHolidayFade);
+}
+
+var prevShowTab = showTab;
+showTab = function (name) {
+  prevShowTab(name);
+  if (name === 'home') setTimeout(queueFade, 60);
+};
+
+// ---------- Start round 7 ----------
+(function () {
+  var hh = document.querySelector('.hhead span');
+  if (hh) hh.textContent = 'Upcoming';
+
+  var box = document.getElementById('hList');
+  if (box) box.addEventListener('scroll', queueFade, { passive: true });
+  window.addEventListener('scroll', queueFade, { passive: true });
+  window.addEventListener('resize', queueFade);
+  setInterval(queueFade, 500);
+})();
+
+renderHolidays();
+queueFade();
