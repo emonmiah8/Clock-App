@@ -2126,7 +2126,7 @@ function updateHolidayFade() {
 queueFade();
 // ======================= Round 11: progressive blur (only the part that leaves blurs) =======================
 (function () {
-  var N = 8;
+  var N = 2;
   var BLUR = [1, 1.5, 2.5, 4, 6, 9];     // blur (px) of each layer; they add up toward the edge
 
   // layers stacked on top of each other; each one blurs a bit more and covers a smaller band near the edge
