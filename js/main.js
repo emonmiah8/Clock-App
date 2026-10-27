@@ -2124,3 +2124,83 @@ function updateHolidayFade() {
 }
 
 queueFade();
+// ======================= Round 11: progressive blur (only the part that leaves blurs) =======================
+(function () {
+  var N = 6;
+  var BLUR = [1, 1.5, 2.5, 4, 6, 9];     // blur (px) of each layer; they add up toward the edge
+
+  // layers stacked on top of each other; each one blurs a bit more and covers a smaller band near the edge
+  function layers(dir) {
+    var out = '';
+    for (var i = 0; i < N; i++) {
+      var t = (N - i) / N;
+      var a = ((t - 1 / N) * 100).toFixed(2);
+      var b = (t * 100).toFixed(2);
+      var m = 'linear-gradient(' + dir + ',#000 0%,#000 ' + a + '%,transparent ' + b + '%)';
+      out += '<div class="pbl" style="-webkit-backdrop-filter:blur(' + BLUR[i] + 'px);backdrop-filter:blur(' + BLUR[i] +
+        'px);-webkit-mask-image:' + m + ';mask-image:' + m + '"></div>';
+    }
+    return out;
+  }
+
+  var hol = document.getElementById('holidays');
+  if (hol && !document.getElementById('pbTop')) {
+    var top = document.createElement('div');
+    top.id = 'pbTop';
+    top.className = 'pb';
+    top.innerHTML = layers('to bottom');
+    var bot = document.createElement('div');
+    bot.id = 'pbBot';
+    bot.className = 'pb';
+    bot.innerHTML = layers('to top');
+    hol.appendChild(top);
+    hol.appendChild(bot);
+  }
+
+  var css = [
+    '.pb{position:absolute;left:0;right:0;z-index:2;pointer-events:none}',
+    '.pbl{position:absolute;left:0;right:0;top:0;bottom:0}',
+    '#pbTop{top:calc(var(--ft,34px) - 14px);height:64px}',
+    '#pbBot{bottom:calc(var(--fb,92px) - 14px);height:112px}',
+    '.hcard{will-change:auto!important}',
+    '.hcard:active{transform:none!important}'
+  ].join('\n');
+
+  var st = document.createElement('style');
+  st.id = 'r11css';
+  st.textContent = css;
+  document.head.appendChild(st);
+})();
+
+// Cards no longer get their own blur; only the edge zones are measured so the layers line up.
+function updateHolidayFade() {
+  fadeQueued = false;
+  var box = document.getElementById('hList');
+  if (!box || !box.offsetParent) return;           // Home tab is not showing
+
+  var br = box.getBoundingClientRect();
+  var head = document.querySelector('.hhead');
+  var nav = document.getElementById('nav');
+
+  var ft = head ? Math.max(head.getBoundingClientRect().bottom - br.top - 4, 20) : 34;
+  var navTop = nav ? nav.getBoundingClientRect().top : window.innerHeight;
+  var fb = Math.max(br.bottom - navTop + 8, 0);
+  ft = Math.round(ft);
+  fb = Math.round(fb);
+  if (ft !== lastFt) { lastFt = ft; box.style.setProperty('--ft', ft + 'px'); }
+  if (fb !== lastFb) { lastFb = fb; box.style.setProperty('--fb', fb + 'px'); }
+}
+
+// remove the whole-card blur left over from the earlier version
+(function () {
+  var box = document.getElementById('hList');
+  if (!box) return;
+  for (var i = 0; i < box.children.length; i++) {
+    var s = box.children[i].style;
+    s.opacity = '';
+    s.filter = '';
+    s.transform = '';
+  }
+})();
+
+queueFade();
