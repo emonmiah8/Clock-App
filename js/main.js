@@ -2232,7 +2232,7 @@ queueFade();
 // ======================= Round 13: the top edge now behaves exactly like the bottom edge =======================
 (function () {
   var N = 6;
-  var BLUR = [1, 1.5, 2.5, 4, 6, 9];
+  var BLUR = [0.8, 1.6];
   var L = 112;                              // length of the blur zone (px), same as the bottom one
 
   // one stop of a gradient, written as a CSS calc() that follows the measured heading height (--ft)
@@ -2343,7 +2343,7 @@ var lastMeasure = 0;
   document.head.appendChild(st);
 
   /* ---------- 2. progressive blur: 4 cheap layers on each side, milder than before ---------- */
-  var N = 3;
+  var N = 4;
   var BLUR = [0.8, 1.6];
   var L = 112;
 
