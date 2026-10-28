@@ -2344,7 +2344,7 @@ var lastMeasure = 0;
 
   /* ---------- 2. progressive blur: 4 cheap layers on each side, milder than before ---------- */
   var N = 4;
-  var BLUR = [1.2, 2.4, 4];
+  var BLUR = [1.2, 2.4];
   var L = 112;
 
   function stop(k, c) {
