@@ -2478,9 +2478,9 @@ measureHolidays();
 (function () {
   var css = [
     '#cog{width:46px;height:46px;padding:0!important;display:flex!important;align-items:center;justify-content:center;font-size:0}',
-    '.dots{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:5px;pointer-events:none;' +
+    '.dots{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:4px;pointer-events:none;' +
       'transition:transform .38s cubic-bezier(.3,1.5,.5,1)}',
-    '.dots i{display:block;width:6px;height:6px;border-radius:50%;background:currentColor;' +
+    '.dots i{display:block;width:5px;height:5px;border-radius:50%;background:currentColor;' +
       'transition:transform .16s cubic-bezier(.3,1.8,.5,1),opacity .2s ease}',
     /* press: the dots shrink a little; panel open: the dots turn sideways */
     '#cog.press .dots i{transform:scale(.68)}',
