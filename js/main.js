@@ -2305,3 +2305,172 @@ function updateHolidayFade() {
 }
 
 queueFade();
+// ======================= Round 14: smoother, seamless "Upcoming" + instant bottom-bar press =======================
+var lastFt = -1;
+var lastFb = -1;
+var lastSh = -1;
+var cachedFt = 34;
+var lastMeasure = 0;
+
+(function () {
+  /* ---------- 1. a fade that eases in and out (no visible "start line") ---------- */
+  var STEPS = 8;
+  var topStops = [];
+  var botStops = [];
+  for (var q = 0; q <= STEPS; q++) {
+    var f = q / STEPS;
+    var a = 3 * f * f - 2 * f * f * f;                       // smoothstep curve
+    topStops.push('rgba(0,0,0,' + a.toFixed(3) + ') calc(var(--ft,34px) + ' + (f * 98).toFixed(1) + 'px - var(--sh,0px))');
+    botStops.push('rgba(0,0,0,' + (1 - a).toFixed(3) + ') calc(100% - var(--fb,92px) - ' + ((1 - f) * 98).toFixed(1) + 'px)');
+  }
+  var listMask = 'linear-gradient(to bottom,transparent 0,' + topStops.join(',') + ',' + botStops.join(',') + ')';
+
+  var css = [
+    '#hList{-webkit-mask-image:' + listMask + '!important;mask-image:' + listMask + '!important;' +
+      'overscroll-behavior-y:none!important;touch-action:pan-y}',
+    /* lighter cards: the per-card background blur cost a lot of GPU time and showed nothing */
+    '.hcard{-webkit-backdrop-filter:none!important;backdrop-filter:none!important;' +
+      'background:linear-gradient(150deg,rgba(255,255,255,.12),rgba(255,255,255,.05))!important}',
+    'body.light .hcard{background:linear-gradient(150deg,rgba(255,255,255,.88),rgba(255,255,255,.64))!important}',
+    /* bottom bar: react the instant the finger lands */
+    '#nav button{transition:background-color .14s ease,opacity .14s ease,transform .1s ease!important}',
+    '#nav button:active{transform:scale(.94)}'
+  ].join('\n');
+
+  var st = document.createElement('style');
+  st.id = 'r14css';
+  st.textContent = css;
+  document.head.appendChild(st);
+
+  /* ---------- 2. progressive blur: 4 cheap layers on each side, milder than before ---------- */
+  var N = 4;
+  var BLUR = [1.2, 2.4, 4.2, 7];
+  var L = 112;
+
+  function stop(k, c) {
+    return 'calc(var(--ft,34px) * ' + k + ' + ' + c.toFixed(2) + 'px - var(--sh,0px))';
+  }
+  function layer(blur, mask) {
+    return '<div class="pbl" style="-webkit-backdrop-filter:blur(' + blur + 'px);backdrop-filter:blur(' + blur +
+      'px);-webkit-mask-image:' + mask + ';mask-image:' + mask + '"></div>';
+  }
+
+  var top = document.getElementById('pbTop');
+  if (top) {
+    var outT = '';
+    for (var i = 0; i < N; i++) {
+      var t = (N - i) / N;
+      outT += layer(BLUR[i], 'linear-gradient(to bottom,' +
+        'transparent ' + stop(0, 0) + ',' +
+        'rgba(0,0,0,.12) ' + stop(0.33, -4.62) + ',' +
+        'rgba(0,0,0,.45) ' + stop(0.66, -9.24) + ',' +
+        '#000 ' + stop(1, -14) + ',' +
+        '#000 ' + stop(1, -14 + L * (t - 1 / N)) + ',' +
+        'transparent ' + stop(1, -14 + L * t) + ')');
+    }
+    top.innerHTML = outT;
+  }
+
+  var bot = document.getElementById('pbBot');
+  if (bot) {
+    var outB = '';
+    for (var j = 0; j < N; j++) {
+      var u = (N - j) / N;
+      var aa = ((u - 1 / N) * 100).toFixed(2);
+      var bb = (u * 100).toFixed(2);
+      outB += layer(BLUR[j], 'linear-gradient(to top,#000 0%,#000 ' + aa + '%,transparent ' + bb + '%)');
+    }
+    bot.innerHTML = outB;
+  }
+})();
+
+/* ---------- 3. measure only when something changes; while scrolling just move one number ---------- */
+function measureHolidays() {
+  var box = document.getElementById('hList');
+  var hol = document.getElementById('holidays');
+  if (!box || !hol || !box.offsetParent) return;      // Home tab is not showing
+
+  var br = box.getBoundingClientRect();
+  var head = document.querySelector('.hhead');
+  var nav = document.getElementById('nav');
+
+  var ft = head ? Math.max(head.getBoundingClientRect().bottom - br.top - 4, 20) : 34;
+  var navTop = nav ? nav.getBoundingClientRect().top : window.innerHeight;
+  var fb = Math.max(br.bottom - navTop + 8, 0);
+  ft = Math.round(ft);
+  fb = Math.round(fb);
+
+  if (ft !== lastFt) { lastFt = ft; hol.style.setProperty('--ft', ft + 'px'); }
+  if (fb !== lastFb) { lastFb = fb; hol.style.setProperty('--fb', fb + 'px'); }
+  cachedFt = ft;
+  applyScrollShift();
+}
+
+function applyScrollShift() {
+  var box = document.getElementById('hList');
+  var hol = document.getElementById('holidays');
+  if (!box || !hol) return;
+  var s = clamp01(box.scrollTop / 40);                // 0 at the very top, 1 after 40px of scrolling
+  var sh = Math.round((1 - s) * (cachedFt + 98));
+  if (sh !== lastSh) { lastSh = sh; hol.style.setProperty('--sh', sh + 'px'); }
+}
+
+// older code asks for a re-measure on every scroll; now it happens at most every 0.4 s
+function queueFade() {
+  if (fadeQueued) return;
+  fadeQueued = true;
+  requestAnimationFrame(function () {
+    fadeQueued = false;
+    var now = Date.now();
+    if (now - lastMeasure > 400) {
+      lastMeasure = now;
+      measureHolidays();
+    }
+  });
+}
+
+function updateHolidayFade() {
+  fadeQueued = false;
+  measureHolidays();
+}
+
+(function () {
+  var box = document.getElementById('hList');
+  if (box) box.addEventListener('scroll', applyScrollShift, { passive: true });   // same frame, no delay
+
+  if (window.ResizeObserver) {
+    var ro = new ResizeObserver(function () { measureHolidays(); });
+    ['holidays', 'nav'].forEach(function (id) {
+      var el = document.getElementById(id);
+      if (el) ro.observe(el);
+    });
+    var head = document.querySelector('.hhead');
+    if (head) ro.observe(head);
+  }
+})();
+
+measureHolidays();
+
+/* ---------- 4. bottom bar: switch the page the moment the finger lands ---------- */
+(function () {
+  var nav = document.getElementById('nav');
+  if (!nav) return;
+  var downAt = 0;
+
+  nav.addEventListener('pointerdown', function (e) {
+    var b = (e.target && e.target.closest) ? e.target.closest('[data-tab]') : null;
+    if (!b) return;
+    downAt = Date.now();
+    showTab(b.dataset.tab);                 // same moment as the light and the haptic
+  }, true);
+
+  // the click that follows the touch would repeat the same switch; skip it
+  nav.addEventListener('click', function (e) {
+    var b = (e.target && e.target.closest) ? e.target.closest('[data-tab]') : null;
+    if (!b) return;
+    if (Date.now() - downAt < 1500) {
+      e.stopImmediatePropagation();
+      e.preventDefault();
+    }
+  }, true);
+})();
