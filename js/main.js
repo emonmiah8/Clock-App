@@ -2229,3 +2229,79 @@ queueFade();
   st.textContent = '#pbTop{top:0!important;height:calc(var(--ft,34px) + 56px)!important}';
   document.head.appendChild(st);
 })();
+// ======================= Round 13: the top edge now behaves exactly like the bottom edge =======================
+(function () {
+  var N = 6;
+  var BLUR = [1, 1.5, 2.5, 4, 6, 9];
+  var L = 112;                              // length of the blur zone (px), same as the bottom one
+
+  // one stop of a gradient, written as a CSS calc() that follows the measured heading height (--ft)
+  // and the "scroll shift" (--sh), so the whole top zone slides in as soon as you start scrolling
+  function stop(k, c) {
+    return 'calc(var(--ft,34px) * ' + k + ' + ' + c.toFixed(2) + 'px - var(--sh,0px))';
+  }
+
+  var top = document.getElementById('pbTop');
+  if (top) {
+    var out = '';
+    for (var i = 0; i < N; i++) {
+      var t = (N - i) / N;
+      var m = 'linear-gradient(to bottom,' +
+        'transparent ' + stop(0, 0) + ',' +
+        'rgba(0,0,0,.12) ' + stop(0.33, -4.62) + ',' +
+        'rgba(0,0,0,.45) ' + stop(0.66, -9.24) + ',' +
+        '#000 ' + stop(1, -14) + ',' +
+        '#000 ' + stop(1, -14 + L * (t - 1 / N)) + ',' +
+        'transparent ' + stop(1, -14 + L * t) + ')';
+      out += '<div class="pbl" style="-webkit-backdrop-filter:blur(' + BLUR[i] + 'px);backdrop-filter:blur(' + BLUR[i] +
+        'px);-webkit-mask-image:' + m + ';mask-image:' + m + '"></div>';
+    }
+    top.innerHTML = out;
+  }
+
+  var listMask = 'linear-gradient(to bottom,transparent 0,' +
+    'transparent calc(var(--ft,34px) - var(--sh,0px)),' +
+    '#000 calc(var(--ft,34px) + 98px - var(--sh,0px)),' +
+    '#000 calc(100% - var(--fb,92px) - 98px),' +
+    'transparent calc(100% - var(--fb,92px)))';
+
+  var css = [
+    '#pbTop{top:0!important;height:calc(var(--ft,34px) + 98px)!important}',
+    '#hList{padding-top:calc(var(--ft,34px) + 16px)!important;-webkit-mask-image:' + listMask + '!important;mask-image:' + listMask + '!important}'
+  ].join('\n');
+
+  var st = document.createElement('style');
+  st.id = 'r13css';
+  st.textContent = css;
+  document.head.appendChild(st);
+})();
+
+var lastSh = -1;
+
+// Measures the heading and the bottom bar, and how far the list has been scrolled.
+// The values go on the common parent, so the list and both blur zones all read the same numbers.
+function updateHolidayFade() {
+  fadeQueued = false;
+  var box = document.getElementById('hList');
+  var hol = document.getElementById('holidays');
+  if (!box || !hol || !box.offsetParent) return;      // Home tab is not showing
+
+  var br = box.getBoundingClientRect();
+  var head = document.querySelector('.hhead');
+  var nav = document.getElementById('nav');
+
+  var ft = head ? Math.max(head.getBoundingClientRect().bottom - br.top - 4, 20) : 34;
+  var navTop = nav ? nav.getBoundingClientRect().top : window.innerHeight;
+  var fb = Math.max(br.bottom - navTop + 8, 0);
+  ft = Math.round(ft);
+  fb = Math.round(fb);
+
+  var s = clamp01(box.scrollTop / 40);                // 0 at the very top, 1 after 40px of scrolling
+  var sh = Math.round((1 - s) * (ft + 98));
+
+  if (ft !== lastFt) { lastFt = ft; hol.style.setProperty('--ft', ft + 'px'); }
+  if (fb !== lastFb) { lastFb = fb; hol.style.setProperty('--fb', fb + 'px'); }
+  if (sh !== lastSh) { lastSh = sh; hol.style.setProperty('--sh', sh + 'px'); }
+}
+
+queueFade();
