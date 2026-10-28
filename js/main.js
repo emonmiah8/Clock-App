@@ -2204,3 +2204,28 @@ function updateHolidayFade() {
 })();
 
 queueFade();
+// ======================= Round 12: the top blur no longer has a visible edge =======================
+(function () {
+  var N = 6;
+  var BLUR = [1, 1.5, 2.5, 4, 6, 9];
+  var R = 30;                              // % of the top zone where the blur fades in from nothing
+  var top = document.getElementById('pbTop');
+  if (!top) return;
+
+  var out = '';
+  for (var i = 0; i < N; i++) {
+    var t = (N - i) / N;
+    var a = (R + (100 - R) * (t - 1 / N)).toFixed(2);
+    var b = (R + (100 - R) * t).toFixed(2);
+    var m = 'linear-gradient(to bottom,transparent 0%,rgba(0,0,0,.12) 10%,rgba(0,0,0,.45) 20%,#000 ' + R + '%,#000 ' + a + '%,transparent ' + b + '%)';
+    out += '<div class="pbl" style="-webkit-backdrop-filter:blur(' + BLUR[i] + 'px);backdrop-filter:blur(' + BLUR[i] +
+      'px);-webkit-mask-image:' + m + ';mask-image:' + m + '"></div>';
+  }
+  top.innerHTML = out;
+
+  // start at the very top of the list, so any soft glow fades away before the zone ends
+  var st = document.createElement('style');
+  st.id = 'r12css';
+  st.textContent = '#pbTop{top:0!important;height:calc(var(--ft,34px) + 56px)!important}';
+  document.head.appendChild(st);
+})();
