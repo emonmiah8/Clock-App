@@ -2474,3 +2474,28 @@ measureHolidays();
     }
   }, true);
 })();
+// ======================= Round 15: settings icon = three vertical dots =======================
+(function () {
+  var css = [
+    '#cog{width:46px;height:46px;padding:0!important;display:flex!important;align-items:center;justify-content:center;font-size:0}',
+    '.dots{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:5px;pointer-events:none;' +
+      'transition:transform .38s cubic-bezier(.3,1.5,.5,1)}',
+    '.dots i{display:block;width:6px;height:6px;border-radius:50%;background:currentColor;' +
+      'transition:transform .16s cubic-bezier(.3,1.8,.5,1),opacity .2s ease}',
+    /* press: the dots shrink a little; panel open: the dots turn sideways */
+    '#cog.press .dots i{transform:scale(.68)}',
+    '#cog.out .dots{transform:rotate(90deg)}'
+  ].join('\n');
+
+  var st = document.createElement('style');
+  st.id = 'r15css';
+  st.textContent = css;
+  document.head.appendChild(st);
+
+  // the press, haptic and "open settings" behaviour of the button stay as they were
+  var cog = document.getElementById('cog');
+  if (cog) {
+    cog.innerHTML = '<span class="dots"><i></i><i></i><i></i></span>';
+    cog.setAttribute('aria-label', 'Settings');
+  }
+})();
