@@ -2343,9 +2343,9 @@ var lastMeasure = 0;
   document.head.appendChild(st);
 
   /* ---------- 2. progressive blur: 4 cheap layers on each side, milder than before ---------- */
-  var N = 4;
+  var N = 3;
   var BLUR = [0.8, 1.6];
-  var L = 85;
+  var L = 112;
 
   function stop(k, c) {
     return 'calc(var(--ft,34px) * ' + k + ' + ' + c.toFixed(2) + 'px - var(--sh,0px))';
