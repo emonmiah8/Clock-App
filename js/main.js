@@ -1,15 +1,11 @@
 /* ==========================================================================
-   CLOCK APP - main.js (clean rewrite)
-   Sections:
-    1. Config & state            10. Tabs
-    2. Helpers & haptics         11. Alarms
-    3. Injected styles           12. Stopwatch
-    4. Storage                   13. Timer & presets
-    5. Audio & ringing           14. Upcoming (country-aware, works offline)
-    6. Digits & time HTML        15. Press feedback, nav, buttons
-    7. Home widgets              16. Connection, permissions, service worker
-    8. Theme, settings sheet     17. Init
-    9. Edit / Add widget sheets
+   CLOCK APP - main.js
+   1 Config & state        7 Home widgets            13 Timer & presets
+   2 Helpers & icons       8 Sheet system, settings  14 Upcoming dates
+   3 Injected styles       9 Edit / Add widget       15 Press feedback, nav
+   4 Storage              10 Tabs                    16 Connection, permissions, SW
+   5 Tones & ringing      11 Alarms                  17 Init
+   6 Digits & time HTML   12 Stopwatch
    ========================================================================== */
 
 /* ==========================================================================
@@ -23,13 +19,13 @@ const PKEY = 'clockPresets';
 const PLKEY = 'clockPlace';
 const PLASKED = 'clockPlaceAsked';
 const NOTIF_ASKED = 'clockNotifAsked';
-const CUSTOM_KEY = 'customUpcomingEvents';   // [{d:'2027-06-01', n:'Name', b:'', t:'i', r:1}]
-const HKEY = 'clockHol_';                    // + COUNTRY_YEAR  -> cached public holidays
+const CUSTOM_KEY = 'customUpcomingEvents';
+const HKEY = 'clockHol_';
 const GEO_URL = 'https://geocoding-api.open-meteo.com/v1/search';
 const REVERSE_URL = 'https://api.bigdatacloud.net/data/reverse-geocode-client';
-const HOL_URL = 'https://date.nager.at/api/v3/PublicHolidays/';   // free, no key
+const HOL_URL = 'https://date.nager.at/api/v3/PublicHolidays/';
 const PLACE_FRESH_MS = 20 * 60 * 1000;
-const HOL_TTL = 30 * 24 * 3600 * 1000;       // refresh cached holidays after 30 days
+const HOL_TTL = 30 * 24 * 3600 * 1000;
 
 const RETRO = ['#4aa3d8', '#ef5b55', '#f4f1ea'];
 const COLORS = ['#ffffff', '#4fc3f7', '#81c784', '#ffb74d', '#f06292'];
@@ -64,6 +60,7 @@ const searchKeys = [];
 let swReg = null;
 let updateRequested = false;
 let toastTimer = null;
+let closeTimer = null;
 
 let sw = { running: false, start: 0, elapsed: 0, laps: [] };
 let lastSwMain = '';
@@ -82,6 +79,7 @@ const selIdx = { pH: -1, pM: -1, pS: -1 };
 let actx = null;
 let ringTimer = null;
 let ringSnoozeFn = null;
+let ringOn = false;
 let snoozeAt = 0;
 let wakeLock = null;
 let penOut = false;
@@ -96,13 +94,35 @@ const sheet = document.getElementById('sheet');
 const overlay = document.getElementById('overlay');
 
 /* ==========================================================================
-   2. HELPERS & HAPTICS
+   2. HELPERS & ICONS
    ========================================================================== */
 function pad(n) { return String(n).padStart(2, '0'); }
 function dayKey(d) { return d.getFullYear() + '-' + pad(d.getMonth() + 1) + '-' + pad(d.getDate()); }
 function clamp01(x) { return x < 0 ? 0 : (x > 1 ? 1 : x); }
 function escapeAttr(s) { return String(s).replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;'); }
 function haptic(p) { try { if (navigator.vibrate) navigator.vibrate(p); } catch (e) {} }
+
+// click point for the pop-in origin
+function pt(e) {
+  if (!e || e.clientX == null || (e.clientX === 0 && e.clientY === 0)) return null;
+  return { x: e.clientX, y: e.clientY };
+}
+
+// iOS (SF Symbols) style icons: change them here only
+const ICON = {
+  play: '<svg viewBox="0 0 24 24"><path d="M8 5.6v12.8l10.6-6.4z" fill="currentColor" stroke="currentColor" stroke-width="2.6" stroke-linejoin="round"/></svg>',
+  pause: '<svg viewBox="0 0 24 24" fill="currentColor"><rect x="5.6" y="4.4" width="4.6" height="15.2" rx="1.6"/><rect x="13.8" y="4.4" width="4.6" height="15.2" rx="1.6"/></svg>',
+  lap: '<svg viewBox="0 0 24 24"><path d="M6 21V3.8" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"/><path d="M6.6 4.8h11.2l-2.8 4.2 2.8 4.2H6.6z" fill="currentColor" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/></svg>',
+  reset: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12a7 7 0 1 0 2.05-4.95"/><path d="M11 7.05H7.05V3.1"/></svg>',
+  plus: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>'
+};
+
+function setIcon(id, svg, label) {
+  const el = document.getElementById(id);
+  if (!el) return;
+  el.innerHTML = svg;
+  if (label) el.setAttribute('aria-label', label);
+}
 
 /* ==========================================================================
    3. INJECTED STYLES
@@ -121,7 +141,6 @@ function buildListMask() {
 }
 
 function injectStyles() {
-  // web font is optional: only requested when online, the service worker keeps it for offline use
   if (navigator.onLine !== false && !document.querySelector('link[data-clock-font]')) {
     const l = document.createElement('link');
     l.rel = 'stylesheet';
@@ -170,13 +189,16 @@ body.light .hcard{background:linear-gradient(150deg,rgba(255,255,255,.88),rgba(2
 #pbTop{top:0;height:calc(var(--ft,34px) + 98px)}
 #pbBot{bottom:calc(var(--fb,92px) - 14px);height:112px}
 
+/* ---- every sheet opens as the same pop-in card ---- */
 #overlay.open{background:rgba(0,0,0,.28)!important;-webkit-backdrop-filter:blur(14px);backdrop-filter:blur(14px)}
 body.light #overlay.open{background:rgba(255,255,255,.25)!important}
 #sheet{background:rgba(30,32,38,.62)!important;-webkit-backdrop-filter:blur(26px) saturate(1.6);backdrop-filter:blur(26px) saturate(1.6);border:1px solid rgba(255,255,255,.16);box-shadow:0 20px 50px rgba(0,0,0,.45),inset 0 1px 0 rgba(255,255,255,.2)}
 body.light #sheet{background:rgba(255,255,255,.72)!important;border-color:rgba(255,255,255,.85);box-shadow:0 20px 50px rgba(0,0,0,.15),inset 0 1px 0 rgba(255,255,255,.9)}
 @keyframes popIn{from{opacity:0;transform:scale(.86) translateY(-8px)}to{opacity:1;transform:none}}
-#sheet.open.pop{left:auto!important;right:12px!important;bottom:auto!important;top:calc(64px + env(safe-area-inset-top,0px))!important;width:min(90vw,340px);max-height:calc(100vh - 150px);overflow-y:auto;border-radius:24px!important;transform-origin:top right;animation:popIn .28s cubic-bezier(.22,.8,.25,1) both}
-#sheet:not(.pop){max-height:88vh;overflow-y:auto}
+@keyframes popOut{from{opacity:1;transform:none}to{opacity:0;transform:scale(.88) translateY(-6px)}}
+#sheet:not(.open){pointer-events:none}
+#sheet.open{left:auto!important;right:12px!important;bottom:auto!important;top:calc(64px + env(safe-area-inset-top,0px))!important;width:min(90vw,340px)!important;max-height:calc(100vh - 150px);max-height:calc(100dvh - 150px);overflow-y:auto;border-radius:24px!important;animation:popIn .28s cubic-bezier(.22,.8,.25,1) both}
+#sheet.open.closing{animation:popOut .16s ease both;pointer-events:none}
 #sheet select{max-width:100%}
 
 #cog{width:46px;height:46px;padding:0!important;opacity:1!important;display:flex!important;align-items:center;justify-content:center;font-size:0}
@@ -197,8 +219,16 @@ body.light #toast{background:rgba(255,255,255,.85);color:#1c1c1e;border-color:rg
 
 .wdate{margin-top:6px;opacity:.8}
 .woff{margin-top:2px!important;opacity:.6}
-
 .clsvg{width:calc(var(--size)*3.5);height:calc(var(--size)*3.5);filter:drop-shadow(0 8px 18px rgba(0,0,0,.35))}
+
+/* ---- tone picker ---- */
+.tonebox{max-height:50vh;overflow-y:auto;margin:0 -4px 10px;padding:0 4px}
+.tgrp{font-size:11px;letter-spacing:.08em;text-transform:uppercase;opacity:.6;margin:12px 4px 6px}
+.trow{display:flex;align-items:center;justify-content:space-between;gap:10px;width:100%;padding:11px 14px;margin-bottom:6px;border-radius:14px;border:1px solid rgba(255,255,255,.12);background:rgba(255,255,255,.07);color:inherit;font-size:15px;text-align:left}
+body.light .trow{background:rgba(0,0,0,.05);border-color:rgba(0,0,0,.08)}
+.trow .chk{opacity:0;color:#ff9f0a;font-size:16px}
+.trow.sel{border-color:#ff9f0a}
+.trow.sel .chk{opacity:1}
 
 #swHand line{stroke:#ff9f0a!important}
 #swHand circle:first-of-type{fill:#ff9f0a!important}
@@ -209,7 +239,7 @@ body.light #toast{background:rgba(255,255,255,.85);color:#1c1c1e;border-color:rg
 .dialwrap::before{content:"";position:absolute;inset:.8%;border-radius:50%;z-index:-1;background:rgba(255,255,255,.05);-webkit-backdrop-filter:blur(22px) saturate(1.9) brightness(.6);backdrop-filter:blur(22px) saturate(1.9) brightness(.6);box-shadow:0 26px 50px rgba(0,0,0,.45),0 8px 18px rgba(0,0,0,.35)}
 .dialwrap::after{content:"";position:absolute;inset:.8%;border-radius:50%;z-index:3;pointer-events:none;background:radial-gradient(50% 32% at 28% 9%,rgba(255,255,255,.24),rgba(255,255,255,0) 72%),radial-gradient(55% 36% at 72% 96%,rgba(255,255,255,.10),rgba(255,255,255,0) 72%),linear-gradient(155deg,rgba(255,255,255,.10),rgba(255,255,255,0) 38%);box-shadow:inset 0 2px 2px rgba(255,255,255,.55),inset 0 -3px 6px rgba(255,255,255,.12),inset 0 0 0 1.5px rgba(255,255,255,.14),inset 10px 14px 34px rgba(255,255,255,.06),inset -14px -20px 44px rgba(0,0,0,.40)}
 
-.round,.fab{position:relative;isolation:isolate;transition:transform .22s cubic-bezier(.3,1.6,.5,1),box-shadow .2s ease!important}
+.round,.fab{position:relative;isolation:isolate;display:flex;align-items:center;justify-content:center;transition:transform .22s cubic-bezier(.3,1.6,.5,1),box-shadow .2s ease!important}
 .round{-webkit-backdrop-filter:blur(16px) saturate(1.9);backdrop-filter:blur(16px) saturate(1.9)}
 .round::before,.fab::before{content:"";position:absolute;left:15%;right:15%;top:5%;height:42%;border-radius:50%;background:linear-gradient(rgba(255,255,255,.5),rgba(255,255,255,0));pointer-events:none}
 .round:active,.fab:active{transform:scale(.92)!important}
@@ -275,7 +305,10 @@ function loadAlarms() {
 function saveAlarms() { try { localStorage.setItem(AKEY, JSON.stringify(alarms)); } catch (e) {} }
 
 function loadGlobal() {
-  let g = { bg: '#000000', bgLight: '#f2f2f7', theme: 'dark', awake: false, font: 'sf', country: 'auto' };
+  let g = {
+    bg: '#000000', bgLight: '#f2f2f7', theme: 'dark', awake: false, font: 'sf', country: 'auto',
+    alarmTone: 'i1', timerTone: 'i2', customName: ''
+  };
   try {
     const s = localStorage.getItem(GKEY);
     if (s) g = Object.assign(g, JSON.parse(s));
@@ -309,9 +342,95 @@ function saveMyPlace() { try { localStorage.setItem(PLKEY, JSON.stringify(myPlac
 
 function saveTm() { try { localStorage.setItem(TKEY, JSON.stringify(tm)); } catch (e) {} }
 
+/* ---- IndexedDB: keeps the custom tone file ---- */
+function idb() {
+  return new Promise(function (res, rej) {
+    const r = indexedDB.open('clockTones', 1);
+    r.onupgradeneeded = function () { r.result.createObjectStore('t'); };
+    r.onsuccess = function () { res(r.result); };
+    r.onerror = function () { rej(r.error); };
+  });
+}
+function idbGet(k) {
+  return idb().then(function (db) {
+    return new Promise(function (res, rej) {
+      const q = db.transaction('t').objectStore('t').get(k);
+      q.onsuccess = function () { res(q.result || null); };
+      q.onerror = function () { rej(q.error); };
+    });
+  });
+}
+function idbSet(k, v) {
+  return idb().then(function (db) {
+    return new Promise(function (res, rej) {
+      const tx = db.transaction('t', 'readwrite');
+      tx.objectStore('t').put(v, k);
+      tx.oncomplete = function () { res(); };
+      tx.onerror = function () { rej(tx.error); };
+    });
+  });
+}
+function idbDel(k) {
+  return idb().then(function (db) {
+    return new Promise(function (res, rej) {
+      const tx = db.transaction('t', 'readwrite');
+      tx.objectStore('t').delete(k);
+      tx.oncomplete = function () { res(); };
+      tx.onerror = function () { rej(tx.error); };
+    });
+  });
+}
+
 /* ==========================================================================
-   5. AUDIO & RINGING
+   5. TONES & RINGING
+   --------------------------------------------------------------------------
+   20 built-in tones (iPhone, Samsung and Pixel style, made by the browser,
+   so they work offline) + one custom tone from your own audio file.
+   n = notes [midi, start s, length s]   w = wave   ov = [overtone ratio, gain]
    ========================================================================== */
+const TONE_GROUPS = ['iPhone style', 'Samsung style', 'Pixel style'];
+const TONES = [
+  { id: 'i1', g: 0, name: 'Marimba', w: 'sine', ov: [4, 0.3], len: 1.6, n: [[76, 0, .3], [79, .12, .3], [83, .24, .3], [79, .36, .3], [76, .48, .3], [79, .6, .3], [83, .72, .3], [88, .84, .5]] },
+  { id: 'i2', g: 0, name: 'Radar', w: 'sine', env: 'soft', len: 1.5, n: [[84, 0, .22], [88, .26, .22], [84, .52, .22], [88, .78, .22], [91, 1.04, .3]] },
+  { id: 'i3', g: 0, name: 'Chimes', w: 'sine', ov: [2.76, .4], len: 2.2, n: [[88, 0, .9], [84, .35, .9], [91, .7, 1.2]] },
+  { id: 'i4', g: 0, name: 'Bells', w: 'sine', ov: [2.4, .35], len: 2.2, n: [[79, 0, 1], [79, .5, 1], [79, 1, 1.2]] },
+  { id: 'i5', g: 0, name: 'Beacon', w: 'sine', env: 'soft', len: 2.2, n: [[72, 0, .6], [79, .5, .6], [84, 1, .8]] },
+  { id: 'i6', g: 0, name: 'Ripples', w: 'sine', ov: [3, .25], len: 1.6, n: [[84, 0, .5], [88, .15, .5], [84, .3, .5], [91, .45, .5], [88, .6, .7]] },
+  { id: 'i7', g: 0, name: 'Slow Rise', w: 'sine', env: 'soft', len: 2.6, n: [[67, 0, .5], [72, .5, .5], [76, 1, .5], [79, 1.5, .8]] },
+
+  { id: 's1', g: 1, name: 'Over the Horizon', w: 'sine', ov: [2, .3], len: 2.8, n: [[72, 0, .35], [76, .3, .35], [79, .6, .35], [84, .9, .6], [79, 1.5, .35], [76, 1.8, .6]] },
+  { id: 's2', g: 1, name: 'Morning Flower', w: 'sine', ov: [2, .25], len: 2.5, n: [[76, 0, .3], [79, .25, .3], [83, .5, .3], [84, .75, .6], [83, 1.3, .3], [79, 1.55, .6]] },
+  { id: 's3', g: 1, name: 'Basic Bell', w: 'sine', ov: [2.76, .4], len: 1.8, n: [[88, 0, .6], [88, .45, .6], [88, .9, .6]] },
+  { id: 's4', g: 1, name: 'Galaxy Bells', w: 'sine', ov: [2.4, .35], len: 2, n: [[84, 0, .8], [91, .2, .8], [88, .4, .8], [96, .6, 1]] },
+  { id: 's5', g: 1, name: 'Sunny Day', w: 'triangle', len: 1.6, n: [[72, 0, .2], [76, .2, .2], [79, .4, .2], [84, .6, .2], [79, .8, .2], [84, 1, .4]] },
+  { id: 's6', g: 1, name: 'Cosmic', w: 'sine', env: 'soft', ov: [1.5, .3], len: 2.4, n: [[67, 0, 1], [74, .4, 1], [79, .8, 1.2]] },
+  { id: 's7', g: 1, name: 'Wake Up', w: 'square', g0: .12, len: 1.4, n: [[79, 0, .15], [79, .25, .15], [79, .5, .15], [84, .75, .3]] },
+
+  { id: 'p1', g: 2, name: 'Argon', w: 'triangle', len: 1.3, n: [[74, 0, .2], [81, .15, .2], [86, .3, .4]] },
+  { id: 'p2', g: 2, name: 'Neon', w: 'sine', len: 1, n: [[84, 0, .12], [84, .2, .12], [91, .4, .25]] },
+  { id: 'p3', g: 2, name: 'Helium', w: 'sine', env: 'soft', len: 1.8, n: [[86, 0, .4], [91, .3, .4], [95, .6, .6]] },
+  { id: 'p4', g: 2, name: 'Krypton', w: 'sine', ov: [3, .2], len: 1.6, n: [[69, 0, .3], [76, .2, .3], [81, .4, .3], [88, .6, .5]] },
+  { id: 'p5', g: 2, name: 'Oxygen', w: 'sine', env: 'soft', len: 2.4, n: [[72, 0, .8], [79, .6, .8], [76, 1.2, 1]] },
+  { id: 'p6', g: 2, name: 'Xenon', w: 'triangle', len: 1, n: [[88, 0, .1], [91, .12, .1], [88, .24, .1], [95, .36, .3]] }
+];
+
+let toneMaster = null;
+let toneSrc = null;
+let toneTimer = null;
+let customBuf = null;
+
+function toneById(id) {
+  for (let i = 0; i < TONES.length; i++) if (TONES[i].id === id) return TONES[i];
+  return TONES[0];
+}
+
+function toneName(id) {
+  if (id === 'custom') return globalSet.customName || 'Custom tone';
+  return toneById(id).name;
+}
+
+function toneOf(kind) { return kind === 'alarm' ? globalSet.alarmTone : globalSet.timerTone; }
+
 function unlockAudio() {
   try {
     if (!actx) actx = new (window.AudioContext || window.webkitAudioContext)();
@@ -334,22 +453,197 @@ function beep() {
   } catch (e) {}
 }
 
-function startRing(title, snoozeFn) {
+function stopTone() {
+  clearInterval(toneTimer);
+  toneTimer = null;
+  if (toneSrc) { try { toneSrc.stop(); } catch (e) {} toneSrc = null; }
+  if (toneMaster) { try { toneMaster.disconnect(); } catch (e) {} toneMaster = null; }
+}
+
+function voice(out, t0, midi, d, tone) {
+  const f = 440 * Math.pow(2, (midi - 69) / 12);
+  const peak = tone.g0 || 0.3;
+  const g = actx.createGain();
+  g.gain.setValueAtTime(0.0001, t0);
+  if (tone.env === 'soft') {
+    g.gain.linearRampToValueAtTime(peak, t0 + 0.04);
+    g.gain.setValueAtTime(peak, t0 + Math.max(0.05, d * 0.5));
+    g.gain.exponentialRampToValueAtTime(0.0001, t0 + d + 0.15);
+  } else {
+    g.gain.linearRampToValueAtTime(peak, t0 + 0.008);
+    g.gain.exponentialRampToValueAtTime(0.0001, t0 + d + 0.25);
+  }
+  g.connect(out);
+
+  const o = actx.createOscillator();
+  o.type = tone.w || 'sine';
+  o.frequency.value = f;
+  o.connect(g);
+  o.start(t0);
+  o.stop(t0 + d + 0.3);
+
+  if (tone.ov) {
+    const o2 = actx.createOscillator();
+    const g2 = actx.createGain();
+    o2.type = 'sine';
+    o2.frequency.value = f * tone.ov[0];
+    g2.gain.value = tone.ov[1];
+    o2.connect(g2);
+    g2.connect(g);
+    o2.start(t0);
+    o2.stop(t0 + d + 0.3);
+  }
+}
+
+function getCustomBuffer() {
+  if (customBuf) return Promise.resolve(customBuf);
+  return idbGet('custom').then(function (data) {
+    if (!data) return null;
+    return actx.decodeAudioData(data.slice(0));
+  }).then(function (b) {
+    customBuf = b || null;
+    return customBuf;
+  }).catch(function () { return null; });
+}
+
+// returns false when nothing could be played
+function playTone(id, loop) {
+  stopTone();
+  unlockAudio();
+  if (!actx) return false;
+
+  const master = actx.createGain();
+  master.connect(actx.destination);
+  toneMaster = master;
+
+  if (id === 'custom') {
+    getCustomBuffer().then(function (buf) {
+      if (toneMaster !== master) return;
+      if (!buf) { playTone('i1', loop); return; }
+      const s = actx.createBufferSource();
+      s.buffer = buf;
+      s.loop = !!loop;
+      s.connect(master);
+      s.start();
+      toneSrc = s;
+    });
+    return true;
+  }
+
+  const t = toneById(id);
+  function cycle() {
+    if (toneMaster !== master) return;
+    const t0 = actx.currentTime + 0.02;
+    t.n.forEach(function (x) { voice(master, t0 + x[1], x[0], x[2], t); });
+  }
+  cycle();
+  if (loop) toneTimer = setInterval(cycle, (t.len + 0.4) * 1000);
+  return true;
+}
+
+function stopPreview() { if (!ringOn) stopTone(); }
+
+function startRing(title, snoozeFn, toneId) {
   stopRing();
+  ringOn = true;
   document.getElementById('ringTitle').textContent = title;
   document.getElementById('ringSnooze').style.display = snoozeFn ? 'inline-block' : 'none';
   ringSnoozeFn = snoozeFn;
   document.getElementById('ring').classList.add('open');
   if (document.hidden) notify(title, 'Tap to open the clock', 'clock-ring');
-  const go = function () { beep(); haptic(300); };
-  go();
-  ringTimer = setInterval(go, 800);
+
+  const ok = playTone(toneId || 'i1', true);
+  haptic(300);
+  ringTimer = setInterval(function () {
+    if (!ok) beep();
+    haptic(300);
+  }, 900);
 }
 
 function stopRing() {
+  ringOn = false;
   closeNotif('clock-ring');
   if (ringTimer) { clearInterval(ringTimer); ringTimer = null; }
+  stopTone();
   document.getElementById('ring').classList.remove('open');
+}
+
+/* ---- tone picker sheet ---- */
+function openToneSheet(kind) {
+  const key = kind === 'alarm' ? 'alarmTone' : 'timerTone';
+
+  let h = '<div class="title">' + (kind === 'alarm' ? 'Alarm tone' : 'Timer tone') + '</div><div class="tonebox">';
+  TONE_GROUPS.forEach(function (gn, gi) {
+    h += '<div class="tgrp">' + gn + '</div>';
+    TONES.forEach(function (t) {
+      if (t.g !== gi) return;
+      h += '<button class="trow" data-id="' + t.id + '"><span>' + escapeAttr(t.name) + '</span><span class="chk">&#10003;</span></button>';
+    });
+  });
+  h += '<div class="tgrp">Custom</div>' +
+    '<button class="trow" data-id="custom"><span id="tnName"></span><span class="chk">&#10003;</span></button>' +
+    '<div class="row"><button class="btn" id="tnPick">Choose audio file</button><button class="btn danger" id="tnDel">Remove</button></div>' +
+    '<input type="file" id="tnFile" accept="audio/*" style="display:none">' +
+    '</div>' +
+    '<div class="row"><button class="btn" id="tnBack">Back</button><button class="btn" id="done">Done</button></div>';
+  openSheet(h, 'settings');
+
+  function draw() {
+    const cur = globalSet[key];
+    const has = !!globalSet.customName;
+    document.getElementById('tnName').textContent = has ? globalSet.customName : 'No file chosen';
+    document.getElementById('tnDel').style.display = has ? '' : 'none';
+    sheet.querySelectorAll('.trow').forEach(function (r) {
+      r.classList.toggle('sel', r.dataset.id === cur);
+    });
+  }
+  draw();
+
+  function choose(id) {
+    globalSet[key] = id;
+    saveGlobal();
+    draw();
+    if (!ringOn) playTone(id, false);
+  }
+
+  function pick() { unlockAudio(); document.getElementById('tnFile').click(); }
+
+  sheet.querySelectorAll('.trow').forEach(function (r) {
+    r.onclick = function () {
+      if (r.dataset.id === 'custom' && !globalSet.customName) { pick(); return; }
+      choose(r.dataset.id);
+    };
+  });
+
+  document.getElementById('tnPick').onclick = pick;
+
+  document.getElementById('tnFile').onchange = function (e) {
+    const f = e.target.files && e.target.files[0];
+    if (!f) return;
+    if (f.size > 8 * 1024 * 1024) { toast('File is too big (max 8 MB)'); return; }
+    unlockAudio();
+    f.arrayBuffer().then(function (buf) {
+      return actx.decodeAudioData(buf.slice(0)).then(function () { return idbSet('custom', buf); });
+    }).then(function () {
+      customBuf = null;
+      globalSet.customName = f.name.length > 30 ? f.name.slice(0, 27) + '...' : f.name;
+      choose('custom');
+    }).catch(function () { toast('This file cannot be played'); });
+  };
+
+  document.getElementById('tnDel').onclick = function () {
+    idbDel('custom').catch(function () {});
+    customBuf = null;
+    globalSet.customName = '';
+    if (globalSet.alarmTone === 'custom') globalSet.alarmTone = 'i1';
+    if (globalSet.timerTone === 'custom') globalSet.timerTone = 'i2';
+    saveGlobal();
+    stopPreview();
+    draw();
+  };
+
+  document.getElementById('tnBack').onclick = openSettings;
+  document.getElementById('done').onclick = closeSheet;
 }
 
 /* ==========================================================================
@@ -611,7 +905,6 @@ function refreshMyPlace(force) {
   }).catch(run);
 }
 
-// resolves { name, cc } (cc = 2-letter country code); empty strings when offline
 function reverseName(lat, lon) {
   const none = { name: '', cc: '' };
   if (navigator.onLine === false) return Promise.resolve(none);
@@ -710,7 +1003,7 @@ function buildWidget(w) {
   else if (w.type === 'classic') inner = classicSvg();
   else inner = '<div class="datetxt"><div class="wd"></div><div class="dm"></div></div>';
   el.innerHTML = inner;
-  el.onclick = function () { openEdit(w.id); };
+  el.onclick = function (e) { openEdit(w.id, pt(e)); };
   if (w.type === 'home') refreshMyPlace(false);
   return el;
 }
@@ -797,7 +1090,7 @@ function renderAll() {
 }
 
 /* ==========================================================================
-   8. THEME, WAKE LOCK, BOTTOM SHEET & SETTINGS
+   8. SHEET SYSTEM (pop-in), THEME & SETTINGS
    ========================================================================== */
 function applyTheme() {
   const light = globalSet.theme === 'light';
@@ -823,23 +1116,40 @@ async function setAwake(on) {
   } catch (e) {}
 }
 
-function openSheet(html) {
-  sheet.classList.remove('pop');
-  delete sheet.dataset.kind;
+// every sheet is the same pop-in card. origin = click point {x,y}; default is the top-right corner
+function openSheet(html, kind, origin) {
+  clearTimeout(closeTimer);
+  const wasOpen = sheet.classList.contains('open') && !sheet.classList.contains('closing');
+  sheet.classList.remove('closing');
+  sheet.dataset.kind = kind || '';
   sheet.innerHTML = html;
+  sheet.scrollTop = 0;
+  if (!wasOpen) {
+    sheet.classList.remove('open');
+    void sheet.offsetWidth;
+  }
   sheet.classList.add('open');
   overlay.classList.add('open');
-}
 
-function openPopover(kind) {
-  sheet.dataset.kind = kind;
-  sheet.classList.add('pop');
-  sheet.scrollTop = 0;
+  if (!wasOpen) {
+    if (origin) {
+      const r = sheet.getBoundingClientRect();
+      const ox = Math.max(0, Math.min(r.width, origin.x - r.left));
+      const oy = Math.max(0, Math.min(r.height, origin.y - r.top));
+      sheet.style.transformOrigin = ox + 'px ' + oy + 'px';
+    } else {
+      sheet.style.transformOrigin = '100% 0';
+    }
+  }
 }
 
 function closeSheet() {
-  sheet.classList.remove('open');
+  stopPreview();
   overlay.classList.remove('open');
+  if (!sheet.classList.contains('open') || sheet.classList.contains('closing')) return;
+  sheet.classList.add('closing');
+  clearTimeout(closeTimer);
+  closeTimer = setTimeout(function () { sheet.classList.remove('open', 'closing'); }, 170);
 }
 
 function openSettings() {
@@ -855,21 +1165,27 @@ function openSettings() {
     }).join('') + '</div>';
   h += '<div class="row"><button class="btn" id="fontbtn"></button></div>';
   h += '<div class="row"><button class="btn" id="awake"></button></div>';
+  h += '<div class="row"><button class="btn" id="tnAlarm"></button></div>';
+  h += '<div class="row"><button class="btn" id="tnTimer"></button></div>';
   h += '<div class="row"><button class="btn" id="upbtn">Upcoming dates: ' + escapeAttr(countryName(detectCountry()) || 'Auto') + '</button></div>';
   h += '<div class="row"><button class="btn" id="fs">Toggle fullscreen</button></div>';
   h += '<div class="row"><button class="btn" id="permbtn">Permissions &amp; connection</button></div>';
   h += '<div class="row"><button class="btn" id="done">Done</button></div>';
-  openSheet(h);
-  openPopover('settings');
-  document.getElementById('permbtn').onclick = openPermissions;
-  document.getElementById('upbtn').onclick = openUpcomingSettings;
+  openSheet(h, 'settings');
 
   function labels() {
     document.getElementById('themebtn').textContent = globalSet.theme === 'light' ? 'Theme: Light' : 'Theme: Dark';
     document.getElementById('awake').textContent = globalSet.awake ? 'Keep screen awake: ON' : 'Keep screen awake: OFF';
     document.getElementById('fontbtn').textContent = digitMode === 'sf' ? 'Numbers: Bold style' : 'Numbers: Retro lines';
+    document.getElementById('tnAlarm').textContent = 'Alarm tone: ' + toneName(globalSet.alarmTone);
+    document.getElementById('tnTimer').textContent = 'Timer tone: ' + toneName(globalSet.timerTone);
   }
   labels();
+
+  document.getElementById('permbtn').onclick = openPermissions;
+  document.getElementById('upbtn').onclick = openUpcomingSettings;
+  document.getElementById('tnAlarm').onclick = function () { openToneSheet('alarm'); };
+  document.getElementById('tnTimer').onclick = function () { openToneSheet('timer'); };
 
   document.getElementById('themebtn').onclick = function () {
     globalSet.theme = globalSet.theme === 'light' ? 'dark' : 'light';
@@ -998,7 +1314,7 @@ function initWorldEdit(w) {
   };
 }
 
-function openEdit(id) {
+function openEdit(id, origin) {
   const w = widgets.find(function (x) { return x.id === id; });
   if (!w) return;
 
@@ -1013,7 +1329,7 @@ function openEdit(id) {
   }
   h += '<div class="row"><button class="btn" id="up">&#8593; Move up</button><button class="btn" id="down">&#8595; Move down</button></div>';
   h += '<div class="row"><button class="btn danger" id="del">Delete</button><button class="btn" id="done">Done</button></div>';
-  openSheet(h);
+  openSheet(h, 'edit', origin);
 
   function labels() {
     const f = document.getElementById('fmt');
@@ -1060,8 +1376,7 @@ function openAddWidget() {
     h += '<button class="btn block" data-t="' + t + '">' + TYPE_NAMES[t] + '</button>';
   });
   h += '<div class="row"><button class="btn danger" id="reset">Reset all</button><button class="btn" id="done">Close</button></div>';
-  openSheet(h);
-  openPopover('add');
+  openSheet(h, 'add');
 
   sheet.querySelectorAll('[data-t]').forEach(function (b) {
     b.onclick = function () {
@@ -1131,12 +1446,12 @@ function renderAlarms() {
       alarms = alarms.filter(function (x) { return x !== a; });
       saveAlarms(); renderAlarms();
     };
-    row.querySelector('.ainfo').onclick = function () { openAlarmSheet(a); };
+    row.querySelector('.ainfo').onclick = function (e) { openAlarmSheet(a, pt(e)); };
     box.appendChild(row);
   });
 }
 
-function openAlarmSheet(a) {
+function openAlarmSheet(a, origin) {
   const isNew = !a;
   const draft = a
     ? { time: a.time, label: a.label || '', daily: a.daily }
@@ -1149,7 +1464,7 @@ function openAlarmSheet(a) {
     '<div class="row"><button class="btn" id="asSave">Save</button>' +
     (isNew ? '' : '<button class="btn danger" id="asDel">Delete</button>') +
     '<button class="btn" id="asCancel">Cancel</button></div>';
-  openSheet(h);
+  openSheet(h, 'alarm', origin);
 
   const repBtn = document.getElementById('asRepeat');
   function lab() { repBtn.textContent = draft.daily ? 'Repeat: Every day' : 'Repeat: Once'; }
@@ -1193,12 +1508,12 @@ function checkAlarms() {
       a.last = dk + a.time;
       if (!a.daily) a.on = false;
       saveAlarms(); renderAlarms();
-      startRing('Alarm ' + a.time, snoozeFive);
+      startRing('Alarm ' + a.time, snoozeFive, globalSet.alarmTone);
     }
   });
   if (snoozeAt && Date.now() >= snoozeAt) {
     snoozeAt = 0;
-    startRing('Alarm (snoozed)', snoozeFive);
+    startRing('Alarm (snoozed)', snoozeFive, globalSet.alarmTone);
   }
 }
 
@@ -1215,9 +1530,6 @@ function fmtMs(ms) {
   const h = Math.floor(t / 360000);
   return { main: (h ? pad(h) + ':' : '') + pad(m) + ':' + pad(s), cs: pad(cs) };
 }
-
-function iconPlay() { return '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z"/></svg>'; }
-function iconPause() { return '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M7 5h4v14H7zM13 5h4v14h-4z"/></svg>'; }
 
 function buildDial() {
   const g = document.getElementById('dialTicks');
@@ -1258,6 +1570,17 @@ function csHtml(cs) {
     timeHtml(cs, false);
 }
 
+function setGoIcon(id, running) {
+  const go = document.getElementById(id);
+  if (!go) return;
+  const k = running ? 'pause' : 'play';
+  if (go.getAttribute('data-k') !== k) {
+    go.setAttribute('data-k', k);
+    go.innerHTML = running ? ICON.pause : ICON.play;
+    go.setAttribute('aria-label', running ? 'Pause' : 'Start');
+  }
+}
+
 function renderSw() {
   const ms = swMs();
   const f = fmtMs(ms);
@@ -1272,14 +1595,7 @@ function renderSw() {
     if (cs) cs.innerHTML = csHtml(f.cs);
   }
 
-  const go = document.getElementById('swGo');
-  if (go) {
-    const k = sw.running ? 'pause' : 'play';
-    if (go.getAttribute('data-k') !== k) {
-      go.setAttribute('data-k', k);
-      go.innerHTML = sw.running ? iconPause() : iconPlay();
-    }
-  }
+  setGoIcon('swGo', sw.running);
 
   const h1 = document.getElementById('swHand');
   if (h1) h1.setAttribute('transform', 'rotate(' + ((ms % 60000) / 60000 * 360).toFixed(2) + ' 150 150)');
@@ -1398,20 +1714,13 @@ function renderTm() {
     }
   }
 
-  const go = document.getElementById('tmGo');
-  if (go) {
-    const k = tm.running ? 'pause' : 'play';
-    if (go.getAttribute('data-k') !== k) {
-      go.setAttribute('data-k', k);
-      go.innerHTML = tm.running ? iconPause() : iconPlay();
-    }
-  }
+  setGoIcon('tmGo', tm.running);
 
   if (tm.running && ms <= 0) {
     tm.running = false;
     tm.remaining = tm.total;
     saveTm(); renderTm();
-    startRing('Timer finished', null);
+    startRing('Timer finished', null, globalSet.timerTone);
   }
 }
 
@@ -1462,7 +1771,7 @@ function renderPresets() {
   });
 }
 
-function openPresetSheet() {
+function openPresetSheet(origin) {
   function opts(n) {
     let o = '';
     for (let i = 0; i < n; i++) o += '<option value="' + i + '">' + pad(i) + '</option>';
@@ -1473,7 +1782,7 @@ function openPresetSheet() {
     '<div class="row"><div class="label">Hours, minutes, seconds</div>' +
     '<select id="ptH">' + opts(24) + '</select> <select id="ptM">' + opts(60) + '</select> <select id="ptS">' + opts(60) + '</select></div>' +
     '<div class="row"><button class="btn" id="ptSave">Save</button><button class="btn" id="ptCancel">Cancel</button></div>';
-  openSheet(h);
+  openSheet(h, 'preset', origin);
   document.getElementById('ptM').value = '5';
 
   document.getElementById('ptSave').onclick = function () {
@@ -1490,21 +1799,13 @@ function openPresetSheet() {
 
 /* ==========================================================================
    14. UPCOMING  (country-aware, works offline)
-   --------------------------------------------------------------------------
-   Country:  your choice in Settings > Upcoming dates, otherwise found by itself
-             (GPS place -> time zone -> language), so it follows the phone.
-   Dates come from four sources, all merged and sorted:
-     a) Public holidays of the country (Nager.Date, saved on the phone after
-        the first download, so they show offline afterwards)
-     b) Built-in national / historical days (fixed dates, always offline)
-     c) Islamic calendar events worked out by the browser (moves each year)
-     d) Your own dates (added in Settings > Upcoming dates)
+   Sources: public holidays (saved after first download) + built-in national
+   days + Islamic calendar events + your own dates.
    ========================================================================== */
 const COUNTRIES = ('AD AF AL AR AT AU AZ BA BB BD BE BG BH BN BO BR BS BW BY BZ CA CD CH CL CN CO CR CU CY CZ DE DK DO DZ EC EE EG ES ET ' +
   'FI FR GB GE GH GR GT HK HN HR HT HU ID IE IN IQ IR IS IT JM JO JP KE KG KH KR KW KZ LA LB LK LT LU LV LY MA MD ME MK MM MN MT MV MX MY ' +
   'NA NG NI NL NO NP NZ OM PA PE PG PH PK PL PR PT PY QA RO RS RU SA SD SE SG SI SK SN SY TH TJ TN TR TZ UA UG US UY UZ VE VN YE ZA ZW').split(' ');
 
-// time zone -> country (used when GPS / internet is not available)
 const CC_TZ = {};
 ('Asia/Dhaka:BD,Asia/Kolkata:IN,Asia/Calcutta:IN,Asia/Karachi:PK,Asia/Kathmandu:NP,Asia/Katmandu:NP,Asia/Colombo:LK,Asia/Riyadh:SA,' +
  'Asia/Dubai:AE,Asia/Qatar:QA,Asia/Kuwait:KW,Asia/Muscat:OM,Asia/Bahrain:BH,Asia/Baghdad:IQ,Asia/Tehran:IR,Asia/Kabul:AF,Asia/Amman:JO,' +
@@ -1523,13 +1824,12 @@ const CC_TZ = {};
  'America/Vancouver:CA,America/Mexico_City:MX,America/Sao_Paulo:BR,America/Argentina/Buenos_Aires:AR,America/Bogota:CO,' +
  'America/Lima:PE,America/Santiago:CL').split(',').forEach(function (p) { const a = p.split(':'); CC_TZ[a[0]] = a[1]; });
 
-// countries where the Islamic calendar events are shown
 const MUSLIM = new Set(('BD PK IN SA AE EG QA KW OM BH JO LB IQ IR AF UZ TJ KG AZ TR ID MY BN MV MA DZ TN LY YE SY PS SD SN NG LK').split(' '));
-const MOON_LATE = new Set(['BD', 'IN', 'PK']);    // moon is usually sighted one day after Saudi Arabia
+const MOON_LATE = new Set(['BD', 'IN', 'PK']);
 const ARABIC = new Set(('SA AE EG QA KW OM BH JO LB IQ MA DZ TN LY YE SY PS SD').split(' '));
 const HIJRI_SCAN_DAYS = 420;
 
-// Islamic events: [Hijri month, Hijri day, English, Bangla, Arabic, type]  (h = holiday, r = religious)
+// [Hijri month, Hijri day, English, Bangla, Arabic, type]
 const HIJRI = [
   [1, 1, 'Islamic New Year', 'হিজরি নববর্ষ', 'رأس السنة الهجرية', 'r'],
   [1, 10, 'Ashura', 'আশুরা', 'عاشوراء', 'r'],
@@ -1545,7 +1845,7 @@ const HIJRI = [
 const ISL_RE = /eid|id al|id-|fitr|adha|ramadan|ramazan|arafah|arafat|ashura|mawlid|maulid|barat|qadr|mi.?raj|isra|islamic new|hijri|muharram|bayram|kurban|idul|lebaran|nuzul|raya/i;
 const REL_RE = /christmas|easter|good friday|epiphany|ascension|pentecost|whit|corpus|assumption|all saints|all souls|immaculate|diwali|deepavali|holi\b|vesak|buddha|navratri|dussehra|durga|janmashtami|ramadan|eid|fitr|adha|ashura|mawlid|passover|hanukkah|yom kippur|rosh hashan|nyepi|waisak|thaipusam|boxing|palm sunday|maundy/i;
 
-// built-in national / historical days: [month, day, English, local-language name, type]
+// [month, day, English, local-language name, type]
 const COUNTRY_DAYS = {
   BD: [
     [1, 1, 'New Year’s Day', 'ইংরেজি নববর্ষ', 'i'],
@@ -1623,7 +1923,6 @@ const COUNTRY_DAYS = {
   ]
 };
 
-// small set shown in every country (only on dates that are still free)
 const GLOBAL_DAYS = [
   [1, 1, 'New Year’s Day', '', 'i'],
   [2, 21, 'International Mother Language Day', '', 'i'],
@@ -1638,13 +1937,12 @@ let hijriCache = { key: '', list: [] };
 let lastCc = null;
 const holBusy = {};
 
-/* ---- which country? ---- */
 function autoCountry() {
   const dz = deviceZone();
-  if (myPlace.cc && myPlace.tz === dz) return myPlace.cc;     // GPS result (most exact)
-  if (CC_TZ[dz]) return CC_TZ[dz];                            // time zone
+  if (myPlace.cc && myPlace.tz === dz) return myPlace.cc;
+  if (CC_TZ[dz]) return CC_TZ[dz];
   const langs = (navigator.languages && navigator.languages.length) ? navigator.languages : [navigator.language || ''];
-  for (let i = 0; i < langs.length; i++) {                    // language region, like "bn-BD"
+  for (let i = 0; i < langs.length; i++) {
     const m = /[-_]([A-Za-z]{2})$/.exec(String(langs[i]));
     if (m) return m[1].toUpperCase();
   }
@@ -1667,7 +1965,6 @@ function flagOf(cc) {
   try { return String.fromCodePoint(127397 + cc.charCodeAt(0), 127397 + cc.charCodeAt(1)); } catch (e) { return ''; }
 }
 
-// the country may have changed (moved, new GPS answer, setting): reload everything for it
 function syncCountry() {
   const cc = detectCountry();
   if (cc === lastCc) return;
@@ -1677,7 +1974,6 @@ function syncCountry() {
   renderUpcoming();
 }
 
-/* ---- public holidays: download once, keep on the phone ---- */
 function readHol(cc, y) {
   try {
     const o = JSON.parse(localStorage.getItem(HKEY + cc + '_' + y));
@@ -1691,7 +1987,7 @@ function loadHolidays(cc) {
   const y = new Date().getFullYear();
   [y, y + 1].forEach(function (yr) {
     const c = readHol(cc, yr);
-    if (c && Date.now() - c.ts < HOL_TTL) return;             // still fresh
+    if (c && Date.now() - c.ts < HOL_TTL) return;
     const k = cc + yr;
     if (holBusy[k]) return;
     holBusy[k] = 1;
@@ -1703,7 +1999,6 @@ function loadHolidays(cc) {
         try { localStorage.setItem(HKEY + cc + '_' + yr, JSON.stringify({ ts: Date.now(), list: list })); } catch (e) {}
       })
       .catch(function (e) {
-        // country not supported by the service: remember that, so it is not asked again every time
         if (e && e.status && e.status < 500) {
           try { localStorage.setItem(HKEY + cc + '_' + yr, JSON.stringify({ ts: Date.now(), list: [] })); } catch (x) {}
         }
@@ -1715,7 +2010,6 @@ function loadHolidays(cc) {
   });
 }
 
-/* ---- Islamic calendar events (moves every year) ---- */
 function islamicFormatter() {
   const cals = ['islamic-umalqura', 'islamic-civil', 'islamic'];
   for (let i = 0; i < cals.length; i++) {
@@ -1753,7 +2047,6 @@ function hijriUpcoming(today, cc) {
   return list;
 }
 
-/* ---- your own dates ---- */
 function loadCustom() {
   try {
     const c = JSON.parse(localStorage.getItem(CUSTOM_KEY));
@@ -1763,7 +2056,6 @@ function loadCustom() {
 }
 function saveCustom(list) { try { localStorage.setItem(CUSTOM_KEY, JSON.stringify(list)); } catch (e) {} }
 
-/* ---- build the list ---- */
 function getUpcoming(today) {
   const cc = detectCountry();
   const y = today.getFullYear();
@@ -1775,14 +2067,13 @@ function getUpcoming(today) {
     if (diff < 0) return;
     out.push({ h: { n: n, b: b || '', t: t || 'i', approx: !!approx }, dt: dt, diff: diff });
   }
-  function addFixed(dt, n, b, t) {            // one item per day, the first source wins
+  function addFixed(dt, n, b, t) {
     const k = dayKey(dt);
     if (taken[k]) return;
     taken[k] = 1;
     push(dt, n, b, t, false);
   }
 
-  // a) public holidays of the country (saved copy)
   if (cc) {
     for (let yr = y; yr <= y + 1; yr++) {
       const c = readHol(cc, yr);
@@ -1799,13 +2090,11 @@ function getUpcoming(today) {
     }
   }
 
-  // b) built-in national and historical days
   const own = COUNTRY_DAYS[cc] || [];
   for (let yr = y; yr <= y + 1; yr++) {
     own.forEach(function (ev) { addFixed(new Date(yr, ev[0] - 1, ev[1]), ev[2], ev[3], ev[4]); });
   }
 
-  // c) Islamic calendar events (skipped when the holiday list already has the same one)
   hijriUpcoming(today, cc).forEach(function (x) {
     const dup = out.some(function (o) { return Math.abs(o.dt - x.dt) <= 2 * 86400000 && ISL_RE.test(o.h.n); });
     if (dup) return;
@@ -1813,12 +2102,10 @@ function getUpcoming(today) {
     push(x.dt, x.ev[2], local, x.ev[5], true);
   });
 
-  // world days on dates that are still free
   for (let yr = y; yr <= y + 1; yr++) {
     GLOBAL_DAYS.forEach(function (ev) { addFixed(new Date(yr, ev[0] - 1, ev[1]), ev[2], ev[3], ev[4]); });
   }
 
-  // d) your own dates
   loadCustom().forEach(function (c) {
     const p = String(c.d).split('-');
     if (p.length !== 3 || !c.n) return;
@@ -1868,7 +2155,6 @@ function renderUpcoming() {
   queueFade();
 }
 
-/* ---- settings sheet: country + own dates ---- */
 function openUpcomingSettings() {
   const sel = globalSet.country || 'auto';
   const names = COUNTRIES.map(function (c) { return { c: c, n: countryName(c) }; })
@@ -1890,7 +2176,7 @@ function openUpcomingSettings() {
   h += '<div class="row"><button class="btn" id="upAdd">Add</button></div>';
   h += '<div id="upList"></div>';
   h += '<div class="row"><button class="btn" id="upBack">Back</button><button class="btn" id="done">Done</button></div>';
-  openSheet(h);
+  openSheet(h, 'settings');
 
   function drawCustom() {
     const list = loadCustom();
@@ -2139,7 +2425,7 @@ function initSettingsButton() {
   ['pointerup', 'pointercancel', 'pointerleave'].forEach(function (ev) {
     cog.addEventListener(ev, function () { cog.classList.remove('press'); });
   });
-  cog.onclick = openSettings;
+  cog.onclick = function () { openSettings(); };
 }
 
 function initAddButton() {
@@ -2153,11 +2439,19 @@ function initAddButton() {
 
 function initPopoverWatch() {
   new MutationObserver(function () {
-    const open = sheet.classList.contains('open') && sheet.classList.contains('pop');
+    const open = sheet.classList.contains('open') && !sheet.classList.contains('closing');
     const kind = sheet.dataset.kind || '';
     setPenOut(open && kind === 'settings');
     setPlusOut(open && kind === 'add');
   }).observe(sheet, { attributes: true, attributeFilter: ['class', 'data-kind'] });
+}
+
+function initIcons() {
+  setIcon('swLap', ICON.lap, 'Lap');
+  setIcon('swReset', ICON.reset, 'Reset');
+  setIcon('tmReset', ICON.reset, 'Cancel');
+  setIcon('aPlus', ICON.plus, 'Add alarm');
+  setIcon('pAdd', ICON.plus, 'Add timer');
 }
 
 /* ==========================================================================
@@ -2237,7 +2531,7 @@ function fetchJson(url, opt) {
 
 function onBackOnline() {
   if (hasHome()) refreshMyPlace(false);
-  loadHolidays(detectCountry());                           // download the holidays that were missing offline
+  loadHolidays(detectCountry());
   const q = document.getElementById('wsq');
   if (q && q.value.trim().length >= 2 && q.oninput) q.oninput();
 }
@@ -2337,7 +2631,7 @@ function openPermissions() {
     h += '<div class="row"><div class="label">Keep screen awake</div><div class="pstate">' +
       (('wakeLock' in navigator) ? 'Supported' : 'Not supported') + '</div></div>';
     h += '<div class="row"><button class="btn" id="pback">Back</button><button class="btn" id="done">Done</button></div>';
-    openSheet(h);
+    openSheet(h, 'settings');
 
     document.getElementById('ptest').onclick = function () {
       const el = document.getElementById('pnet');
@@ -2425,9 +2719,9 @@ function bindEvents() {
     if (f) f();
   };
 
-  document.getElementById('add').onclick = openAddWidget;
+  document.getElementById('add').onclick = function () { openAddWidget(); };
 
-  document.getElementById('aPlus').onclick = function () { openAlarmSheet(null); };
+  document.getElementById('aPlus').onclick = function (e) { openAlarmSheet(null, pt(e)); };
   document.getElementById('aEdit').onclick = function () {
     alarmEditMode = !alarmEditMode;
     this.textContent = alarmEditMode ? 'Done' : 'Edit';
@@ -2447,7 +2741,7 @@ function bindEvents() {
     renderSw(); renderLaps();
   };
 
-  document.getElementById('pAdd').onclick = openPresetSheet;
+  document.getElementById('pAdd').onclick = function (e) { openPresetSheet(pt(e)); };
   document.getElementById('tmGo').onclick = timerGo;
   document.getElementById('tmReset').onclick = function () {
     tm.running = false;
@@ -2477,6 +2771,7 @@ function initApp() {
   injectStyles();
   applyTheme();
   bindEvents();
+  initIcons();
   initPressFeedback();
   initNav();
   initSettingsButton();
@@ -2490,7 +2785,7 @@ function initApp() {
   renderPresets();
   applyDigitMode();
   syncWheels();
-  syncCountry();           // finds the country, loads holidays, draws the Upcoming list
+  syncCountry();
   renderUpcoming();
   if (globalSet.awake) setAwake(true);
   initConnection();
