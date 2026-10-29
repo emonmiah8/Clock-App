@@ -2499,3 +2499,13 @@ measureHolidays();
     cog.setAttribute('aria-label', 'Settings');
   }
 })();
+// ======================= Round 16: no glow on the bottom bar =======================
+(function () {
+  var css = [
+    '#nav button::after,#nav button.lit::after{display:none!important;animation:none!important;box-shadow:none!important}'
+  ].join('\n');
+  var st = document.createElement('style');
+  st.id = 'r16css';
+  st.textContent = css;
+  document.head.appendChild(st);
+})();
