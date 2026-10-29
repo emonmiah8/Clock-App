@@ -1,15 +1,17 @@
 /* ==========================================================================
    CLOCK APP - main.js (final, consolidated)
    Sections:
-    1. Config & state            9. Edit / Add widget sheets
-    2. Helpers & haptics        10. Tabs
-    3. Injected styles          11. Alarms
-    4. Storage                  12. Stopwatch
-    5. Audio & ringing          13. Timer & presets
-    6. Digits & time HTML       14. Upcoming list
-    7. Home widgets             15. Press feedback, nav, settings button
-    8. Theme, wake lock,        16. Init
-       settings sheet
+    1. Config & state            10. Tabs
+    2. Helpers & haptics         11. Alarms
+    3. Injected styles           12. Stopwatch
+    4. Storage                   13. Timer & presets
+    5. Audio & ringing           14. Upcoming list (holidays)
+    6. Digits & time HTML        15. Press feedback, nav, settings button
+    7. Home widgets              16. Connection, permissions, service worker
+       (World clock = search,     17. Init
+        My location clock = follows the phone)
+    8. Theme, wake lock, settings sheet
+    9. Edit / Add widget sheets
    ========================================================================== */
 
 /* ==========================================================================
@@ -20,23 +22,21 @@ const AKEY = 'clockAlarms';
 const TKEY = 'clockTimer';
 const GKEY = 'clockGlobal';
 const PKEY = 'clockPresets';
+const PLKEY = 'clockPlace';          // cached name of the place where the phone is
+const PLASKED = 'clockPlaceAsked';   // location permission was already requested once
+const NOTIF_ASKED = 'clockNotifAsked'; // notification permission was already requested once
+const GEO_URL = 'https://geocoding-api.open-meteo.com/v1/search';          // city search (free, no key)
+const REVERSE_URL = 'https://api.bigdatacloud.net/data/reverse-geocode-client'; // coordinates -> place name (free, no key)
+const PLACE_FRESH_MS = 20 * 60 * 1000;   // how long a found place name is trusted
 
 const RETRO = ['#4aa3d8', '#ef5b55', '#f4f1ea'];   // blue, red, white (white changes with theme)
 const COLORS = ['#ffffff', '#4fc3f7', '#81c784', '#ffb74d', '#f06292'];
-const ZONES = [
-  ['Dhaka', 'Asia/Dhaka'],
-  ['London', 'Europe/London'],
-  ['New York', 'America/New_York'],
-  ['Dubai', 'Asia/Dubai'],
-  ['Riyadh', 'Asia/Riyadh'],
-  ['Tokyo', 'Asia/Tokyo'],
-  ['Sydney', 'Australia/Sydney']
-];
 const TYPE_NAMES = {
   digital: 'Digital clock',
   analog: 'Analog clock',
   date: 'Date',
-  world: 'World clock',
+  home: 'My location clock',
+  world: 'World clock (search)',
   classic: 'Classic clock'
 };
 const BGS_DARK = [
@@ -93,6 +93,18 @@ let presets = loadPresets();
 let globalSet = loadGlobal();
 let digitMode = globalSet.font === 'retro' ? 'retro' : 'sf';
 let alarmEditMode = false;
+let myPlace = loadMyPlace();
+let lastDeviceZone = deviceZone();
+let geoAbort = null;
+let geoStatus = 'idle';      // idle | locating | ok | denied | unavailable | timeout | insecure | unsupported
+let geoBusy = null;
+let searchSeq = 0;           // lets us ignore answers of old searches
+let zoneIndex = null;        // offline list of time zones
+const searchCache = {};      // place searches already done in this session
+const searchKeys = [];
+let swReg = null;
+let updateRequested = false;
+let toastTimer = null;
 
 let sw = { running: false, start: 0, elapsed: 0, laps: [] };
 let lastSwMain = '';
@@ -219,6 +231,18 @@ body.light #sheet{background:rgba(255,255,255,.72)!important;border-color:rgba(2
 #cog.press .dots i{transform:scale(.68)}
 #cog.out .dots{transform:rotate(90deg)}
 
+/* ---- message bubble, permission rows ---- */
+#toast{position:fixed;left:50%;bottom:calc(88px + env(safe-area-inset-bottom,0px));transform:translate(-50%,12px);z-index:70;display:flex;align-items:center;gap:12px;max-width:min(92vw,420px);padding:11px 16px;border-radius:999px;background:rgba(30,32,38,.72);color:#fff;-webkit-backdrop-filter:blur(20px) saturate(1.6);backdrop-filter:blur(20px) saturate(1.6);border:1px solid rgba(255,255,255,.16);box-shadow:0 10px 30px rgba(0,0,0,.4);font-size:14px;line-height:1.3;opacity:0;pointer-events:none;transition:opacity .25s ease,transform .25s ease}
+#toast.show{opacity:1;transform:translate(-50%,0);pointer-events:auto}
+#toast .tact{background:none;border:0;color:#ff9f0a;padding:0;font-size:14px;white-space:nowrap}
+body.light #toast{background:rgba(255,255,255,.85);color:#1c1c1e;border-color:rgba(255,255,255,.9);box-shadow:0 10px 30px rgba(0,0,0,.15)}
+.pstate{opacity:.85;margin-right:auto}
+.phint{font-size:12px;opacity:.7;line-height:1.35;margin:-2px 0 8px}
+
+/* ---- world / my location clock: date and offset lines ---- */
+.wdate{margin-top:6px;opacity:.8}
+.woff{margin-top:2px!important;opacity:.6}
+
 /* ---- classic clock widget ---- */
 .clsvg{width:calc(var(--size)*3.5);height:calc(var(--size)*3.5);filter:drop-shadow(0 8px 18px rgba(0,0,0,.35))}
 
@@ -276,7 +300,16 @@ function loadWidgets() {
     const s = localStorage.getItem(KEY);
     if (s) {
       const a = JSON.parse(s);
-      if (Array.isArray(a)) return a;
+      if (Array.isArray(a)) {
+        // older version: a world clock that followed the phone is now a "My location clock"
+        a.forEach(function (w) {
+          if (w.type === 'world' && w.auto) {
+            w.type = 'home';
+            delete w.zone; delete w.city; delete w.auto;
+          }
+        });
+        return a;
+      }
     }
   } catch (e) {}
   return defaultWidgets();
@@ -316,6 +349,15 @@ function loadPresets() {
 }
 function savePresets() { try { localStorage.setItem(PKEY, JSON.stringify(presets)); } catch (e) {} }
 
+function loadMyPlace() {
+  try {
+    const p = JSON.parse(localStorage.getItem(PLKEY));
+    if (p && typeof p.name === 'string') return p;
+  } catch (e) {}
+  return { name: '', tz: '', ts: 0 };
+}
+function saveMyPlace() { try { localStorage.setItem(PLKEY, JSON.stringify(myPlace)); } catch (e) {} }
+
 function saveTm() { try { localStorage.setItem(TKEY, JSON.stringify(tm)); } catch (e) {} }
 
 /* ==========================================================================
@@ -349,6 +391,7 @@ function startRing(title, snoozeFn) {
   document.getElementById('ringSnooze').style.display = snoozeFn ? 'inline-block' : 'none';
   ringSnoozeFn = snoozeFn;
   document.getElementById('ring').classList.add('open');
+  if (document.hidden) notify(title, 'Tap to open the clock', 'clock-ring');
   const go = function () {
     beep();
     haptic(300);
@@ -358,6 +401,7 @@ function startRing(title, snoozeFn) {
 }
 
 function stopRing() {
+  closeNotif('clock-ring');
   if (ringTimer) { clearInterval(ringTimer); ringTimer = null; }
   document.getElementById('ring').classList.remove('open');
 }
@@ -436,6 +480,7 @@ function applyDigitMode() {
 
 /* ==========================================================================
    7. HOME WIDGETS
+   World clock (search any place) + My location clock (follows the phone)
    ========================================================================== */
 function newWidget(type) {
   const base = {
@@ -448,7 +493,10 @@ function newWidget(type) {
   if (type === 'analog') return Object.assign(base, { size: 12 });
   if (type === 'classic') return Object.assign(base, { size: 14 });
   if (type === 'date') return Object.assign(base, { size: 14 });
-  return Object.assign(base, { size: 12, hour12: false, retro: false, zone: 'Europe/London' });
+  // my location clock: always follows the phone's place and time zone
+  if (type === 'home') return Object.assign(base, { size: 12, hour12: false, retro: false });
+  // world clock: shows the place the person searched for
+  return Object.assign(base, { size: 12, hour12: false, retro: false, zone: '', city: '' });
 }
 
 function analogSvg() {
@@ -488,9 +536,215 @@ function classicSvg() {
     '<circle cx="100" cy="100" r="6.5" fill="#111113"/><circle cx="100" cy="100" r="2.6" fill="#ff9f0a"/></svg>';
 }
 
-function zoneName(zone) {
-  const z = ZONES.find(function (x) { return x[1] === zone; });
-  return z ? z[0] : zone;
+/* ---- time zone helpers ---- */
+function isZoneWidget(w) { return w.type === 'world' || w.type === 'home'; }
+function hasHome() { return widgets.some(function (w) { return w.type === 'home'; }); }
+
+function deviceZone() {
+  try { return Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC'; } catch (e) { return 'UTC'; }
+}
+
+function validZone(z) {
+  try { new Intl.DateTimeFormat('en', { timeZone: z }); return true; } catch (e) { return false; }
+}
+
+// "America/New_York" -> "New York"
+function tzCity(z) { return String(z || '').split('/').pop().replace(/_/g, ' '); }
+
+// time zone a widget should show right now
+//   home  : always the phone's current time zone (changes by itself when the phone travels)
+//   world : the place the person picked
+function zoneOf(w) {
+  if (w.type === 'home') return deviceZone();
+  return (w.zone && validZone(w.zone)) ? w.zone : deviceZone();
+}
+
+function myPlaceName() {
+  const dz = deviceZone();
+  return (myPlace.name && myPlace.tz === dz) ? myPlace.name : tzCity(dz);
+}
+
+function placeLabel(w) {
+  if (w.type === 'home') return myPlaceName();
+  return w.city || tzCity(w.zone);
+}
+
+// offset of a time zone from UTC, in minutes
+function tzOffsetMin(zone, d) {
+  const f = new Intl.DateTimeFormat('en-US', {
+    timeZone: zone, hourCycle: 'h23',
+    year: 'numeric', month: 'numeric', day: 'numeric', hour: 'numeric', minute: 'numeric', second: 'numeric'
+  });
+  const p = {};
+  f.formatToParts(d).forEach(function (x) { p[x.type] = x.value; });
+  const asUtc = Date.UTC(+p.year, +p.month - 1, +p.day, +p.hour % 24, +p.minute, +p.second);
+  return Math.round((asUtc - (d.getTime() - d.getMilliseconds())) / 60000);
+}
+
+function hm(mins) {
+  const a = Math.abs(mins), h = Math.floor(a / 60), m = a % 60;
+  return h + 'h' + (m ? ' ' + m + 'm' : '');
+}
+
+// "GMT+6" for the phone's place, "GMT+9 · 3h ahead of you" for a searched place
+function offsetText(w, zone, now) {
+  try {
+    const off = tzOffsetMin(zone, now);
+    const a = Math.abs(off);
+    let t = 'GMT' + (off < 0 ? '-' : '+') + Math.floor(a / 60) + (a % 60 ? ':' + pad(a % 60) : '');
+    if (w.type === 'world') {
+      const diff = off - tzOffsetMin(deviceZone(), now);
+      t += ' · ' + (diff === 0 ? 'same time as you' : hm(diff) + (diff > 0 ? ' ahead of you' : ' behind you'));
+    }
+    return t;
+  } catch (e) { return ''; }
+}
+
+function updateLabels() {
+  widgets.forEach(function (w) {
+    if (!isZoneWidget(w)) return;
+    const el = widgetEl(w.id);
+    const l = el ? el.querySelector('.wlabel') : null;
+    if (l) l.textContent = placeLabel(w);
+  });
+}
+
+/* ---- location: where is the phone? ---- */
+function setGeo(st) {
+  geoStatus = st;
+  const el = document.getElementById('wsstat');
+  if (el && el.dataset.auto === '1') el.textContent = autoStatusText();
+}
+
+function geoNote() {
+  switch (geoStatus) {
+    case 'locating': return ' ...';
+    case 'denied': return ' (location is blocked, using the phone clock)';
+    case 'insecure': return ' (location needs HTTPS, using the phone clock)';
+    case 'unsupported': return ' (location not supported, using the phone clock)';
+    default: return '';
+  }
+}
+
+function autoStatusText() {
+  return '\uD83D\uDCCD My location: ' + myPlaceName() + ' \u00B7 ' + deviceZone() + geoNote();
+}
+
+// Asks the phone where it is and turns the coordinates into a place name.
+// The time always comes from the phone's own time zone, so it works even without GPS or internet.
+// Resolves with: ok | denied | unavailable | timeout | insecure | unsupported
+function refreshMyPlace(force) {
+  if (!navigator.geolocation) { setGeo('unsupported'); return Promise.resolve('unsupported'); }
+  if (window.isSecureContext === false) { setGeo('insecure'); return Promise.resolve('insecure'); }
+  if (geoBusy) return geoBusy;
+
+  const tz = deviceZone();
+  const fresh = myPlace.tz === tz && myPlace.name && Date.now() - myPlace.ts < PLACE_FRESH_MS;
+  if (fresh && !force) return Promise.resolve('ok');
+
+  function run() {
+    setGeo('locating');
+    geoBusy = new Promise(function (resolve) {
+      navigator.geolocation.getCurrentPosition(function (pos) {
+        reverseName(pos.coords.latitude, pos.coords.longitude).then(function (name) {
+          if (name) {
+            myPlace = { name: name, tz: deviceZone(), ts: Date.now() };
+            saveMyPlace();
+          }
+          updateLabels();
+          setGeo('ok');
+          resolve('ok');
+        });
+      }, function (err) {
+        const st = err && err.code === 1 ? 'denied' : (err && err.code === 3 ? 'timeout' : 'unavailable');
+        setGeo(st);
+        resolve(st);
+      }, { enableHighAccuracy: false, timeout: 10000, maximumAge: 15 * 60 * 1000 });
+    }).then(function (r) { geoBusy = null; return r; });
+    return geoBusy;
+  }
+
+  if (force || !navigator.permissions || !navigator.permissions.query) return run();
+  return navigator.permissions.query({ name: 'geolocation' }).then(function (st) {
+    let asked = false;
+    try { asked = !!localStorage.getItem(PLASKED); } catch (e) {}
+    if (st.state === 'granted') return run();
+    if (st.state === 'prompt' && !asked) {          // ask only once on its own
+      try { localStorage.setItem(PLASKED, '1'); } catch (e) {}
+      return run();
+    }
+    setGeo(st.state === 'denied' ? 'denied' : 'idle');
+    return geoStatus;
+  }).catch(run);
+}
+
+function reverseName(lat, lon) {
+  if (navigator.onLine === false) return Promise.resolve('');   // offline: keep the time zone name
+  return fetchJson(REVERSE_URL + '?latitude=' + lat + '&longitude=' + lon + '&localityLanguage=en', { timeout: 8000, retries: 1 })
+    .then(function (d) { return d ? (d.city || d.locality || d.principalSubdivision || d.countryName || '') : ''; })
+    .catch(function () { return ''; });
+}
+
+// the phone moved to another time zone: update the My location clock right away
+function checkZoneChange() {
+  const dz = deviceZone();
+  if (dz === lastDeviceZone) return;
+  lastDeviceZone = dz;
+  updateLabels();
+  if (hasHome()) {
+    toast('Time zone changed: ' + tzCity(dz));
+    refreshMyPlace(false);
+  }
+}
+
+/* ---- search: any city or place in the world ---- */
+function cacheSearch(key, list) {
+  searchCache[key] = list;
+  searchKeys.push(key);
+  if (searchKeys.length > 40) delete searchCache[searchKeys.shift()];
+}
+
+// works without internet: searches the browser's own list of time zones ("Dhaka", "New York", ...)
+function localZoneSearch(q) {
+  if (!zoneIndex) {
+    let all = [];
+    try { all = Intl.supportedValuesOf('timeZone'); } catch (e) {}
+    if (!all.length) {
+      all = ['Asia/Dhaka', 'Asia/Kolkata', 'Asia/Karachi', 'Asia/Dubai', 'Asia/Riyadh', 'Asia/Tokyo', 'Asia/Singapore',
+        'Europe/London', 'Europe/Paris', 'America/New_York', 'America/Los_Angeles', 'Australia/Sydney', 'UTC'];
+    }
+    zoneIndex = all.filter(validZone).map(function (z) {
+      return { name: tzCity(z), timezone: z, admin1: z.split('/')[0], country: '' };
+    });
+  }
+  const k = q.toLowerCase().trim();
+  const kz = k.replace(/\s+/g, '_');
+  return zoneIndex.filter(function (r) {
+    return r.name.toLowerCase().indexOf(k) > -1 || r.timezone.toLowerCase().indexOf(kz) > -1;
+  }).slice(0, 8);
+}
+
+// Resolves with { list, local }. local = true when the answer came from the offline list.
+function searchPlaces(q) {
+  const key = q.toLowerCase();
+  if (searchCache[key]) return Promise.resolve({ list: searchCache[key], local: false });
+
+  if (geoAbort) geoAbort.abort();
+  geoAbort = (typeof AbortController !== 'undefined') ? new AbortController() : null;
+
+  return fetchJson(GEO_URL + '?name=' + encodeURIComponent(q) + '&count=8&language=en&format=json',
+    { signal: geoAbort ? geoAbort.signal : null, timeout: 8000, retries: 1 })
+    .then(function (d) {
+      const list = ((d && d.results) || []).filter(function (r) { return r.timezone && validZone(r.timezone); });
+      if (list.length) { cacheSearch(key, list); return { list: list, local: false }; }
+      return { list: localZoneSearch(q), local: true };
+    })
+    .catch(function (err) {
+      if (err && err.name === 'AbortError') throw err;          // replaced by a newer search
+      const list = localZoneSearch(q);
+      if (list.length) return { list: list, local: true };      // internet problem: use the offline list
+      throw err;
+    });
 }
 
 function widgetEl(id) { return document.querySelector('[data-id="' + id + '"]'); }
@@ -511,12 +765,14 @@ function buildWidget(w) {
   el.dataset.type = w.type;
   let inner;
   if (w.type === 'digital') inner = '<div class="time"></div>';
-  else if (w.type === 'world') inner = '<div class="wlabel">' + zoneName(w.zone) + '</div><div class="time"></div>';
+  else if (isZoneWidget(w)) inner = '<div class="wlabel">' + escapeAttr(placeLabel(w)) +
+    '</div><div class="time"></div><div class="wlabel wdate"></div><div class="wlabel wdate woff"></div>';
   else if (w.type === 'analog') inner = analogSvg();
   else if (w.type === 'classic') inner = classicSvg();
   else inner = '<div class="datetxt"><div class="wd"></div><div class="dm"></div></div>';
   el.innerHTML = inner;
   el.onclick = function () { openEdit(w.id); };
+  if (w.type === 'home') refreshMyPlace(false);      // find the place name (does nothing if it is recent)
   return el;
 }
 
@@ -541,13 +797,20 @@ function setClassic(el, now) {
 }
 
 function updateWidget(w, el, now) {
-  if (w.type === 'digital' || w.type === 'world') {
-    const str = fmtTime(now, w, w.type === 'world' ? w.zone : null);
+  if (w.type === 'digital' || isZoneWidget(w)) {
+    const zone = isZoneWidget(w) ? zoneOf(w) : null;
+    const str = fmtTime(now, w, zone);
     const key = str + '|' + w.retro;
     const t = el.querySelector('.time');
     if (t.dataset.key !== key) {
       t.dataset.key = key;
       t.innerHTML = timeHtml(str, w.retro);
+    }
+    if (isZoneWidget(w)) {
+      const d = el.querySelector('.wdate');
+      if (d) d.textContent = now.toLocaleDateString('en-GB', { weekday: 'short', day: 'numeric', month: 'long', timeZone: zone });
+      const o = el.querySelector('.woff');
+      if (o) o.textContent = offsetText(w, zone, now);
     }
   } else if (w.type === 'analog') {
     const h = now.getHours() % 12, m = now.getMinutes(), s = now.getSeconds();
@@ -563,6 +826,7 @@ function updateWidget(w, el, now) {
 }
 
 function tick() {
+  checkZoneChange();
   const now = new Date();
   widgets.forEach(function (w) {
     const el = widgetEl(w.id);
@@ -647,9 +911,11 @@ function openSettings() {
   h += '<div class="row"><button class="btn" id="fontbtn"></button></div>';
   h += '<div class="row"><button class="btn" id="awake"></button></div>';
   h += '<div class="row"><button class="btn" id="fs">Toggle fullscreen</button></div>';
+  h += '<div class="row"><button class="btn" id="permbtn">Permissions &amp; connection</button></div>';
   h += '<div class="row"><button class="btn" id="done">Done</button></div>';
   openSheet(h);
   sheet.classList.add('pop');   // settings opens as a popover under the dots button
+  document.getElementById('permbtn').onclick = openPermissions;
 
   function labels() {
     document.getElementById('themebtn').textContent = globalSet.theme === 'light' ? 'Theme: Light' : 'Theme: Dark';
@@ -694,6 +960,98 @@ function openSettings() {
 /* ==========================================================================
    9. EDIT / ADD WIDGET SHEETS
    ========================================================================== */
+// the part of the edit sheet that belongs to the World clock (search) and My location clock
+function worldEditHtml(w) {
+  let h = '<div class="row"><div class="label" id="wsstat"></div></div>';
+  if (w.type === 'world') {
+    h += '<div class="row"><input type="text" id="wsq" placeholder="Search city or place" maxlength="60" autocomplete="off"></div>' +
+      '<div id="wsres"></div>';
+  } else {
+    h += '<div class="phint">Shows the place where this phone is. The time changes by itself when the time zone changes.</div>' +
+      '<div class="row"><button class="btn" id="wsloc">&#128205; Refresh location</button></div>';
+  }
+  return h;
+}
+
+function initWorldEdit(w) {
+  const stat = document.getElementById('wsstat');
+  const home = w.type === 'home';
+  let timer = null;
+
+  function showStatus() {
+    if (!stat) return;
+    stat.dataset.auto = home ? '1' : '0';
+    stat.textContent = home ? autoStatusText() : '\uD83C\uDF0D ' + placeLabel(w) + ' \u00B7 ' + zoneOf(w);
+  }
+  showStatus();
+
+  if (home) {
+    document.getElementById('wsloc').onclick = function () {
+      refreshMyPlace(true).then(function (st) {
+        showStatus();
+        if (st === 'denied') toast('Location is blocked. Allow it in the site settings of your browser.', { ms: 5000 });
+        else if (st === 'insecure') toast('Location needs HTTPS.', { ms: 4000 });
+        else if (st === 'timeout' || st === 'unavailable') toast('Could not get your location. Using the phone clock.');
+        else if (st === 'ok' && navigator.onLine === false) toast('Offline: the place name will update when internet is back.');
+      });
+    };
+    return;
+  }
+
+  const q = document.getElementById('wsq');
+  const res = document.getElementById('wsres');
+
+  function msg(t, retry) {
+    res.innerHTML = '<div class="label">' + t + '</div>';
+    if (retry) {
+      const b = document.createElement('button');
+      b.className = 'btn';
+      b.textContent = 'Retry';
+      b.onclick = function () { q.oninput(); };
+      res.appendChild(b);
+    }
+  }
+
+  q.oninput = function () {
+    clearTimeout(timer);
+    const v = q.value.trim();
+    const my = ++searchSeq;
+    if (v.length < 2) { if (geoAbort) geoAbort.abort(); res.innerHTML = ''; return; }
+    msg('Searching...');
+    timer = setTimeout(function () {
+      searchPlaces(v).then(function (r) {
+        if (my !== searchSeq) return;                       // an older answer, ignore it
+        if (!r.list.length) { msg('No place found'); return; }
+        res.innerHTML = '';
+        if (r.local) {
+          const n = document.createElement('div');
+          n.className = 'label';
+          n.textContent = 'No internet: showing the offline time zone list';
+          res.appendChild(n);
+        }
+        r.list.forEach(function (p) {
+          const sub = [p.admin1, p.country].filter(Boolean).join(', ');
+          const b = document.createElement('button');
+          b.className = 'btn block';
+          b.textContent = p.name + (sub ? ' \u00B7 ' + sub : '');
+          b.onclick = function () {
+            w.zone = p.timezone;
+            w.city = p.name;
+            saveWidgets(); renderAll(); showStatus();
+            res.innerHTML = '';
+            q.value = '';
+          };
+          res.appendChild(b);
+        });
+      }).catch(function (err) {
+        if (err && err.name === 'AbortError') return;
+        if (my !== searchSeq) return;
+        msg(netMessage(err), true);
+      });
+    }, 350);
+  };
+}
+
 function openEdit(id) {
   const w = widgets.find(function (x) { return x.id === id; });
   if (!w) return;
@@ -703,11 +1061,8 @@ function openEdit(id) {
     COLORS.map(function (c) { return '<button class="swatch" data-c="' + c + '" style="background:' + c + '"></button>'; }).join('') + '</div>';
   h += '<div class="row"><div class="label">Size</div><input type="range" id="sz" min="6" max="26" step="1" value="' + w.size + '"></div>';
 
-  if (w.type === 'world') {
-    h += '<div class="row"><div class="label">City</div><select id="zone">' +
-      ZONES.map(function (z) { return '<option value="' + z[1] + '"' + (z[1] === w.zone ? ' selected' : '') + '>' + z[0] + '</option>'; }).join('') + '</select></div>';
-  }
-  if (w.type === 'digital' || w.type === 'world') {
+  if (isZoneWidget(w)) h += worldEditHtml(w);
+  if (w.type === 'digital' || isZoneWidget(w)) {
     h += '<div class="row"><button class="btn" id="fmt"></button><button class="btn" id="rt"></button></div>';
   }
   h += '<div class="row"><button class="btn" id="up">&#8593; Move up</button><button class="btn" id="down">&#8595; Move down</button></div>';
@@ -730,8 +1085,7 @@ function openEdit(id) {
     w.size = Number(e.target.value); saveWidgets(); applyStyle(w);
   };
 
-  const zoneSel = document.getElementById('zone');
-  if (zoneSel) zoneSel.onchange = function () { w.zone = zoneSel.value; saveWidgets(); renderAll(); };
+  if (isZoneWidget(w)) initWorldEdit(w);
 
   const fmt = document.getElementById('fmt');
   if (fmt) fmt.onclick = function () { w.hour12 = !w.hour12; saveWidgets(); renderAll(); labels(); };
@@ -861,7 +1215,9 @@ function openAlarmSheet(a) {
     const lbl = document.getElementById('asLabel').value.trim();
     const now = new Date();
     // do not ring immediately if set to the current minute
-    const guard = (t === pad(now.getHours()) + ':' + pad(now.getMinutes())) ? dayKey(now) + t : '';
+    const tp = t.split(':');
+    const lateBy = now.getHours() * 60 + now.getMinutes() - (Number(tp[0]) * 60 + Number(tp[1]));
+    const guard = (lateBy >= 0 && lateBy <= 2) ? dayKey(now) + t : '';
     if (isNew) {
       alarms.push({ id: 'a' + Date.now(), time: t, on: true, daily: draft.daily, label: lbl, last: guard });
     } else {
@@ -869,6 +1225,7 @@ function openAlarmSheet(a) {
     }
     alarms.sort(function (x, y) { return x.time < y.time ? -1 : 1; });
     saveAlarms(); renderAlarms(); closeSheet();
+    maybeAskNotifications();
   };
 
   const del = document.getElementById('asDel');
@@ -881,11 +1238,14 @@ function openAlarmSheet(a) {
 
 function checkAlarms() {
   const now = new Date();
-  const hm = pad(now.getHours()) + ':' + pad(now.getMinutes());
+  const nowMin = now.getHours() * 60 + now.getMinutes();
   const dk = dayKey(now);
   alarms.forEach(function (a) {
-    if (a.on && a.time === hm && a.last !== dk + hm) {
-      a.last = dk + hm;
+    const p = a.time.split(':');
+    const late = nowMin - (Number(p[0]) * 60 + Number(p[1]));   // minutes since it was due
+    // also rings an alarm whose minute passed while the phone had the page asleep (up to 2 minutes)
+    if (a.on && late >= 0 && late <= 2 && a.last !== dk + a.time) {
+      a.last = dk + a.time;
       if (!a.daily) a.on = false;
       saveAlarms(); renderAlarms();
       startRing('Alarm ' + a.time, snoozeFive);
@@ -1127,6 +1487,7 @@ function timerGo() {
     tm.running = true;
   }
   saveTm(); renderTm();
+  if (tm.running) maybeAskNotifications();
 }
 
 function pickPreset(ms) {
@@ -1486,7 +1847,267 @@ function initSettingsButton() {
 }
 
 /* ==========================================================================
-   16. INIT
+   16. CONNECTION, PERMISSIONS & SERVICE WORKER
+   ========================================================================== */
+// ---- small message bubble above the bottom bar ----
+function hideToast() {
+  const el = document.getElementById('toast');
+  if (el) el.classList.remove('show');
+}
+
+function toast(text, opt) {
+  opt = opt || {};
+  let el = document.getElementById('toast');
+  if (!el) {
+    el = document.createElement('div');
+    el.id = 'toast';
+    el.setAttribute('role', 'status');
+    el.setAttribute('aria-live', 'polite');
+    el.innerHTML = '<span class="tmsg"></span><button class="tact" type="button"></button>';
+    document.body.appendChild(el);
+  }
+  el.querySelector('.tmsg').textContent = text;
+  const btn = el.querySelector('.tact');
+  if (opt.action) {
+    btn.textContent = opt.action.label;
+    btn.style.display = '';
+    btn.onclick = function () { hideToast(); opt.action.fn(); };
+  } else {
+    btn.style.display = 'none';
+  }
+  el.classList.add('show');
+  clearTimeout(toastTimer);
+  if (!opt.sticky) toastTimer = setTimeout(hideToast, opt.ms || 3500);
+}
+
+// ---- internet: fetch with time limit, one retry, and clear error kinds ----
+function netError(kind) { const e = new Error(kind); e.kind = kind; return e; }
+function delay(ms) { return new Promise(function (r) { setTimeout(r, ms); }); }
+
+function netMessage(err) {
+  switch (err && err.kind) {
+    case 'offline': return 'No internet connection';
+    case 'timeout': return 'Connection is slow, try again';
+    case 'http': return 'The service is busy, try again';
+    default: return 'Could not connect, try again';
+  }
+}
+
+function fetchJson(url, opt) {
+  opt = opt || {};
+  const timeoutMs = opt.timeout || 8000;
+  const retries = opt.retries == null ? 1 : opt.retries;
+
+  function attempt(n) {
+    if (navigator.onLine === false) return Promise.reject(netError('offline'));
+    const ctl = (typeof AbortController !== 'undefined') ? new AbortController() : null;
+    let timedOut = false;
+    const timer = setTimeout(function () { timedOut = true; if (ctl) ctl.abort(); }, timeoutMs);
+    if (opt.signal && ctl) opt.signal.addEventListener('abort', function () { ctl.abort(); });
+
+    return fetch(url, ctl ? { signal: ctl.signal } : {})
+      .then(function (r) {
+        clearTimeout(timer);
+        if (!r.ok) { const e = netError('http'); e.status = r.status; throw e; }
+        return r.json();
+      })
+      .catch(function (err) {
+        clearTimeout(timer);
+        if (opt.signal && opt.signal.aborted) throw err;       // cancelled on purpose
+        const e = (err && err.kind) ? err : netError(timedOut ? 'timeout' : (navigator.onLine === false ? 'offline' : 'network'));
+        const retryable = e.kind === 'timeout' || e.kind === 'network' || (e.kind === 'http' && e.status >= 500);
+        if (retryable && n < retries) return delay(700 * (n + 1)).then(function () { return attempt(n + 1); });
+        throw e;
+      });
+  }
+  return attempt(0);
+}
+
+function onBackOnline() {
+  // finish what was waiting for the connection
+  if (hasHome()) refreshMyPlace(false);                    // get the place name that was missing offline
+  const q = document.getElementById('wsq');
+  if (q && q.value.trim().length >= 2 && q.oninput) q.oninput();
+}
+
+function initConnection() {
+  window.addEventListener('offline', function () { toast('You are offline. Place search uses the offline list.', { ms: 4500 }); });
+  window.addEventListener('online', function () { toast('Back online'); onBackOnline(); });
+  if (navigator.onLine === false) toast('You are offline. Place search uses the offline list.', { ms: 4500 });
+}
+
+// ---- notifications (alarm / timer alerts while the app is in the background) ----
+function notifSupported() { return 'Notification' in window; }
+
+function requestNotifications() {
+  if (!notifSupported()) return Promise.resolve('unsupported');
+  if (Notification.permission !== 'default') return Promise.resolve(Notification.permission);
+  return new Promise(function (resolve) {
+    try {
+      const r = Notification.requestPermission(resolve);
+      if (r && r.then) r.then(resolve);
+    } catch (e) { resolve(Notification.permission); }
+  });
+}
+
+// asks once, right after the person sets an alarm or starts a timer
+function maybeAskNotifications() {
+  if (!notifSupported() || Notification.permission !== 'default') return;
+  let asked = false;
+  try { asked = !!localStorage.getItem(NOTIF_ASKED); } catch (e) {}
+  if (asked) return;
+  try { localStorage.setItem(NOTIF_ASKED, '1'); } catch (e) {}
+  requestNotifications();
+}
+
+function notify(title, body, tag) {
+  if (!notifSupported() || Notification.permission !== 'granted') return;
+  const opts = { body: body, tag: tag || 'clock', renotify: true, requireInteraction: true, vibrate: [300, 150, 300, 150, 300] };
+  function plain() { try { new Notification(title, opts); } catch (e) {} }
+  if (swReg && swReg.showNotification) swReg.showNotification(title, opts).catch(plain);
+  else plain();
+}
+
+function closeNotif(tag) {
+  try {
+    if (swReg && swReg.getNotifications) {
+      swReg.getNotifications({ tag: tag }).then(function (list) {
+        list.forEach(function (n) { n.close(); });
+      });
+    }
+  } catch (e) {}
+}
+
+// ---- keep the browser from deleting alarms and settings ----
+function requestPersistentStorage() {
+  if (!(navigator.storage && navigator.storage.persist && navigator.storage.persisted)) return Promise.resolve(false);
+  return navigator.storage.persisted().then(function (p) { return p || navigator.storage.persist(); }).catch(function () { return false; });
+}
+
+// ---- permission status sheet ----
+function geoPermState() {
+  if (!navigator.geolocation) return 'unsupported';
+  if (window.isSecureContext === false) return 'insecure';
+  if (!navigator.permissions || !navigator.permissions.query) return 'unknown';
+  return navigator.permissions.query({ name: 'geolocation' }).then(function (st) { return st.state; }).catch(function () { return 'unknown'; });
+}
+
+function notifState() {
+  if (!notifSupported()) return 'unsupported';
+  return Notification.permission === 'default' ? 'prompt' : Notification.permission;
+}
+
+function storageState() {
+  if (!(navigator.storage && navigator.storage.persisted)) return 'unsupported';
+  return navigator.storage.persisted().then(function (p) { return p ? 'granted' : 'prompt'; }).catch(function () { return 'unknown'; });
+}
+
+function permLabel(st) {
+  return { granted: 'Allowed', denied: 'Blocked', prompt: 'Not allowed yet', unknown: 'Not allowed yet',
+    unsupported: 'Not supported', insecure: 'Needs HTTPS' }[st] || st;
+}
+
+function openPermissions() {
+  Promise.all([geoPermState(), notifState(), storageState()]).then(function (r) {
+    const rows = [
+      ['geo', 'Location', 'Shows the time and date of the place where you are.', r[0]],
+      ['notif', 'Notifications', 'Alerts for alarms and timers while the app is in the background.', r[1]],
+      ['store', 'Keep my data', 'Stops the browser from deleting your alarms and settings.', r[2]]
+    ];
+
+    let h = '<div class="title">Permissions &amp; connection</div>';
+    h += '<div class="row"><div class="label">Internet</div><div class="pstate" id="pnet">' +
+      (navigator.onLine === false ? 'Offline' : 'Online') + '</div><button class="btn" id="ptest">Test</button></div>';
+    rows.forEach(function (x) {
+      const st = x[3];
+      h += '<div class="row"><div class="label">' + x[1] + '</div><div class="pstate">' + permLabel(st) + '</div>' +
+        ((st === 'prompt' || st === 'unknown') ? '<button class="btn" data-p="' + x[0] + '">Allow</button>' : '') + '</div>';
+      h += '<div class="phint">' + (st === 'denied'
+        ? 'Blocked. Allow it in the site settings of your browser, then open this page again.' : x[2]) + '</div>';
+    });
+    h += '<div class="row"><div class="label">Keep screen awake</div><div class="pstate">' +
+      (('wakeLock' in navigator) ? 'Supported' : 'Not supported') + '</div></div>';
+    h += '<div class="row"><button class="btn" id="pback">Back</button><button class="btn" id="done">Done</button></div>';
+    openSheet(h);
+
+    document.getElementById('ptest').onclick = function () {
+      const el = document.getElementById('pnet');
+      el.textContent = 'Checking...';
+      fetchJson(GEO_URL + '?name=London&count=1&format=json', { retries: 0, timeout: 6000 })
+        .then(function () { el.textContent = 'Online, connected'; })
+        .catch(function (e) { el.textContent = e && e.kind === 'offline' ? 'Offline' : 'No connection to the internet'; });
+    };
+
+    sheet.querySelectorAll('[data-p]').forEach(function (b) {
+      b.onclick = function () {
+        const k = b.dataset.p;
+        const job = k === 'geo' ? refreshMyPlace(true) : (k === 'notif' ? requestNotifications() : requestPersistentStorage());
+        Promise.resolve(job).then(openPermissions);
+      };
+    });
+    document.getElementById('pback').onclick = openSettings;
+    document.getElementById('done').onclick = closeSheet;
+  });
+}
+
+// react when the person changes a permission in the browser settings
+function watchPermissions() {
+  if (!navigator.permissions || !navigator.permissions.query) return;
+  navigator.permissions.query({ name: 'geolocation' }).then(function (st) {
+    st.onchange = function () {
+      if (st.state === 'granted') { if (hasHome()) refreshMyPlace(true); }
+      else if (st.state === 'denied') setGeo('denied');
+    };
+  }).catch(function () {});
+}
+
+// My location clock: keep the place and time zone fresh while the app is open
+function initWorldHome() {
+  // coming back to the app: check the time zone and the place at once
+  window.addEventListener('focus', function () {
+    checkZoneChange();
+    if (hasHome()) refreshMyPlace(false);
+  });
+  // while the app stays open, check the place now and then (the phone may be travelling)
+  setInterval(function () {
+    if (hasHome() && !document.hidden) refreshMyPlace(false);
+  }, 10 * 60 * 1000);
+}
+
+// ---- service worker: offline support, notifications, update prompt ----
+function offerUpdate(worker) {
+  toast('A new version is ready', {
+    sticky: true,
+    action: { label: 'Reload', fn: function () { updateRequested = true; worker.postMessage('SKIP_WAITING'); } }
+  });
+}
+
+function registerSW() {
+  if (!('serviceWorker' in navigator)) return;
+
+  navigator.serviceWorker.addEventListener('controllerchange', function () {
+    if (updateRequested) location.reload();
+  });
+
+  navigator.serviceWorker.getRegistration()
+    .then(function (reg) { return reg || navigator.serviceWorker.register('sw.js'); })
+    .then(function (reg) {
+      swReg = reg;
+      if (reg.waiting && navigator.serviceWorker.controller) offerUpdate(reg.waiting);
+      reg.addEventListener('updatefound', function () {
+        const nw = reg.installing;
+        if (!nw) return;
+        nw.addEventListener('statechange', function () {
+          if (nw.state === 'installed' && navigator.serviceWorker.controller) offerUpdate(nw);
+        });
+      });
+      setInterval(function () { reg.update().catch(function () {}); }, 60 * 60 * 1000);
+    })
+    .catch(function () {});
+}
+
+/* ==========================================================================
+   17. INIT
    ========================================================================== */
 function bindEvents() {
   overlay.onclick = closeSheet;
@@ -1535,7 +2156,12 @@ function bindEvents() {
 
   // keep the screen awake: re-acquire the lock when the page comes back
   document.addEventListener('visibilitychange', function () {
-    if (document.visibilityState === 'visible' && globalSet.awake) setAwake(true);
+    if (document.visibilityState !== 'visible') return;
+    if (globalSet.awake) setAwake(true);
+    checkAlarms();                           // catch up on anything that came due while the page slept
+    if (tm.running) renderTm();
+    tick();
+    queueFade();
   });
   document.addEventListener('click', function () {
     if (globalSet.awake && !wakeLock) setAwake(true);
@@ -1559,6 +2185,11 @@ function initApp() {
   applyDigitMode();        // renders widgets, stopwatch, timer and alarms
   syncWheels();
   if (globalSet.awake) setAwake(true);
+  initConnection();
+  initWorldHome();
+  registerSW();
+  requestPersistentStorage();
+  watchPermissions();
 
   setInterval(tick, 1000);
   setInterval(checkAlarms, 1000);
