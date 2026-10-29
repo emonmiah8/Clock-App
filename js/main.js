@@ -282,6 +282,9 @@ body.light .round:not(.main).lit::after{animation-name:waveGray}
 #nav button{transition:background-color .14s ease,opacity .14s ease,transform .1s ease!important}
 #nav button:active{transform:scale(.94)}
 #nav button::after{display:none!important}
+@keyframes popIn{from{opacity:0;transform:scale(.86) translateY(-8px)}to{opacity:1;transform:none}}
+#sheet.open.pop{left:auto!important;right:12px!important;bottom:auto!important;top:calc(64px + env(safe-area-inset-top,0px))!important;width:min(90vw,340px);max-height:calc(100vh - 150px);border-radius:24px!important;transform-origin:top right;animation:popIn .28s cubic-bezier(.22,.8,.25,1) both}
+#sheet.open.popl{left:12px!important;right:auto!important;bottom:auto!important;top:calc(64px + env(safe-area-inset-top,0px))!important;width:min(90vw,340px);max-height:calc(100vh - 150px);border-radius:24px!important;transform-origin:top left;animation:popIn .28s cubic-bezier(.22,.8,.25,1) both}
 `;
 
   const st = document.createElement('style');
