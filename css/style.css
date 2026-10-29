@@ -1,18 +1,20 @@
-:root { --bg: #000; }
-laswapp'p'r
-html, body, button, input, select, textarea {
-  font-family: var(--font-ui);
-  -webkit-font-smoothing: antialiased;
+/* ---- Variables ---- */
+:root {
+  --bg: #000;
+  --sf: -apple-system, BlinkMacSystemFont, "SF Pro Display", "SF Pro Text", system-ui, "Roboto", "Segoe UI", Arial, sans-serif;
+  --card: #1c1c1e;
+  --muted: rgba(255, 255, 255, 0.55);
+  --ease: cubic-bezier(0.22, 0.8, 0.25, 1);
+  --dur: 0.4s;
 }
 
-/* সংখ্যা যেন নড়াচড়া না করে */
-.digital-time, #digitalTime {
-  font-family: var(--font-ui);
-  font-weight: 300;
-  font-variant-numeric: tabular-nums;
-  letter-spacing: -0.02em;
-}
+/* ---- Base ---- */
 * { box-sizing: border-box; }
+
+html, body, button, input, select, textarea {
+  font-family: var(--sf);
+  -webkit-font-smoothing: antialiased;
+}
 
 html, body {
   margin: 0;
@@ -22,86 +24,119 @@ html, body {
 body {
   min-height: 100vh;
   color: #fff;
-  font-family: sans-serif;
   display: flex;
   flex-direction: column;
   -webkit-tap-highlight-color: transparent;
 }
 
-/* ---- Add button ---- */
+.view { display: none; flex: 1; flex-direction: column; }
+.view.active { display: flex; }
+
+/* ---- Top buttons ---- */
 #add {
   position: fixed; top: 12px; left: 14px; z-index: 5;
   background: none; border: none; color: #fff;
   font-size: 36px; line-height: 1; opacity: 0.5;
   padding: 4px 10px;
 }
+#cog {
+  position: fixed; top: 12px; right: 14px; z-index: 5;
+  background: none; border: none; color: #fff;
+}
 
-/* ---- Widget area ---- */
-#stage {
-  margin: auto;
-  width: 100%;
+/* ---- Floating capsule bar ---- */
+#nav {
+  position: fixed; left: 14px; right: 14px; z-index: 6;
+  bottom: calc(12px + env(safe-area-inset-bottom, 0px));
   display: flex;
-  flex-direction: column;
-  align-items: center;
+  padding: 6px;
+  background: rgba(28, 30, 35, 0.88);
+  -webkit-backdrop-filter: blur(14px);
+  backdrop-filter: blur(14px);
+  border: 1px solid #2a2d33;
+  border-radius: 999px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.5);
+}
+#nav button {
+  flex: 1;
+  display: flex; flex-direction: column; align-items: center; gap: 4px;
+  padding: 8px 0 9px;
+  background: none; border: none; border-radius: 999px;
+  color: #fff; font-size: 12px;
+  opacity: 0.4;
+}
+#nav button.active { opacity: 1; background: rgba(255, 255, 255, 0.1); }
+
+/* ---- Home widget area ---- */
+#stage {
+  width: 100%;
+  margin: 0 auto;
+  padding: 16px 12px 120px;          /* bottom space for the floating bar */
+  display: flex; flex-direction: column; align-items: center;
   gap: 6vw;
-  padding: 70px 12px 90px;
 }
 .empty { opacity: 0.4; font-size: 18px; }
 
 .widget {
   color: var(--color);
-  display: flex;
-  flex-direction: column;
-  align-items: center;
+  display: flex; flex-direction: column; align-items: center;
   cursor: pointer;
 }
 .wlabel { font-size: 4vw; opacity: 0.55; margin-bottom: 2vw; }
 
-/* ---- Digital time ---- */
+/* ---- Time digits ---- */
 .time {
-  display: flex;
-  align-items: center;
-  justify-content: center;
+  display: flex; align-items: center; justify-content: center;
   flex-wrap: nowrap;
   font-size: calc(var(--size) * 0.3);
 }
+.time .txt { white-space: nowrap; font-variant-numeric: tabular-nums; }
+.time .colon { display: inline-block; transform: translateY(-0.07em); margin: 0 0.02em; }
+.time .ampm { margin-left: 0.2em; font-size: calc(var(--size) * 0.3); }
+
+/* retro line digits */
 .time .dg {
   height: calc(var(--size) * 0.8);
-  width: auto;
-  flex: none;
+  width: auto; flex: none;
   margin: 0 calc(var(--size) * 0.02);
 }
 .time .gap { width: calc(var(--size) * 0.15); }
-.time .ampm { font-weight: 300; font-size: calc(var(--size) * 0.3); }
-
 .l1 { stroke: currentColor; stroke-width: 15; }
 .l2 { stroke: var(--bg);    stroke-width: 9; }
 .l3 { stroke: currentColor; stroke-width: 3; }
 
-/* ---- Analog ---- */
-.analog {
-  width: calc(var(--size) * 3.5);
-  height: calc(var(--size) * 3.5);
-}
+/* ---- Analog and date widgets ---- */
+.analog { width: calc(var(--size) * 3.5); height: calc(var(--size) * 3.5); }
 
-/* ---- Date ---- */
 .datetxt { text-align: center; }
-.datetxt .wd { font-size: calc(var(--size) * 0.45); font-weight: 200; }
+.datetxt .wd { font-size: calc(var(--size) * 0.45); }
 .datetxt .dm { font-size: calc(var(--size) * 0.3); opacity: 0.6; margin-top: 4px; }
 
-/* ---- Bottom sheet ---- */
-#overlay {
-  display: none;
-  position: fixed; inset: 0; z-index: 10;
-  background: rgba(0, 0, 0, 0.6);
+/* ---- Upcoming list (layout and glass are in main.js) ---- */
+.hhead { color: var(--muted); text-transform: uppercase; }
+.hsub { text-transform: none; }
+#hList { display: flex; scrollbar-width: none; }
+#hList::-webkit-scrollbar { display: none; }
+.hcard { text-align: left; }
+.hname { line-height: 1.2; }
+.hbn { font-size: 12px; color: var(--muted); margin-top: 2px; }
+.hwd { font-size: 11px; color: var(--muted); }
+.hleft {
+  display: inline-block; margin-top: 8px;
+  font-size: 11px; padding: 3px 8px; border-radius: 999px;
+  background: rgba(128, 128, 128, 0.18);
 }
+.hleft.soon { background: rgba(255, 106, 92, 0.2); color: #ff6a5c; }
+
+/* ---- Bottom sheet ---- */
+#overlay { display: none; position: fixed; inset: 0; z-index: 10; }
 #overlay.open { display: block; }
 
 #sheet {
   display: none;
   position: fixed; left: 0; right: 0; bottom: 0; z-index: 11;
   max-height: 80vh; overflow-y: auto;
-  background: #151515; color: #fff;
+  color: #fff;
   padding: 16px 20px 28px;
   border-radius: 16px 16px 0 0;
 }
@@ -115,13 +150,7 @@ body {
   width: 40px; height: 40px; border-radius: 50%;
   border: 2px solid #444; margin-right: 10px;
 }
-
 #sz { width: 100%; }
-
-select {
-  background: #333; color: #fff; border: none;
-  padding: 10px 14px; border-radius: 8px; font-size: 16px;
-}
 
 .btn {
   background: #333; color: #fff; border: none;
@@ -130,135 +159,36 @@ select {
 }
 .btn.block { display: block; width: 100%; text-align: left; margin: 8px 0; }
 .btn.danger { background: #5a1d1d; }
-/* ---- Settings button ---- */
-#cog {
-  position: fixed; top: 12px; right: 14px; z-index: 5;
-  background: none; border: none; color: #fff;
-  font-size: 28px; line-height: 1; opacity: 0.5;
-  padding: 6px 10px;
-}
-/* ---- Views and bottom bar ---- */
-.view { display: none; flex: 1; flex-direction: column; }
-.view.active { display: flex; }
+.btn.big { padding: 14px 34px; font-size: 20px; background: #2a2a2a; }
 
-#nav {
-  position: fixed; left: 0; right: 0; bottom: 0; z-index: 6;
-  display: flex;
-  background: var(--bg);
-  border-top: 1px solid #222;
-  padding-bottom: env(safe-area-inset-bottom, 0px);
+select,
+input[type=time],
+input[type=text] {
+  background: #333; color: #fff; border: none;
+  padding: 10px 14px; border-radius: 8px; font-size: 16px;
 }
-#nav button {
-  flex: 1;
-  background: none; border: none; color: #fff;
-  opacity: 0.4;
-  padding: 10px 0 12px;
-  font-size: 12px;
-  display: flex; flex-direction: column; align-items: center; gap: 4px;
-}
-#nav button.active { opacity: 1; }
+input[type=time] { margin-right: 8px; width: 120px; }
+input[type=text] { width: 100%; }
+.bigin { width: 100%; font-size: 28px; text-align: center; }
 
-/* ---- Panes ---- */
+/* ---- Panes (alarm, stopwatch, timer) ---- */
 .pane {
   width: 100%; max-width: 520px;
   margin: 0 auto;
-  padding: 70px 20px 100px;
+  padding: 70px 20px 120px;
 }
 .pane.center {
   margin: auto;
   display: flex; flex-direction: column; align-items: center;
   gap: 26px; text-align: center;
 }
-.ptitle { font-size: 22px; font-weight: 200; margin-bottom: 12px; opacity: 0.8; }
 .note { font-size: 13px; opacity: 0.4; margin-top: 18px; }
-
-input[type=time], input[type=number] {
-  background: #333; color: #fff; border: none;
-  padding: 10px 14px; border-radius: 8px; font-size: 16px;
-  margin-right: 8px; width: 120px;
-}
-.chk { font-size: 15px; margin-right: 10px; opacity: 0.8; }
-.aform { margin-top: 20px; }
-
-/* ---- Alarm rows ---- */
-.arow {
-  display: flex; align-items: center; gap: 10px;
-  padding: 14px 0; border-bottom: 1px solid #1f1f1f;
-}
-.arow.off .atime { opacity: 0.3; }
-.atime { flex: 1; justify-content: flex-start; color: #fff; }
-.ameta { font-size: 13px; opacity: 0.5; }
-.arow .btn { margin: 0; padding: 8px 12px; font-size: 14px; }
-
-/* ---- Stopwatch and timer ---- */
-.bigtime {
-  --size: 18vw;
-  color: #fff;
-  display: flex; align-items: center; justify-content: center;
-}
-.bigtime .cs { font-size: calc(var(--size) * 0.3); opacity: 0.6; margin-left: 8px; }
-.ctrls { display: flex; gap: 10px; align-items: center; justify-content: center; }
-.btn.big { padding: 14px 34px; font-size: 20px; background: #2a2a2a; }
-.chips { display: flex; flex-wrap: wrap; gap: 4px; justify-content: center; }
-.lap {
-  font-family: monospace; font-size: 14px; opacity: 0.7;
-  padding: 6px 0; white-space: pre;
-}
-#laps { width: 100%; max-height: 30vh; overflow-y: auto; }
-
-/* ---- Ringing screen ---- */
-#ring {
-  display: none;
-  position: fixed; inset: 0; z-index: 20;
-  background: rgba(0, 0, 0, 0.94);
-  align-items: center; justify-content: center;
-  flex-direction: column; gap: 22px;
-}
-#ring.open { display: flex; }
-#ringTitle { font-size: 28px; font-weight: 200; }
-/* ---- Floating capsule bar ---- */
-#nav {
-  left: 14px;
-  right: 14px;
-  bottom: calc(12px + env(safe-area-inset-bottom, 0px));
-  padding: 6px;
-  background: rgba(28, 30, 35, 0.88);
-  -webkit-backdrop-filter: blur(14px);
-  backdrop-filter: blur(14px);
-  border: 1px solid #2a2d33;
-  border-radius: 999px;
-  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.5);
-}
-#nav button {
-  border-radius: 999px;
-  padding: 8px 0 9px;
-}
-#nav button.active {
-  background: rgba(255, 255, 255, 0.1);
-}
-
-/* leave room so content is not hidden behind the floating bar */
-#stage { padding-bottom: 120px; }
-.pane { padding-bottom: 120px; }
-/* ---- Modern system font ---- */
-body, button, input, select {
-  font-family: system-ui, -apple-system, "Roboto", "Segoe UI", Arial, sans-serif;
-}
-input[type=text] {
-  background: #333; color: #fff; border: none;
-  padding: 10px 14px; border-radius: 8px; font-size: 16px;
-  width: 100%;
-}
-.bigin { width: 100%; font-size: 28px; text-align: center; }
 
 /* ---- Alarm list (iOS style) ---- */
 .atop { display: flex; justify-content: space-between; align-items: center; }
-.link {
-  background: none; border: none; color: #ff9f0a;
-  font-size: 18px; padding: 6px 0;
-}
+.atitle { font-size: 34px; margin: 6px 0 12px; }
+.link { background: none; border: none; color: #ff9f0a; font-size: 18px; padding: 6px 0; }
 .link.plus { font-size: 34px; line-height: 1; }
-.atitle { font-size: 34px; font-weight: 700; margin: 6px 0 12px; }
 
 .arow2 {
   display: flex; align-items: center; gap: 12px;
@@ -267,6 +197,8 @@ input[type=text] {
 .arow2.off .atime { opacity: 0.4; }
 .arow2 .atime { flex: none; justify-content: flex-start; color: #fff; }
 .arow2 .atime .ampm { margin-left: 8px; align-self: flex-end; }
+body.sf .arow2 .atime .txt { font-size: calc(var(--size) * 1.1); }
+body.sf .arow2 .atime .ampm { font-size: calc(var(--size) * 0.5); }
 .ainfo { flex: 1; min-width: 0; }
 .alabel { font-size: 14px; opacity: 0.55; margin-top: 2px; }
 
@@ -291,7 +223,7 @@ input[type=text] {
 .tgl.on { background: #30d158; }
 .tgl.on span { transform: translateX(20px); }
 
-/* ---- Stopwatch dial ---- */
+/* ---- Stopwatch ---- */
 .dialwrap {
   position: relative;
   width: min(86vw, 380px);
@@ -299,194 +231,39 @@ input[type=text] {
   margin: 0 auto;
 }
 .dialwrap svg { width: 100%; height: 100%; display: block; }
+#handsSvg { position: absolute; left: 0; top: 0; z-index: 2; pointer-events: none; }
+
 .dialtime {
   position: absolute; left: 50%; top: 30%;
   transform: translate(-50%, -50%);
   display: flex; align-items: center; justify-content: center;
   --size: 13vw;
+  min-width: calc(var(--size) * 5.2);
   color: #fff;
+  z-index: 1;
   pointer-events: none;
   white-space: nowrap;
+  text-shadow: 0 2px 8px rgba(0, 0, 0, 0.55);
 }
-.dialtime .cs {
-  font-size: calc(var(--size) * 0.3);
-  color: #4a8cf7;
-  margin-left: 6px;
-}
+.dialtime .dg { filter: drop-shadow(0 2px 3px rgba(0, 0, 0, 0.6)); }
+body.sf .dialtime .time .txt { font-size: calc(var(--size) * 0.8); }
 
-.round-row { gap: 28px; margin-top: 8px; }
+.round-row {
+  display: flex; align-items: center; justify-content: center;
+  gap: 28px; margin-top: 8px;
+}
 .round {
   width: 60px; height: 60px; padding: 0;
-  border: none; border-radius: 50%;
-  background: #262628; color: #fff;
+  border-radius: 50%;
+  color: #fff;
   display: flex; align-items: center; justify-content: center;
 }
 .round svg { width: 26px; height: 26px; }
-.round.main {
-  width: 78px; height: 78px;
-  background: #4a8cf7;
-  box-shadow: 0 0 24px rgba(74, 140, 247, 0.55);
-}
+.round.main { width: 78px; height: 78px; }
 .round.main svg { width: 32px; height: 32px; }
-/* ================= Animations ================= */
-:root {
-  --ease: cubic-bezier(0.22, 0.8, 0.25, 1);
-  --dur: 0.4s;
-}
 
-@keyframes rise {
-  from { opacity: 0; transform: translateY(14px); }
-  to   { opacity: 1; transform: none; }
-}
-@keyframes fadeIn {
-  from { opacity: 0; }
-  to   { opacity: 1; }
-}
-@keyframes sheetUp {
-  from { opacity: 0; transform: translateY(28px); }
-  to   { opacity: 1; transform: none; }
-}
-@keyframes navUp {
-  from { opacity: 0; transform: translateY(24px); }
-  to   { opacity: 1; transform: none; }
-}
-
-/* Tabs: the page rises and fades in each time you switch */
-.view.active { animation: rise var(--dur) var(--ease) both; }
-
-/* Home widgets: one after another */
-.widget { animation: rise 0.45s var(--ease) both; transition: color 0.3s ease; }
-.widget:nth-child(2) { animation-delay: 0.07s; }
-.widget:nth-child(3) { animation-delay: 0.14s; }
-.widget:nth-child(4) { animation-delay: 0.21s; }
-.widget:nth-child(5) { animation-delay: 0.28s; }
-.widget:nth-child(n+6) { animation-delay: 0.32s; }
-
-/* Top buttons and bottom bar when the app opens */
-#add, #cog { animation: fadeIn 0.6s ease 0.15s both; }
-#nav { animation: navUp 0.55s var(--ease) 0.1s both; }
-
-/* Menus (bottom sheet) */
-#overlay.open { animation: fadeIn 0.25s ease both; }
-#sheet.open   { animation: sheetUp 0.3s var(--ease) both; }
-
-/* Alarm / timer ringing screen */
-#ring.open { animation: fadeIn 0.3s ease both; }
-#ring.open #ringTitle { animation: rise 0.5s var(--ease) 0.1s both; }
-
-/* Newest stopwatch lap */
-.lap:first-child { animation: rise 0.3s var(--ease) both; }
-
-/* Button feedback and smooth colour changes */
-button {
-  transition: transform 0.12s ease, background-color 0.25s ease, opacity 0.25s ease;
-}
-button:not(.tgl):active { transform: scale(0.95); }
-
-/* People who turned off animations on their phone */
-@media (prefers-reduced-motion: reduce) {
-  *, *::before, *::after {
-    animation: none !important;
-    transition: none !important;
-  }
-}
-/* ---- Stop the stopwatch readout from shaking ---- */
-.dialtime .cs {
-  display: inline-block;
-  width: 3ch;
-  margin-left: 8px;
-  text-align: left;
-  font-family: ui-monospace, "Roboto Mono", "SF Mono", Menlo, Consolas, monospace;
-  font-variant-numeric: tabular-nums;
-  font-feature-settings: "tnum";
-}
-.dialtime {
-  min-width: calc(var(--size) * 5.2);
-  will-change: contents;
-}
-/* ================= Round 4 ================= */
-:root {
-  --sf: -apple-system, BlinkMacSystemFont, "SF Pro Display", "SF Pro Text", "Inter", system-ui, "Roboto", "Segoe UI", Arial, sans-serif;
-  --card: #1c1c1e;
-  --muted: rgba(255, 255, 255, 0.55);
-}
-body, button, input, select { font-family: var(--sf); }
-
-/* ---- SF-style numbers ---- */
-.time .txt {
-  font-size: calc(var(--size) * 0.85);
-  font-weight: 200;
-  letter-spacing: -0.02em;
-  line-height: 1;
-  white-space: nowrap;
-  font-variant-numeric: tabular-nums;
-  font-feature-settings: "tnum" 1;
-}
-.time .colon { display: inline-block; transform: translateY(-0.07em); margin: 0 0.02em; }
-.time .ampm { margin-left: 0.2em; font-weight: 300; }
-
-body.sf .arow2 .atime .txt { font-size: calc(var(--size) * 1.1); font-weight: 300; }
-body.sf .arow2 .atime .ampm { font-size: calc(var(--size) * 0.5); }
-body.sf .bigtime .time .txt { font-weight: 300; }
-
-/* ---- Stopwatch: depth and equal-size milliseconds ---- */
-body.sf .dialtime .time .txt { font-size: calc(var(--size) * 0.8); font-weight: 600; }
-.dialtime { z-index: 1; text-shadow: 0 2px 8px rgba(0, 0, 0, 0.55); }
-.dialtime .dg { filter: drop-shadow(0 2px 3px rgba(0, 0, 0, 0.6)); }
-.dialtime .time.cs {
-  display: flex;
-  width: auto;
-  margin-left: 0;
-  font-family: inherit;
-  color: #4a8cf7;
-}
-#handsSvg {
-  position: absolute; left: 0; top: 0;
-  z-index: 2;
-  pointer-events: none;
-}
-
-/* ---- Settings icon (clock inside a toothed ring) ---- */
-#cog { padding: 5px 8px; line-height: 0; font-size: 0; opacity: 0.85; }
-#cog svg { width: 34px; height: 34px; display: block; }
-
-/* ---- Holidays and important dates ---- */
-#holidays { padding: 62px 0 0; animation: rise 0.45s var(--ease) both; }
-.hhead {
-  display: flex; justify-content: space-between; align-items: baseline;
-  padding: 0 20px 8px;
-  font-size: 13px; letter-spacing: 0.04em; text-transform: uppercase;
-  color: var(--muted);
-}
-.hsub { font-size: 11px; text-transform: none; }
-#hList {
-  display: flex; gap: 10px; overflow-x: auto;
-  padding: 0 20px 6px;
-  scroll-snap-type: x proximity;
-  scrollbar-width: none;
-}
-#hList::-webkit-scrollbar { display: none; }
-.hcard {
-  flex: none; width: 140px;
-  background: var(--card);
-  border-radius: 16px;
-  padding: 12px 12px 10px;
-  scroll-snap-align: start;
-  text-align: left;
-}
-.hdate { display: flex; align-items: baseline; gap: 6px; }
-.hmon { font-size: 12px; font-weight: 700; color: #ff6a5c; letter-spacing: 0.05em; }
-.hday { font-size: 30px; font-weight: 300; line-height: 1; }
-.hwd { font-size: 11px; color: var(--muted); margin-left: auto; }
-.hname { font-size: 14px; font-weight: 600; margin-top: 8px; line-height: 1.2; }
-.hbn { font-size: 12px; color: var(--muted); margin-top: 2px; }
-.hleft {
-  display: inline-block; margin-top: 8px;
-  font-size: 11px; padding: 3px 8px; border-radius: 999px;
-  background: rgba(128, 128, 128, 0.18);
-}
-.hleft.soon { background: rgba(255, 106, 92, 0.2); color: #ff6a5c; }
-#stage { padding-top: 16px; }
+.lap { font-family: monospace; font-size: 14px; opacity: 0.7; padding: 6px 0; white-space: pre; }
+#laps { width: 100%; max-height: 30vh; overflow-y: auto; }
 
 /* ---- Timer (wheel picker) ---- */
 .tpane { display: flex; flex-direction: column; gap: 18px; }
@@ -506,34 +283,43 @@ body.sf .dialtime .time .txt { font-size: calc(var(--size) * 0.8); font-weight: 
 .pcol::-webkit-scrollbar { display: none; }
 .pi {
   height: 60px; line-height: 60px; text-align: center;
-  font-size: 46px; font-weight: 300;
+  font-size: 46px;
   font-variant-numeric: tabular-nums;
   scroll-snap-align: center;
   opacity: 0.28;
 }
-.pi.sel { opacity: 1; font-weight: 600; }
-.psep { margin-top: 60px; height: 60px; line-height: 60px; width: 14px; font-size: 40px; font-weight: 600; text-align: center; }
+.pi.sel { opacity: 1; }
+.psep { margin-top: 60px; height: 60px; line-height: 60px; width: 14px; font-size: 40px; text-align: center; }
 .pband {
   position: absolute; left: 0; right: 0; top: 60px; height: 60px;
   border-radius: 16px;
   background: rgba(128, 128, 128, 0.14);
   pointer-events: none; z-index: -1;
 }
+
+/* running timer and reset button are hidden until main.js shows them */
+.bigtime {
+  --size: 18vw;
+  color: #fff;
+  display: flex; align-items: center; justify-content: center;
+}
+#tmRun { display: none; justify-content: center; padding: 40px 0; }
+#tmReset { display: none; }
+
 .tctrl { display: flex; align-items: center; justify-content: center; gap: 24px; }
 .fab {
   width: 76px; height: 76px; padding: 0;
-  border: none; border-radius: 50%;
-  background: #2f3cf0; color: #fff;
+  border-radius: 50%;
+  color: #fff;
   display: flex; align-items: center; justify-content: center;
-  box-shadow: 0 8px 22px rgba(47, 60, 240, 0.45);
 }
 .fab svg { width: 32px; height: 32px; }
-#tmRun { justify-content: center; padding: 40px 0; }
+
 .phead {
   display: flex; justify-content: space-between; align-items: center;
   font-size: 14px; color: var(--muted); margin-top: 8px;
 }
-.phead button { background: none; border: none; color: #3d5afe; font-size: 15px; padding: 4px 0; }
+.phead button { background: none; border: none; font-size: 15px; padding: 4px 0; }
 .preset {
   display: flex; align-items: center; gap: 10px;
   background: var(--card); border-radius: 14px;
@@ -542,6 +328,17 @@ body.sf .dialtime .time .txt { font-size: calc(var(--size) * 0.8); font-weight: 
 .pn { flex: 1; text-align: left; font-size: 16px; }
 .pd { font-size: 15px; color: var(--muted); font-variant-numeric: tabular-nums; }
 .px { background: none; border: none; color: var(--muted); font-size: 20px; padding: 0 4px; opacity: 0.6; }
+
+/* ---- Ringing screen ---- */
+#ring {
+  display: none;
+  position: fixed; inset: 0; z-index: 20;
+  background: rgba(0, 0, 0, 0.94);
+  align-items: center; justify-content: center;
+  flex-direction: column; gap: 22px;
+}
+#ring.open { display: flex; }
+#ringTitle { font-size: 28px; }
 
 /* ---- Light theme ---- */
 body.light { color: #111; --card: #ffffff; --muted: rgba(0, 0, 0, 0.5); }
@@ -553,94 +350,71 @@ body.light #nav {
 }
 body.light #nav button { color: #111; }
 body.light #nav button.active { background: rgba(0, 0, 0, 0.07); }
-body.light #sheet { background: #fff; color: #111; }
+body.light #sheet { color: #111; }
 body.light .btn { background: #ececf1; color: #111; }
 body.light .btn.big { background: #e3e3e8; }
 body.light .btn.danger { background: #ffe0dd; color: #b3261d; }
 body.light select,
 body.light input[type=time],
-body.light input[type=number],
 body.light input[type=text] { background: #ececf1; color: #111; }
 body.light .swatch { border-color: #c4c4c9; }
 body.light .arow2 { border-bottom-color: #e4e4e9; }
+body.light .arow2 .atime { color: #111; }
 body.light .tgl { background: #d1d1d6; }
 body.light .tgl.on { background: #30d158; }
-body.light .arow2 .atime, body.light .atime { color: #111; }
 body.light .bigtime { color: #111; }
 body.light #ring { background: rgba(255, 255, 255, 0.96); color: #111; }
 body.light .pband { background: rgba(0, 0, 0, 0.06); }
-body.light .preset, body.light .hcard { box-shadow: 0 1px 3px rgba(0, 0, 0, 0.07); }
-// ======================= Round 5: Oswald font =======================
-(function () {
-  var l = document.createElement('link');
-  l.rel = 'stylesheet';
-  l.href = 'https://fonts.googleapis.com/css2?family=Oswald:wght@200;300;400;500;600;700&display=swap';
-  document.head.appendChild(l);
-})();
+body.light .preset { box-shadow: 0 1px 3px rgba(0, 0, 0, 0.07); }
 
-// Every digit sits in a fixed-width box, so the numbers never shake while counting.
-function timeHtml(str, retro) {
-  var i, ch, n = 0;
-
-  if (digitMode === 'sf') {
-    var main = '';
-    var suf = '';
-    for (i = 0; i < str.length; i++) {
-      ch = str.charAt(i);
-      if (ch === ':') {
-        main += '<span class="colon">:</span>';
-      } else if (ch >= '0' && ch <= '9') {
-        main += '<span class="n"' +
-          (retro ? ' style="color:' + RETRO[n % 3] + '"' : '') + '>' + ch + '</span>';
-        n++;
-      } else if (ch !== ' ') {
-        suf += ch;
-      }
-    }
-    return '<span class="txt">' + main + '</span>' +
-      (suf ? '<span class="ampm">' + suf + '</span>' : '');
-  }
-
-  var html = '';
-  for (i = 0; i < str.length; i++) {
-    ch = str.charAt(i);
-    if (ch === ':') {
-      html += COLON_SVG;
-    } else if (ch === ' ') {
-      html += '<span class="gap"></span>';
-    } else if (ch >= '0' && ch <= '9') {
-      html += digitSvg(ch, retro ? RETRO[n % 3] : null);
-      n++;
-    } else {
-      html += '<span class="ampm">' + ch + '</span>';
-    }
-  }
-  return html;
+/* ---- Animations ---- */
+@keyframes rise {
+  from { opacity: 0; transform: translateY(14px); }
+  to   { opacity: 1; transform: none; }
+}
+@keyframes fadeIn {
+  from { opacity: 0; }
+  to   { opacity: 1; }
+}
+@keyframes sheetUp {
+  from { opacity: 0; transform: translateY(28px); }
+  to   { opacity: 1; transform: none; }
+}
+@keyframes navUp {
+  from { opacity: 0; transform: translateY(24px); }
+  to   { opacity: 1; transform: none; }
 }
 
-function csHtml(cs) {
-  if (digitMode === 'sf') {
-    return '<span class="txt">.<span class="n">' + cs.charAt(0) + '</span>' +
-      '<span class="n">' + cs.charAt(1) + '</span></span>';
-  }
-  return '<svg class="dg" viewBox="0 0 24 100"><circle cx="12" cy="90" r="5" fill="currentColor"/></svg>' +
-    timeHtml(cs, false);
-}
+/* the page rises and fades in each time you switch tabs */
+.view.active { animation: rise var(--dur) var(--ease) both; }
 
-// redraw everything with the new font
-lastSwMain = ''; lastSwCs = ''; lastTm = '';
-applyDigitMode();
-/* ---- Stop the stopwatch readout from shaking ---- */
-.dialtime .cs {
-  display: inline-block;
-  width: 3ch;
-  margin-left: 8px;
-  text-align: left;
-  font-family: ui-monospace, "Roboto Mono", "SF Mono", Menlo, Consolas, monospace;
-  font-variant-numeric: tabular-nums;
-  font-feature-settings: "tnum";
-}
-.dialtime {
-  min-width: calc(var(--size) * 5.2);
-  will-change: contents;
+/* home widgets appear one after another */
+.widget { animation: rise 0.45s var(--ease) both; transition: color 0.3s ease; }
+.widget:nth-child(2) { animation-delay: 0.07s; }
+.widget:nth-child(3) { animation-delay: 0.14s; }
+.widget:nth-child(4) { animation-delay: 0.21s; }
+.widget:nth-child(5) { animation-delay: 0.28s; }
+.widget:nth-child(n+6) { animation-delay: 0.32s; }
+
+#add, #cog { animation: fadeIn 0.6s ease 0.15s both; }
+#nav { animation: navUp 0.55s var(--ease) 0.1s both; }
+
+#overlay.open { animation: fadeIn 0.25s ease both; }
+#sheet.open { animation: sheetUp 0.3s var(--ease) both; }
+
+#ring.open { animation: fadeIn 0.3s ease both; }
+#ring.open #ringTitle { animation: rise 0.5s var(--ease) 0.1s both; }
+
+.lap:first-child { animation: rise 0.3s var(--ease) both; }
+
+/* button feedback */
+button { transition: transform 0.12s ease, background-color 0.25s ease, opacity 0.25s ease; }
+button:not(.tgl):active { transform: scale(0.95); }
+
+/* people who turned off animations on their phone */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation: none !important;
+    transition: none !important;
+  }
 }
