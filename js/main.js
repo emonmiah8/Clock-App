@@ -1,16 +1,14 @@
 /* ==========================================================================
-   CLOCK APP - main.js (final, consolidated)
+   CLOCK APP - main.js (clean rewrite)
    Sections:
     1. Config & state            10. Tabs
     2. Helpers & haptics         11. Alarms
     3. Injected styles           12. Stopwatch
     4. Storage                   13. Timer & presets
-    5. Audio & ringing           14. Upcoming list (holidays)
-    6. Digits & time HTML        15. Press feedback, nav, settings button, plus button
+    5. Audio & ringing           14. Upcoming (country-aware, works offline)
+    6. Digits & time HTML        15. Press feedback, nav, buttons
     7. Home widgets              16. Connection, permissions, service worker
-       (World clock = search,    17. Init
-        My location clock = follows the phone)
-    8. Theme, wake lock, settings sheet
+    8. Theme, settings sheet     17. Init
     9. Edit / Add widget sheets
    ========================================================================== */
 
@@ -22,14 +20,18 @@ const AKEY = 'clockAlarms';
 const TKEY = 'clockTimer';
 const GKEY = 'clockGlobal';
 const PKEY = 'clockPresets';
-const PLKEY = 'clockPlace';          // cached name of the place where the phone is
-const PLASKED = 'clockPlaceAsked';   // location permission was already requested once
-const NOTIF_ASKED = 'clockNotifAsked'; // notification permission was already requested once
-const GEO_URL = 'https://geocoding-api.open-meteo.com/v1/search';          // city search (free, no key)
-const REVERSE_URL = 'https://api.bigdatacloud.net/data/reverse-geocode-client'; // coordinates -> place name (free, no key)
-const PLACE_FRESH_MS = 20 * 60 * 1000;   // how long a found place name is trusted
+const PLKEY = 'clockPlace';
+const PLASKED = 'clockPlaceAsked';
+const NOTIF_ASKED = 'clockNotifAsked';
+const CUSTOM_KEY = 'customUpcomingEvents';   // [{d:'2027-06-01', n:'Name', b:'', t:'i', r:1}]
+const HKEY = 'clockHol_';                    // + COUNTRY_YEAR  -> cached public holidays
+const GEO_URL = 'https://geocoding-api.open-meteo.com/v1/search';
+const REVERSE_URL = 'https://api.bigdatacloud.net/data/reverse-geocode-client';
+const HOL_URL = 'https://date.nager.at/api/v3/PublicHolidays/';   // free, no key
+const PLACE_FRESH_MS = 20 * 60 * 1000;
+const HOL_TTL = 30 * 24 * 3600 * 1000;       // refresh cached holidays after 30 days
 
-const RETRO = ['#4aa3d8', '#ef5b55', '#f4f1ea'];   // blue, red, white (white changes with theme)
+const RETRO = ['#4aa3d8', '#ef5b55', '#f4f1ea'];
 const COLORS = ['#ffffff', '#4fc3f7', '#81c784', '#ffb74d', '#f06292'];
 const TYPE_NAMES = {
   digital: 'Digital clock',
@@ -39,54 +41,11 @@ const TYPE_NAMES = {
   world: 'World clock (search)',
   classic: 'Classic clock'
 };
-const BGS_DARK = [
-  ['#000000', 'Black'],
-  ['#0e1014', 'Charcoal'],
-  ['#0b1426', 'Navy'],
-  ['#1a1410', 'Brown'],
-  ['#0f1a14', 'Forest']
-];
-const BGS_LIGHT = [
-  ['#ffffff', 'White'],
-  ['#f2f2f7', 'Gray'],
-  ['#fbf5ea', 'Cream'],
-  ['#eaf2ff', 'Sky'],
-  ['#eaf6ee', 'Mint']
-];
+const BGS_DARK = [['#000000', 'Black'], ['#0e1014', 'Charcoal'], ['#0b1426', 'Navy'], ['#1a1410', 'Brown'], ['#0f1a14', 'Forest']];
+const BGS_LIGHT = [['#ffffff', 'White'], ['#f2f2f7', 'Gray'], ['#fbf5ea', 'Cream'], ['#eaf2ff', 'Sky'], ['#eaf6ee', 'Mint']];
 const TABS = ['home', 'alarm', 'stopwatch', 'timer'];
-const ITEM_H = 60;   // height of one row in the timer wheels
+const ITEM_H = 60;
 
-// ---- Upcoming events: generated automatically, nothing here needs yearly updating ----
-// Fixed-date events: [month, day, English name, Bangla name, type]
-// type: h = public holiday, i = important day, r = religious
-const FIXED_EVENTS = [
-  [1, 1, 'New Year’s Day', 'ইংরেজি নববর্ষ', 'i'],
-  [2, 13, 'Pohela Falgun', 'পহেলা ফাল্গুন', 'i'],
-  [2, 21, 'Shaheed Day', 'শহীদ ও মাতৃভাষা দিবস', 'h'],
-  [3, 8, 'Women’s Day', 'আন্তর্জাতিক নারী দিবস', 'i'],
-  [3, 25, 'Genocide Remembrance Day', 'গণহত্যা দিবস', 'i'],
-  [3, 26, 'Independence Day', 'স্বাধীনতা দিবস', 'h'],
-  [4, 14, 'Pohela Boishakh', 'পহেলা বৈশাখ', 'h'],
-  [5, 1, 'May Day', 'মে দিবস', 'h'],
-  [8, 5, 'July Uprising Day', 'জুলাই গণ-অভ্যুত্থান দিবস', 'h'],
-  [12, 10, 'Human Rights Day', 'মানবাধিকার দিবস', 'i'],
-  [12, 14, 'Martyred Intellectuals Day', 'শহীদ বুদ্ধিজীবী দিবস', 'i'],
-  [12, 16, 'Victory Day', 'বিজয় দিবস', 'h'],
-  [12, 25, 'Christmas Day', 'বড়দিন', 'h']
-];
-// Moon-based events: [Hijri month, Hijri day, English name, Bangla name, type]
-// Worked out from the Islamic calendar by the browser, so they move every year by themselves.
-const HIJRI_EVENTS = [
-  [8, 15, 'Shab-e-Barat', 'শবে বরাত', 'h'],
-  [9, 1, 'Ramadan begins', 'রমজান শুরু', 'r'],
-  [10, 1, 'Eid-ul-Fitr', 'ঈদুল ফিতর', 'h'],
-  [12, 10, 'Eid-ul-Adha', 'ঈদুল আযহা', 'h']
-];
-const HIJRI_OFFSET = 1;      // Bangladesh usually sights the moon one day after Saudi Arabia
-const HIJRI_SCAN_DAYS = 420; // how far ahead the Islamic calendar is scanned
-const CUSTOM_KEY = 'customUpcomingEvents';  // optional: [{d:'2027-06-01', n:'Name', b:'নাম', t:'i'}]
-
-// ---- state ----
 let widgets = loadWidgets();
 let alarms = loadAlarms();
 let presets = loadPresets();
@@ -96,11 +55,11 @@ let alarmEditMode = false;
 let myPlace = loadMyPlace();
 let lastDeviceZone = deviceZone();
 let geoAbort = null;
-let geoStatus = 'idle';      // idle | locating | ok | denied | unavailable | timeout | insecure | unsupported
+let geoStatus = 'idle';
 let geoBusy = null;
-let searchSeq = 0;           // lets us ignore answers of old searches
-let zoneIndex = null;        // offline list of time zones
-const searchCache = {};      // place searches already done in this session
+let searchSeq = 0;
+let zoneIndex = null;
+const searchCache = {};
 const searchKeys = [];
 let swReg = null;
 let updateRequested = false;
@@ -125,10 +84,9 @@ let ringTimer = null;
 let ringSnoozeFn = null;
 let snoozeAt = 0;
 let wakeLock = null;
-let penOut = false;     // settings popover is open (three dots turned sideways)
-let plusOut = false;    // add-widget popover is open (plus turned)
+let penOut = false;
+let plusOut = false;
 
-// upcoming-list measuring
 let lastFt = -1, lastFb = -1, lastSh = -1;
 let cachedFt = 34;
 let lastMeasure = 0;
@@ -144,15 +102,12 @@ function pad(n) { return String(n).padStart(2, '0'); }
 function dayKey(d) { return d.getFullYear() + '-' + pad(d.getMonth() + 1) + '-' + pad(d.getDate()); }
 function clamp01(x) { return x < 0 ? 0 : (x > 1 ? 1 : x); }
 function escapeAttr(s) { return String(s).replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;'); }
-function haptic(p) {
-  try { if (navigator.vibrate) navigator.vibrate(p); } catch (e) {}
-}
+function haptic(p) { try { if (navigator.vibrate) navigator.vibrate(p); } catch (e) {} }
 
 /* ==========================================================================
-   3. INJECTED STYLES (fonts, glass, upcoming list, buttons)
+   3. INJECTED STYLES
    ========================================================================== */
 function buildListMask() {
-  // eased fade at the top and bottom of the upcoming list (smoothstep curve)
   const STEPS = 8;
   const top = [];
   const bot = [];
@@ -166,7 +121,8 @@ function buildListMask() {
 }
 
 function injectStyles() {
-  if (!document.querySelector('link[data-clock-font]')) {
+  // web font is optional: only requested when online, the service worker keeps it for offline use
+  if (navigator.onLine !== false && !document.querySelector('link[data-clock-font]')) {
     const l = document.createElement('link');
     l.rel = 'stylesheet';
     l.setAttribute('data-clock-font', '1');
@@ -186,11 +142,9 @@ body{letter-spacing:-0.01em}
 body .time .txt{font-size:min(calc(var(--size)*1),20vw);letter-spacing:0;line-height:1}
 #stage{padding:64px 12px 12px!important;margin:0 auto!important}
 
-/* soft colour behind everything so the glass has something to blur */
 body::before{content:"";position:fixed;inset:-10%;z-index:-1;pointer-events:none;background:radial-gradient(40% 28% at 12% 8%,rgba(255,106,92,.20),transparent 70%),radial-gradient(46% 34% at 92% 38%,rgba(74,140,247,.20),transparent 70%),radial-gradient(42% 30% at 28% 96%,rgba(48,209,88,.14),transparent 70%)}
 body.light::before{opacity:.7}
 
-/* ---- upcoming list ---- */
 #holidays{position:relative!important;flex:1 1 auto!important;display:flex!important;flex-direction:column;min-height:300px;padding:0!important;animation:none!important}
 .hhead{position:absolute!important;left:0;right:0;top:0;z-index:3;display:flex!important;justify-content:space-between;align-items:center;padding:12px 22px 10px!important;white-space:nowrap;pointer-events:none;font-size:13px;letter-spacing:.08em}
 .hhead::before{display:none!important}
@@ -211,32 +165,29 @@ body.light .hcard{background:linear-gradient(150deg,rgba(255,255,255,.88),rgba(2
 .t-i .hmon{color:#4a8cf7}
 .t-r .hmon{color:#30d158}
 
-/* progressive blur zones at the top and bottom of the list */
 .pb{position:absolute;left:0;right:0;z-index:2;pointer-events:none}
 .pbl{position:absolute;left:0;right:0;top:0;bottom:0}
 #pbTop{top:0;height:calc(var(--ft,34px) + 98px)}
 #pbBot{bottom:calc(var(--fb,92px) - 14px);height:112px}
 
-/* ---- settings and add-widget: blurred background and a glass panel ---- */
 #overlay.open{background:rgba(0,0,0,.28)!important;-webkit-backdrop-filter:blur(14px);backdrop-filter:blur(14px)}
 body.light #overlay.open{background:rgba(255,255,255,.25)!important}
 #sheet{background:rgba(30,32,38,.62)!important;-webkit-backdrop-filter:blur(26px) saturate(1.6);backdrop-filter:blur(26px) saturate(1.6);border:1px solid rgba(255,255,255,.16);box-shadow:0 20px 50px rgba(0,0,0,.45),inset 0 1px 0 rgba(255,255,255,.2)}
 body.light #sheet{background:rgba(255,255,255,.72)!important;border-color:rgba(255,255,255,.85);box-shadow:0 20px 50px rgba(0,0,0,.15),inset 0 1px 0 rgba(255,255,255,.9)}
 @keyframes popIn{from{opacity:0;transform:scale(.86) translateY(-8px)}to{opacity:1;transform:none}}
 #sheet.open.pop{left:auto!important;right:12px!important;bottom:auto!important;top:calc(64px + env(safe-area-inset-top,0px))!important;width:min(90vw,340px);max-height:calc(100vh - 150px);overflow-y:auto;border-radius:24px!important;transform-origin:top right;animation:popIn .28s cubic-bezier(.22,.8,.25,1) both}
+#sheet:not(.pop){max-height:88vh;overflow-y:auto}
+#sheet select{max-width:100%}
 
-/* ---- settings button: three dots ---- */
 #cog{width:46px;height:46px;padding:0!important;opacity:1!important;display:flex!important;align-items:center;justify-content:center;font-size:0}
 .dots{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:3px;pointer-events:none;transition:transform .38s cubic-bezier(.3,1.5,.5,1)}
 .dots i{display:block;width:4px;height:4px;border-radius:50%;background:currentColor;transition:transform .16s cubic-bezier(.3,1.8,.5,1),opacity .2s ease}
 #cog.press .dots i{transform:scale(.68)}
 #cog.out .dots{transform:rotate(90deg)}
 
-/* ---- add button: plus turns while the add-widget popover is open ---- */
 .plusi{position:relative;display:flex;align-items:center;justify-content:center;width:100%;height:100%;pointer-events:none;transition:transform .38s cubic-bezier(.3,1.5,.5,1)}
 #add.out .plusi{transform:rotate(135deg)}
 
-/* ---- message bubble, permission rows ---- */
 #toast{position:fixed;left:50%;bottom:calc(88px + env(safe-area-inset-bottom,0px));transform:translate(-50%,12px);z-index:70;display:flex;align-items:center;gap:12px;max-width:min(92vw,420px);padding:11px 16px;border-radius:999px;background:rgba(30,32,38,.72);color:#fff;-webkit-backdrop-filter:blur(20px) saturate(1.6);backdrop-filter:blur(20px) saturate(1.6);border:1px solid rgba(255,255,255,.16);box-shadow:0 10px 30px rgba(0,0,0,.4);font-size:14px;line-height:1.3;opacity:0;pointer-events:none;transition:opacity .25s ease,transform .25s ease}
 #toast.show{opacity:1;transform:translate(-50%,0);pointer-events:auto}
 #toast .tact{background:none;border:0;color:#ff9f0a;padding:0;font-size:14px;white-space:nowrap}
@@ -244,14 +195,11 @@ body.light #toast{background:rgba(255,255,255,.85);color:#1c1c1e;border-color:rg
 .pstate{opacity:.85;margin-right:auto}
 .phint{font-size:12px;opacity:.7;line-height:1.35;margin:-2px 0 8px}
 
-/* ---- world / my location clock: date and offset lines ---- */
 .wdate{margin-top:6px;opacity:.8}
 .woff{margin-top:2px!important;opacity:.6}
 
-/* ---- classic clock widget ---- */
 .clsvg{width:calc(var(--size)*3.5);height:calc(var(--size)*3.5);filter:drop-shadow(0 8px 18px rgba(0,0,0,.35))}
 
-/* ---- stopwatch: orange accent + smoked glass dial ---- */
 #swHand line{stroke:#ff9f0a!important}
 #swHand circle:first-of-type{fill:#ff9f0a!important}
 .dialtime .cs,.dialtime .time.cs,#swCs{color:#ff9f0a!important}
@@ -261,7 +209,6 @@ body.light #toast{background:rgba(255,255,255,.85);color:#1c1c1e;border-color:rg
 .dialwrap::before{content:"";position:absolute;inset:.8%;border-radius:50%;z-index:-1;background:rgba(255,255,255,.05);-webkit-backdrop-filter:blur(22px) saturate(1.9) brightness(.6);backdrop-filter:blur(22px) saturate(1.9) brightness(.6);box-shadow:0 26px 50px rgba(0,0,0,.45),0 8px 18px rgba(0,0,0,.35)}
 .dialwrap::after{content:"";position:absolute;inset:.8%;border-radius:50%;z-index:3;pointer-events:none;background:radial-gradient(50% 32% at 28% 9%,rgba(255,255,255,.24),rgba(255,255,255,0) 72%),radial-gradient(55% 36% at 72% 96%,rgba(255,255,255,.10),rgba(255,255,255,0) 72%),linear-gradient(155deg,rgba(255,255,255,.10),rgba(255,255,255,0) 38%);box-shadow:inset 0 2px 2px rgba(255,255,255,.55),inset 0 -3px 6px rgba(255,255,255,.12),inset 0 0 0 1.5px rgba(255,255,255,.14),inset 10px 14px 34px rgba(255,255,255,.06),inset -14px -20px 44px rgba(0,0,0,.40)}
 
-/* ---- round glass buttons ---- */
 .round,.fab{position:relative;isolation:isolate;transition:transform .22s cubic-bezier(.3,1.6,.5,1),box-shadow .2s ease!important}
 .round{-webkit-backdrop-filter:blur(16px) saturate(1.9);backdrop-filter:blur(16px) saturate(1.9)}
 .round::before,.fab::before{content:"";position:absolute;left:15%;right:15%;top:5%;height:42%;border-radius:50%;background:linear-gradient(rgba(255,255,255,.5),rgba(255,255,255,0));pointer-events:none}
@@ -274,7 +221,6 @@ body.light .round:not(.main) svg{filter:drop-shadow(0 1px 1px rgba(255,255,255,.
 .round.main::before,.fab::before{top:4%;height:44%;background:linear-gradient(rgba(255,255,255,.62),rgba(255,255,255,0))}
 .phead button{color:#ff9f0a!important}
 
-/* light that spreads out when a button is pressed */
 @keyframes waveOrange{0%{opacity:.9;transform:scale(1);box-shadow:0 0 0 0 rgba(255,159,10,.7),0 0 26px 8px rgba(255,170,40,.75)}100%{opacity:0;transform:scale(2.2);box-shadow:0 0 0 0 rgba(255,159,10,0),0 0 46px 20px rgba(255,170,40,0)}}
 @keyframes waveWhite{0%{opacity:.9;transform:scale(1);box-shadow:0 0 0 0 rgba(255,255,255,.55),0 0 22px 6px rgba(255,255,255,.55)}100%{opacity:0;transform:scale(1.9);box-shadow:0 0 0 0 rgba(255,255,255,0),0 0 40px 16px rgba(255,255,255,0)}}
 @keyframes waveGray{0%{opacity:.9;transform:scale(1);box-shadow:0 0 0 0 rgba(90,100,130,.35),0 0 22px 6px rgba(90,100,130,.35)}100%{opacity:0;transform:scale(1.9);box-shadow:0 0 0 0 rgba(90,100,130,0),0 0 40px 16px rgba(90,100,130,0)}}
@@ -283,7 +229,6 @@ body.light .round:not(.main) svg{filter:drop-shadow(0 1px 1px rgba(255,255,255,.
 .round:not(.main).lit::after{animation:waveWhite .6s cubic-bezier(.2,.7,.3,1) both}
 body.light .round:not(.main).lit::after{animation-name:waveGray}
 
-/* ---- bottom bar: instant press, no glow ---- */
 #nav button{transition:background-color .14s ease,opacity .14s ease,transform .1s ease!important}
 #nav button:active{transform:scale(.94)}
 #nav button::after{display:none!important}
@@ -306,7 +251,6 @@ function loadWidgets() {
     if (s) {
       const a = JSON.parse(s);
       if (Array.isArray(a)) {
-        // older version: a world clock that followed the phone is now a "My location clock"
         a.forEach(function (w) {
           if (w.type === 'world' && w.auto) {
             w.type = 'home';
@@ -331,7 +275,7 @@ function loadAlarms() {
 function saveAlarms() { try { localStorage.setItem(AKEY, JSON.stringify(alarms)); } catch (e) {} }
 
 function loadGlobal() {
-  let g = { bg: '#000000', bgLight: '#f2f2f7', theme: 'dark', awake: false, font: 'sf' };
+  let g = { bg: '#000000', bgLight: '#f2f2f7', theme: 'dark', awake: false, font: 'sf', country: 'auto' };
   try {
     const s = localStorage.getItem(GKEY);
     if (s) g = Object.assign(g, JSON.parse(s));
@@ -359,7 +303,7 @@ function loadMyPlace() {
     const p = JSON.parse(localStorage.getItem(PLKEY));
     if (p && typeof p.name === 'string') return p;
   } catch (e) {}
-  return { name: '', tz: '', ts: 0 };
+  return { name: '', tz: '', cc: '', ts: 0 };
 }
 function saveMyPlace() { try { localStorage.setItem(PLKEY, JSON.stringify(myPlace)); } catch (e) {} }
 
@@ -397,10 +341,7 @@ function startRing(title, snoozeFn) {
   ringSnoozeFn = snoozeFn;
   document.getElementById('ring').classList.add('open');
   if (document.hidden) notify(title, 'Tap to open the clock', 'clock-ring');
-  const go = function () {
-    beep();
-    haptic(300);
-  };
+  const go = function () { beep(); haptic(300); };
   go();
   ringTimer = setInterval(go, 800);
 }
@@ -427,22 +368,20 @@ const PATHS = {
 };
 
 function digitSvg(d, col) {
-  const flip = d === '9';              // 9 is the 6 turned upside down
+  const flip = d === '9';
   const p = flip ? PATHS['6'] : PATHS[d];
   const g = flip ? ' transform="rotate(180 30 50)"' : '';
   const style = col ? ' style="color:' + col + '"' : '';
   return '<svg class="dg" viewBox="0 0 60 100"' + style + '><g' + g +
     ' fill="none" stroke-linejoin="round">' +
-    '<path class="l1" d="' + p + '"/>' +
-    '<path class="l2" d="' + p + '"/>' +
-    '<path class="l3" d="' + p + '"/>' +
+    '<path class="l1" d="' + p + '"/><path class="l2" d="' + p + '"/><path class="l3" d="' + p + '"/>' +
     '</g></svg>';
 }
 
 const COLON_SVG = '<svg class="dg" viewBox="0 0 24 100"><circle cx="12" cy="35" r="5" fill="currentColor"/><circle cx="12" cy="65" r="5" fill="currentColor"/></svg>';
 
 function timeHtml(str, retro) {
-  let n = 0;   // counts digits only
+  let n = 0;
 
   if (digitMode === 'sf') {
     let main = '', suf = '';
@@ -485,7 +424,6 @@ function applyDigitMode() {
 
 /* ==========================================================================
    7. HOME WIDGETS
-   World clock (search any place) + My location clock (follows the phone)
    ========================================================================== */
 function newWidget(type) {
   const base = {
@@ -498,9 +436,7 @@ function newWidget(type) {
   if (type === 'analog') return Object.assign(base, { size: 12 });
   if (type === 'classic') return Object.assign(base, { size: 14 });
   if (type === 'date') return Object.assign(base, { size: 14 });
-  // my location clock: always follows the phone's place and time zone
   if (type === 'home') return Object.assign(base, { size: 12, hour12: false, retro: false });
-  // world clock: shows the place the person searched for
   return Object.assign(base, { size: 12, hour12: false, retro: false, zone: '', city: '' });
 }
 
@@ -553,12 +489,8 @@ function validZone(z) {
   try { new Intl.DateTimeFormat('en', { timeZone: z }); return true; } catch (e) { return false; }
 }
 
-// "America/New_York" -> "New York"
 function tzCity(z) { return String(z || '').split('/').pop().replace(/_/g, ' '); }
 
-// time zone a widget should show right now
-//   home  : always the phone's current time zone (changes by itself when the phone travels)
-//   world : the place the person picked
 function zoneOf(w) {
   if (w.type === 'home') return deviceZone();
   return (w.zone && validZone(w.zone)) ? w.zone : deviceZone();
@@ -574,7 +506,6 @@ function placeLabel(w) {
   return w.city || tzCity(w.zone);
 }
 
-// offset of a time zone from UTC, in minutes
 function tzOffsetMin(zone, d) {
   const f = new Intl.DateTimeFormat('en-US', {
     timeZone: zone, hourCycle: 'h23',
@@ -591,7 +522,6 @@ function hm(mins) {
   return h + 'h' + (m ? ' ' + m + 'm' : '');
 }
 
-// "GMT+6" for the phone's place, "GMT+9 · 3h ahead of you" for a searched place
 function offsetText(w, zone, now) {
   try {
     const off = tzOffsetMin(zone, now);
@@ -635,9 +565,6 @@ function autoStatusText() {
   return '\uD83D\uDCCD My location: ' + myPlaceName() + ' \u00B7 ' + deviceZone() + geoNote();
 }
 
-// Asks the phone where it is and turns the coordinates into a place name.
-// The time always comes from the phone's own time zone, so it works even without GPS or internet.
-// Resolves with: ok | denied | unavailable | timeout | insecure | unsupported
 function refreshMyPlace(force) {
   if (!navigator.geolocation) { setGeo('unsupported'); return Promise.resolve('unsupported'); }
   if (window.isSecureContext === false) { setGeo('insecure'); return Promise.resolve('insecure'); }
@@ -651,12 +578,13 @@ function refreshMyPlace(force) {
     setGeo('locating');
     geoBusy = new Promise(function (resolve) {
       navigator.geolocation.getCurrentPosition(function (pos) {
-        reverseName(pos.coords.latitude, pos.coords.longitude).then(function (name) {
-          if (name) {
-            myPlace = { name: name, tz: deviceZone(), ts: Date.now() };
+        reverseName(pos.coords.latitude, pos.coords.longitude).then(function (r) {
+          if (r.name || r.cc) {
+            myPlace = { name: r.name || myPlace.name, tz: deviceZone(), cc: r.cc || '', ts: Date.now() };
             saveMyPlace();
           }
           updateLabels();
+          syncCountry();
           setGeo('ok');
           resolve('ok');
         });
@@ -674,7 +602,7 @@ function refreshMyPlace(force) {
     let asked = false;
     try { asked = !!localStorage.getItem(PLASKED); } catch (e) {}
     if (st.state === 'granted') return run();
-    if (st.state === 'prompt' && !asked) {          // ask only once on its own
+    if (st.state === 'prompt' && !asked) {
       try { localStorage.setItem(PLASKED, '1'); } catch (e) {}
       return run();
     }
@@ -683,19 +611,27 @@ function refreshMyPlace(force) {
   }).catch(run);
 }
 
+// resolves { name, cc } (cc = 2-letter country code); empty strings when offline
 function reverseName(lat, lon) {
-  if (navigator.onLine === false) return Promise.resolve('');   // offline: keep the time zone name
+  const none = { name: '', cc: '' };
+  if (navigator.onLine === false) return Promise.resolve(none);
   return fetchJson(REVERSE_URL + '?latitude=' + lat + '&longitude=' + lon + '&localityLanguage=en', { timeout: 8000, retries: 1 })
-    .then(function (d) { return d ? (d.city || d.locality || d.principalSubdivision || d.countryName || '') : ''; })
-    .catch(function () { return ''; });
+    .then(function (d) {
+      if (!d) return none;
+      return {
+        name: d.city || d.locality || d.principalSubdivision || d.countryName || '',
+        cc: d.countryCode ? String(d.countryCode).toUpperCase() : ''
+      };
+    })
+    .catch(function () { return none; });
 }
 
-// the phone moved to another time zone: update the My location clock right away
 function checkZoneChange() {
   const dz = deviceZone();
   if (dz === lastDeviceZone) return;
   lastDeviceZone = dz;
   updateLabels();
+  syncCountry();
   if (hasHome()) {
     toast('Time zone changed: ' + tzCity(dz));
     refreshMyPlace(false);
@@ -709,7 +645,6 @@ function cacheSearch(key, list) {
   if (searchKeys.length > 40) delete searchCache[searchKeys.shift()];
 }
 
-// works without internet: searches the browser's own list of time zones ("Dhaka", "New York", ...)
 function localZoneSearch(q) {
   if (!zoneIndex) {
     let all = [];
@@ -729,7 +664,6 @@ function localZoneSearch(q) {
   }).slice(0, 8);
 }
 
-// Resolves with { list, local }. local = true when the answer came from the offline list.
 function searchPlaces(q) {
   const key = q.toLowerCase();
   if (searchCache[key]) return Promise.resolve({ list: searchCache[key], local: false });
@@ -745,9 +679,9 @@ function searchPlaces(q) {
       return { list: localZoneSearch(q), local: true };
     })
     .catch(function (err) {
-      if (err && err.name === 'AbortError') throw err;          // replaced by a newer search
+      if (err && err.name === 'AbortError') throw err;
       const list = localZoneSearch(q);
-      if (list.length) return { list: list, local: true };      // internet problem: use the offline list
+      if (list.length) return { list: list, local: true };
       throw err;
     });
 }
@@ -758,7 +692,7 @@ function applyStyle(w) {
   const el = widgetEl(w.id);
   if (!el) return;
   const light = document.body.classList.contains('light');
-  const c = (light && w.color === '#ffffff') ? '#111111' : w.color;   // white turns dark on the light theme
+  const c = (light && w.color === '#ffffff') ? '#111111' : w.color;
   el.style.setProperty('--color', c);
   el.style.setProperty('--size', w.size + 'vw');
 }
@@ -777,7 +711,7 @@ function buildWidget(w) {
   else inner = '<div class="datetxt"><div class="wd"></div><div class="dm"></div></div>';
   el.innerHTML = inner;
   el.onclick = function () { openEdit(w.id); };
-  if (w.type === 'home') refreshMyPlace(false);      // find the place name (does nothing if it is recent)
+  if (w.type === 'home') refreshMyPlace(false);
   return el;
 }
 
@@ -839,7 +773,6 @@ function tick() {
   });
 }
 
-// smooth sweeping hands of the classic clock, about 60 times a second
 function sweepLoop() {
   const list = document.querySelectorAll('[data-type="classic"]');
   if (list.length) {
@@ -890,7 +823,6 @@ async function setAwake(on) {
   } catch (e) {}
 }
 
-// Opens the bottom sheet. Settings and Add widget switch it into a popover afterwards (openPopover).
 function openSheet(html) {
   sheet.classList.remove('pop');
   delete sheet.dataset.kind;
@@ -899,7 +831,6 @@ function openSheet(html) {
   overlay.classList.add('open');
 }
 
-// popover: kind is 'settings' (under the three dots) or 'add' (the plus button turns)
 function openPopover(kind) {
   sheet.dataset.kind = kind;
   sheet.classList.add('pop');
@@ -924,12 +855,14 @@ function openSettings() {
     }).join('') + '</div>';
   h += '<div class="row"><button class="btn" id="fontbtn"></button></div>';
   h += '<div class="row"><button class="btn" id="awake"></button></div>';
+  h += '<div class="row"><button class="btn" id="upbtn">Upcoming dates: ' + escapeAttr(countryName(detectCountry()) || 'Auto') + '</button></div>';
   h += '<div class="row"><button class="btn" id="fs">Toggle fullscreen</button></div>';
   h += '<div class="row"><button class="btn" id="permbtn">Permissions &amp; connection</button></div>';
   h += '<div class="row"><button class="btn" id="done">Done</button></div>';
   openSheet(h);
-  openPopover('settings');   // settings opens as a popover under the dots button
+  openPopover('settings');
   document.getElementById('permbtn').onclick = openPermissions;
+  document.getElementById('upbtn').onclick = openUpcomingSettings;
 
   function labels() {
     document.getElementById('themebtn').textContent = globalSet.theme === 'light' ? 'Theme: Light' : 'Theme: Dark';
@@ -974,7 +907,6 @@ function openSettings() {
 /* ==========================================================================
    9. EDIT / ADD WIDGET SHEETS
    ========================================================================== */
-// the part of the edit sheet that belongs to the World clock (search) and My location clock
 function worldEditHtml(w) {
   let h = '<div class="row"><div class="label" id="wsstat"></div></div>';
   if (w.type === 'world') {
@@ -1034,7 +966,7 @@ function initWorldEdit(w) {
     msg('Searching...');
     timer = setTimeout(function () {
       searchPlaces(v).then(function (r) {
-        if (my !== searchSeq) return;                       // an older answer, ignore it
+        if (my !== searchSeq) return;
         if (!r.list.length) { msg('No place found'); return; }
         res.innerHTML = '';
         if (r.local) {
@@ -1129,7 +1061,7 @@ function openAddWidget() {
   });
   h += '<div class="row"><button class="btn danger" id="reset">Reset all</button><button class="btn" id="done">Close</button></div>';
   openSheet(h);
-  openPopover('add');   // opens as a popover, the same way as settings; the plus button turns
+  openPopover('add');
 
   sheet.querySelectorAll('[data-t]').forEach(function (b) {
     b.onclick = function () {
@@ -1161,7 +1093,7 @@ function showTab(name) {
   if (name === 'timer') setTimeout(syncWheels, 50);
   if (name === 'home') {
     renderUpcoming();
-    setTimeout(measureUpcoming, 60);   // measure once the Home tab is visible
+    setTimeout(measureUpcoming, 60);
   }
 }
 
@@ -1229,7 +1161,6 @@ function openAlarmSheet(a) {
     if (!t) return;
     const lbl = document.getElementById('asLabel').value.trim();
     const now = new Date();
-    // do not ring immediately if set to the current minute
     const tp = t.split(':');
     const lateBy = now.getHours() * 60 + now.getMinutes() - (Number(tp[0]) * 60 + Number(tp[1]));
     const guard = (lateBy >= 0 && lateBy <= 2) ? dayKey(now) + t : '';
@@ -1257,8 +1188,7 @@ function checkAlarms() {
   const dk = dayKey(now);
   alarms.forEach(function (a) {
     const p = a.time.split(':');
-    const late = nowMin - (Number(p[0]) * 60 + Number(p[1]));   // minutes since it was due
-    // also rings an alarm whose minute passed while the phone had the page asleep (up to 2 minutes)
+    const late = nowMin - (Number(p[0]) * 60 + Number(p[1]));
     if (a.on && late >= 0 && late <= 2 && a.last !== dk + a.time) {
       a.last = dk + a.time;
       if (!a.daily) a.on = false;
@@ -1322,7 +1252,6 @@ function buildDial() {
   sg.innerHTML = t;
 }
 
-// milliseconds at the same size as minutes and seconds
 function csHtml(cs) {
   if (digitMode === 'sf') return '<span class="txt">.' + cs + '</span>';
   return '<svg class="dg" viewBox="0 0 24 100"><circle cx="12" cy="90" r="5" fill="currentColor"/></svg>' +
@@ -1560,64 +1489,345 @@ function openPresetSheet() {
 }
 
 /* ==========================================================================
-   14. UPCOMING LIST (holidays and important days, generated automatically)
+   14. UPCOMING  (country-aware, works offline)
+   --------------------------------------------------------------------------
+   Country:  your choice in Settings > Upcoming dates, otherwise found by itself
+             (GPS place -> time zone -> language), so it follows the phone.
+   Dates come from four sources, all merged and sorted:
+     a) Public holidays of the country (Nager.Date, saved on the phone after
+        the first download, so they show offline afterwards)
+     b) Built-in national / historical days (fixed dates, always offline)
+     c) Islamic calendar events worked out by the browser (moves each year)
+     d) Your own dates (added in Settings > Upcoming dates)
    ========================================================================== */
-let hijriCache = { key: '', list: [] };
+const COUNTRIES = ('AD AF AL AR AT AU AZ BA BB BD BE BG BH BN BO BR BS BW BY BZ CA CD CH CL CN CO CR CU CY CZ DE DK DO DZ EC EE EG ES ET ' +
+  'FI FR GB GE GH GR GT HK HN HR HT HU ID IE IN IQ IR IS IT JM JO JP KE KG KH KR KW KZ LA LB LK LT LU LV LY MA MD ME MK MM MN MT MV MX MY ' +
+  'NA NG NI NL NO NP NZ OM PA PE PG PH PK PL PR PT PY QA RO RS RU SA SD SE SG SI SK SN SY TH TJ TN TR TZ UA UG US UY UZ VE VN YE ZA ZW').split(' ');
 
-// Finds the next dates of the moon-based events by scanning the Islamic calendar day by day.
-function hijriUpcoming(today) {
-  const key = dayKey(today);
+// time zone -> country (used when GPS / internet is not available)
+const CC_TZ = {};
+('Asia/Dhaka:BD,Asia/Kolkata:IN,Asia/Calcutta:IN,Asia/Karachi:PK,Asia/Kathmandu:NP,Asia/Katmandu:NP,Asia/Colombo:LK,Asia/Riyadh:SA,' +
+ 'Asia/Dubai:AE,Asia/Qatar:QA,Asia/Kuwait:KW,Asia/Muscat:OM,Asia/Bahrain:BH,Asia/Baghdad:IQ,Asia/Tehran:IR,Asia/Kabul:AF,Asia/Amman:JO,' +
+ 'Asia/Beirut:LB,Asia/Damascus:SY,Asia/Aden:YE,Asia/Jakarta:ID,Asia/Makassar:ID,Asia/Jayapura:ID,Asia/Pontianak:ID,Asia/Kuala_Lumpur:MY,' +
+ 'Asia/Kuching:MY,Asia/Singapore:SG,Asia/Bangkok:TH,Asia/Manila:PH,Asia/Ho_Chi_Minh:VN,Asia/Saigon:VN,Asia/Yangon:MM,Asia/Rangoon:MM,' +
+ 'Asia/Phnom_Penh:KH,Asia/Vientiane:LA,Asia/Brunei:BN,Indian/Maldives:MV,Asia/Tokyo:JP,Asia/Seoul:KR,Asia/Shanghai:CN,Asia/Hong_Kong:HK,' +
+ 'Asia/Ulaanbaatar:MN,Asia/Tashkent:UZ,Asia/Dushanbe:TJ,Asia/Bishkek:KG,Asia/Baku:AZ,Asia/Tbilisi:GE,Asia/Almaty:KZ,Europe/Istanbul:TR,' +
+ 'Africa/Cairo:EG,Africa/Casablanca:MA,Africa/Algiers:DZ,Africa/Tunis:TN,Africa/Tripoli:LY,Africa/Khartoum:SD,Africa/Dakar:SN,' +
+ 'Africa/Lagos:NG,Africa/Nairobi:KE,Africa/Addis_Ababa:ET,Africa/Accra:GH,Africa/Dar_es_Salaam:TZ,Africa/Kampala:UG,' +
+ 'Africa/Johannesburg:ZA,Africa/Harare:ZW,Europe/London:GB,Europe/Dublin:IE,Europe/Paris:FR,Europe/Berlin:DE,Europe/Madrid:ES,' +
+ 'Europe/Rome:IT,Europe/Amsterdam:NL,Europe/Brussels:BE,Europe/Zurich:CH,Europe/Vienna:AT,Europe/Stockholm:SE,Europe/Oslo:NO,' +
+ 'Europe/Copenhagen:DK,Europe/Helsinki:FI,Europe/Warsaw:PL,Europe/Prague:CZ,Europe/Budapest:HU,Europe/Athens:GR,Europe/Lisbon:PT,' +
+ 'Europe/Moscow:RU,Europe/Kiev:UA,Europe/Kyiv:UA,Europe/Bucharest:RO,Europe/Sofia:BG,Australia/Sydney:AU,Australia/Melbourne:AU,' +
+ 'Australia/Brisbane:AU,Australia/Perth:AU,Australia/Adelaide:AU,Pacific/Auckland:NZ,America/New_York:US,America/Chicago:US,' +
+ 'America/Denver:US,America/Los_Angeles:US,America/Phoenix:US,America/Anchorage:US,Pacific/Honolulu:US,America/Toronto:CA,' +
+ 'America/Vancouver:CA,America/Mexico_City:MX,America/Sao_Paulo:BR,America/Argentina/Buenos_Aires:AR,America/Bogota:CO,' +
+ 'America/Lima:PE,America/Santiago:CL').split(',').forEach(function (p) { const a = p.split(':'); CC_TZ[a[0]] = a[1]; });
+
+// countries where the Islamic calendar events are shown
+const MUSLIM = new Set(('BD PK IN SA AE EG QA KW OM BH JO LB IQ IR AF UZ TJ KG AZ TR ID MY BN MV MA DZ TN LY YE SY PS SD SN NG LK').split(' '));
+const MOON_LATE = new Set(['BD', 'IN', 'PK']);    // moon is usually sighted one day after Saudi Arabia
+const ARABIC = new Set(('SA AE EG QA KW OM BH JO LB IQ MA DZ TN LY YE SY PS SD').split(' '));
+const HIJRI_SCAN_DAYS = 420;
+
+// Islamic events: [Hijri month, Hijri day, English, Bangla, Arabic, type]  (h = holiday, r = religious)
+const HIJRI = [
+  [1, 1, 'Islamic New Year', 'হিজরি নববর্ষ', 'رأس السنة الهجرية', 'r'],
+  [1, 10, 'Ashura', 'আশুরা', 'عاشوراء', 'r'],
+  [3, 12, 'Eid-e-Miladunnabi', 'ঈদে মিলাদুন্নবী', 'المولد النبوي', 'r'],
+  [7, 27, 'Shab-e-Meraj', 'শবে মেরাজ', 'الإسراء والمعراج', 'r'],
+  [8, 15, 'Shab-e-Barat', 'শবে বরাত', 'ليلة النصف من شعبان', 'r'],
+  [9, 1, 'Ramadan begins', 'রমজান শুরু', 'بداية رمضان', 'r'],
+  [9, 27, 'Shab-e-Qadr', 'শবে কদর', 'ليلة القدر', 'r'],
+  [10, 1, 'Eid-ul-Fitr', 'ঈদুল ফিতর', 'عيد الفطر', 'h'],
+  [12, 9, 'Day of Arafah', 'আরাফার দিন', 'يوم عرفة', 'r'],
+  [12, 10, 'Eid-ul-Adha', 'ঈদুল আযহা', 'عيد الأضحى', 'h']
+];
+const ISL_RE = /eid|id al|id-|fitr|adha|ramadan|ramazan|arafah|arafat|ashura|mawlid|maulid|barat|qadr|mi.?raj|isra|islamic new|hijri|muharram|bayram|kurban|idul|lebaran|nuzul|raya/i;
+const REL_RE = /christmas|easter|good friday|epiphany|ascension|pentecost|whit|corpus|assumption|all saints|all souls|immaculate|diwali|deepavali|holi\b|vesak|buddha|navratri|dussehra|durga|janmashtami|ramadan|eid|fitr|adha|ashura|mawlid|passover|hanukkah|yom kippur|rosh hashan|nyepi|waisak|thaipusam|boxing|palm sunday|maundy/i;
+
+// built-in national / historical days: [month, day, English, local-language name, type]
+const COUNTRY_DAYS = {
+  BD: [
+    [1, 1, 'New Year’s Day', 'ইংরেজি নববর্ষ', 'i'],
+    [2, 13, 'Pohela Falgun', 'পহেলা ফাল্গুন', 'i'],
+    [2, 21, 'Shaheed Day', 'শহীদ ও মাতৃভাষা দিবস', 'h'],
+    [3, 8, 'Women’s Day', 'আন্তর্জাতিক নারী দিবস', 'i'],
+    [3, 17, 'Sheikh Mujib’s Birthday', 'জাতীয় শিশু দিবস', 'i'],
+    [3, 25, 'Genocide Remembrance Day', 'গণহত্যা দিবস', 'i'],
+    [3, 26, 'Independence Day', 'স্বাধীনতা দিবস', 'h'],
+    [4, 14, 'Pohela Boishakh', 'পহেলা বৈশাখ', 'h'],
+    [4, 17, 'Mujibnagar Day', 'মুজিবনগর দিবস', 'i'],
+    [5, 1, 'May Day', 'মে দিবস', 'h'],
+    [8, 5, 'July Uprising Day', 'জুলাই গণ-অভ্যুত্থান দিবস', 'h'],
+    [11, 7, 'Solidarity Day', 'সংহতি দিবস', 'i'],
+    [12, 10, 'Human Rights Day', 'মানবাধিকার দিবস', 'i'],
+    [12, 14, 'Martyred Intellectuals Day', 'শহীদ বুদ্ধিজীবী দিবস', 'i'],
+    [12, 16, 'Victory Day', 'বিজয় দিবস', 'h'],
+    [12, 25, 'Christmas Day', 'বড়দিন', 'r']
+  ],
+  IN: [
+    [1, 1, 'New Year’s Day', '', 'i'],
+    [1, 23, 'Netaji Subhas Chandra Bose Jayanti', 'नेताजी जयंती', 'i'],
+    [1, 26, 'Republic Day', 'गणतंत्र दिवस', 'h'],
+    [4, 14, 'Ambedkar Jayanti', 'अंबेडकर जयंती', 'h'],
+    [5, 1, 'Labour Day', 'मज़दूर दिवस', 'i'],
+    [8, 15, 'Independence Day', 'स्वतंत्रता दिवस', 'h'],
+    [9, 5, 'Teachers’ Day', 'शिक्षक दिवस', 'i'],
+    [10, 2, 'Gandhi Jayanti', 'गांधी जयंती', 'h'],
+    [11, 14, 'Children’s Day', 'बाल दिवस', 'i'],
+    [11, 26, 'Constitution Day', 'संविधान दिवस', 'i'],
+    [12, 25, 'Christmas Day', 'क्रिसमस', 'r']
+  ],
+  PK: [
+    [2, 5, 'Kashmir Solidarity Day', 'یوم یکجہتی کشمیر', 'i'],
+    [3, 23, 'Pakistan Day', 'یوم پاکستان', 'h'],
+    [5, 1, 'Labour Day', 'یوم مزدور', 'h'],
+    [5, 28, 'Youm-e-Takbir', 'یوم تکبیر', 'i'],
+    [8, 14, 'Independence Day', 'یوم آزادی', 'h'],
+    [9, 6, 'Defence Day', 'یوم دفاع', 'i'],
+    [11, 9, 'Iqbal Day', 'یوم اقبال', 'i'],
+    [12, 25, 'Quaid-e-Azam Day', 'یوم قائد', 'h']
+  ],
+  LK: [
+    [2, 4, 'Independence Day', '', 'h'],
+    [5, 1, 'May Day', '', 'h'],
+    [12, 25, 'Christmas Day', '', 'r']
+  ],
+  SA: [
+    [2, 22, 'Founding Day', 'يوم التأسيس', 'h'],
+    [9, 23, 'National Day', 'اليوم الوطني', 'h']
+  ],
+  AE: [
+    [1, 1, 'New Year’s Day', '', 'h'],
+    [11, 30, 'Commemoration Day', 'يوم الشهيد', 'i'],
+    [12, 2, 'National Day', 'اليوم الوطني', 'h']
+  ],
+  MY: [
+    [1, 1, 'New Year’s Day', '', 'h'],
+    [5, 1, 'Labour Day', 'Hari Pekerja', 'h'],
+    [8, 31, 'Merdeka Day', 'Hari Merdeka', 'h'],
+    [9, 16, 'Malaysia Day', 'Hari Malaysia', 'h'],
+    [12, 25, 'Christmas Day', '', 'r']
+  ],
+  US: [
+    [6, 14, 'Flag Day', '', 'i'],
+    [9, 11, 'Patriot Day', '', 'i'],
+    [9, 17, 'Constitution Day', '', 'i'],
+    [12, 7, 'Pearl Harbor Remembrance Day', '', 'i']
+  ],
+  GB: [
+    [4, 23, 'St George’s Day', '', 'i'],
+    [6, 6, 'D-Day Anniversary', '', 'i'],
+    [11, 5, 'Bonfire Night', '', 'i'],
+    [11, 11, 'Remembrance Day', '', 'i']
+  ]
+};
+
+// small set shown in every country (only on dates that are still free)
+const GLOBAL_DAYS = [
+  [1, 1, 'New Year’s Day', '', 'i'],
+  [2, 21, 'International Mother Language Day', '', 'i'],
+  [3, 8, 'International Women’s Day', '', 'i'],
+  [4, 22, 'Earth Day', '', 'i'],
+  [5, 1, 'Labour Day', '', 'i'],
+  [6, 5, 'World Environment Day', '', 'i'],
+  [12, 10, 'Human Rights Day', '', 'i']
+];
+
+let hijriCache = { key: '', list: [] };
+let lastCc = null;
+const holBusy = {};
+
+/* ---- which country? ---- */
+function autoCountry() {
+  const dz = deviceZone();
+  if (myPlace.cc && myPlace.tz === dz) return myPlace.cc;     // GPS result (most exact)
+  if (CC_TZ[dz]) return CC_TZ[dz];                            // time zone
+  const langs = (navigator.languages && navigator.languages.length) ? navigator.languages : [navigator.language || ''];
+  for (let i = 0; i < langs.length; i++) {                    // language region, like "bn-BD"
+    const m = /[-_]([A-Za-z]{2})$/.exec(String(langs[i]));
+    if (m) return m[1].toUpperCase();
+  }
+  try { return new Intl.Locale(langs[0] || 'en').maximize().region || ''; } catch (e) { return ''; }
+}
+
+function detectCountry() {
+  const o = globalSet.country;
+  if (o && o !== 'auto') return o;
+  return autoCountry();
+}
+
+function countryName(cc) {
+  if (!cc) return '';
+  try { return new Intl.DisplayNames(['en'], { type: 'region' }).of(cc) || cc; } catch (e) { return cc; }
+}
+
+function flagOf(cc) {
+  if (!cc || cc.length !== 2) return '';
+  try { return String.fromCodePoint(127397 + cc.charCodeAt(0), 127397 + cc.charCodeAt(1)); } catch (e) { return ''; }
+}
+
+// the country may have changed (moved, new GPS answer, setting): reload everything for it
+function syncCountry() {
+  const cc = detectCountry();
+  if (cc === lastCc) return;
+  lastCc = cc;
+  hijriCache.key = '';
+  loadHolidays(cc);
+  renderUpcoming();
+}
+
+/* ---- public holidays: download once, keep on the phone ---- */
+function readHol(cc, y) {
+  try {
+    const o = JSON.parse(localStorage.getItem(HKEY + cc + '_' + y));
+    if (o && Array.isArray(o.list)) return o;
+  } catch (e) {}
+  return null;
+}
+
+function loadHolidays(cc) {
+  if (!cc || navigator.onLine === false) return;
+  const y = new Date().getFullYear();
+  [y, y + 1].forEach(function (yr) {
+    const c = readHol(cc, yr);
+    if (c && Date.now() - c.ts < HOL_TTL) return;             // still fresh
+    const k = cc + yr;
+    if (holBusy[k]) return;
+    holBusy[k] = 1;
+    fetchJson(HOL_URL + yr + '/' + cc, { timeout: 10000, retries: 1 })
+      .then(function (d) {
+        const list = Array.isArray(d) ? d.map(function (x) {
+          return { d: x.date, n: x.name || '', l: x.localName || '', t: x.types || [] };
+        }) : [];
+        try { localStorage.setItem(HKEY + cc + '_' + yr, JSON.stringify({ ts: Date.now(), list: list })); } catch (e) {}
+      })
+      .catch(function (e) {
+        // country not supported by the service: remember that, so it is not asked again every time
+        if (e && e.status && e.status < 500) {
+          try { localStorage.setItem(HKEY + cc + '_' + yr, JSON.stringify({ ts: Date.now(), list: [] })); } catch (x) {}
+        }
+      })
+      .then(function () {
+        delete holBusy[k];
+        if (cc === detectCountry()) renderUpcoming();
+      });
+  });
+}
+
+/* ---- Islamic calendar events (moves every year) ---- */
+function islamicFormatter() {
+  const cals = ['islamic-umalqura', 'islamic-civil', 'islamic'];
+  for (let i = 0; i < cals.length; i++) {
+    try {
+      const f = new Intl.DateTimeFormat('en', { calendar: cals[i], day: 'numeric', month: 'numeric' });
+      if (String(f.resolvedOptions().calendar).indexOf('islamic') === 0) return f;
+    } catch (e) {}
+  }
+  return null;
+}
+
+function hijriUpcoming(today, cc) {
+  const key = dayKey(today) + cc;
   if (hijriCache.key === key) return hijriCache.list;
 
   const list = [];
-  try {
-    const fmt = new Intl.DateTimeFormat('en', { calendar: 'islamic-umalqura', day: 'numeric', month: 'numeric' });
-    for (let i = -HIJRI_OFFSET; i <= HIJRI_SCAN_DAYS; i++) {
+  const fmt = MUSLIM.has(cc) ? islamicFormatter() : null;
+  if (fmt) {
+    const off = MOON_LATE.has(cc) ? 1 : 0;
+    for (let i = -off; i <= HIJRI_SCAN_DAYS; i++) {
       const g = new Date(today.getFullYear(), today.getMonth(), today.getDate() + i);
       let mo = 0, da = 0;
       fmt.formatToParts(g).forEach(function (p) {
         if (p.type === 'month') mo = parseInt(p.value, 10);
         else if (p.type === 'day') da = parseInt(p.value, 10);
       });
-      for (let k = 0; k < HIJRI_EVENTS.length; k++) {
-        const ev = HIJRI_EVENTS[k];
-        if (ev[0] === mo && ev[1] === da) {
-          list.push({ dt: new Date(g.getFullYear(), g.getMonth(), g.getDate() + HIJRI_OFFSET), ev: ev });
+      for (let k = 0; k < HIJRI.length; k++) {
+        if (HIJRI[k][0] === mo && HIJRI[k][1] === da) {
+          list.push({ dt: new Date(g.getFullYear(), g.getMonth(), g.getDate() + off), ev: HIJRI[k] });
         }
       }
     }
-  } catch (e) {}   // browser without the Islamic calendar: moon-based events are skipped
-
+  }
   hijriCache = { key: key, list: list };
   return list;
 }
 
-// Builds the list of upcoming dates from today: this year, next year, moon-based and custom ones.
+/* ---- your own dates ---- */
+function loadCustom() {
+  try {
+    const c = JSON.parse(localStorage.getItem(CUSTOM_KEY));
+    if (Array.isArray(c)) return c;
+  } catch (e) {}
+  return [];
+}
+function saveCustom(list) { try { localStorage.setItem(CUSTOM_KEY, JSON.stringify(list)); } catch (e) {} }
+
+/* ---- build the list ---- */
 function getUpcoming(today) {
-  const out = [];
-  function add(dt, n, b, t, approx) {
-    const diff = Math.round((dt - today) / 86400000);
-    if (diff >= 0) out.push({ h: { n: n, b: b || '', t: t || 'i', approx: approx }, dt: dt, diff: diff });
-  }
-
+  const cc = detectCountry();
   const y = today.getFullYear();
-  for (let yr = y; yr <= y + 1; yr++) {
-    FIXED_EVENTS.forEach(function (ev) {
-      add(new Date(yr, ev[0] - 1, ev[1]), ev[2], ev[3], ev[4], false);
-    });
+  const out = [];
+  const taken = {};
+
+  function push(dt, n, b, t, approx) {
+    const diff = Math.round((dt - today) / 86400000);
+    if (diff < 0) return;
+    out.push({ h: { n: n, b: b || '', t: t || 'i', approx: !!approx }, dt: dt, diff: diff });
+  }
+  function addFixed(dt, n, b, t) {            // one item per day, the first source wins
+    const k = dayKey(dt);
+    if (taken[k]) return;
+    taken[k] = 1;
+    push(dt, n, b, t, false);
   }
 
-  hijriUpcoming(today).forEach(function (x) {
-    add(x.dt, x.ev[2], x.ev[3], x.ev[4], true);
+  // a) public holidays of the country (saved copy)
+  if (cc) {
+    for (let yr = y; yr <= y + 1; yr++) {
+      const c = readHol(cc, yr);
+      if (!c) continue;
+      c.list.forEach(function (x) {
+        const p = String(x.d).split('-');
+        if (p.length !== 3) return;
+        const types = x.t || [];
+        let t = 'i';
+        if (types.indexOf('Public') > -1) t = 'h';
+        if (REL_RE.test(x.n)) t = 'r';
+        addFixed(new Date(+p[0], +p[1] - 1, +p[2]), x.n, (x.l && x.l !== x.n) ? x.l : '', t);
+      });
+    }
+  }
+
+  // b) built-in national and historical days
+  const own = COUNTRY_DAYS[cc] || [];
+  for (let yr = y; yr <= y + 1; yr++) {
+    own.forEach(function (ev) { addFixed(new Date(yr, ev[0] - 1, ev[1]), ev[2], ev[3], ev[4]); });
+  }
+
+  // c) Islamic calendar events (skipped when the holiday list already has the same one)
+  hijriUpcoming(today, cc).forEach(function (x) {
+    const dup = out.some(function (o) { return Math.abs(o.dt - x.dt) <= 2 * 86400000 && ISL_RE.test(o.h.n); });
+    if (dup) return;
+    const local = cc === 'BD' ? x.ev[3] : (ARABIC.has(cc) ? x.ev[4] : '');
+    push(x.dt, x.ev[2], local, x.ev[5], true);
   });
 
-  try {
-    const custom = JSON.parse(localStorage.getItem(CUSTOM_KEY)) || [];
-    custom.forEach(function (c) {
-      const p = String(c.d).split('-');
-      if (p.length === 3) add(new Date(Number(p[0]), Number(p[1]) - 1, Number(p[2])), c.n, c.b, c.t, false);
-    });
-  } catch (e) {}
+  // world days on dates that are still free
+  for (let yr = y; yr <= y + 1; yr++) {
+    GLOBAL_DAYS.forEach(function (ev) { addFixed(new Date(yr, ev[0] - 1, ev[1]), ev[2], ev[3], ev[4]); });
+  }
+
+  // d) your own dates
+  loadCustom().forEach(function (c) {
+    const p = String(c.d).split('-');
+    if (p.length !== 3 || !c.n) return;
+    if (c.r) {
+      for (let yr = y; yr <= y + 1; yr++) push(new Date(yr, +p[1] - 1, +p[2]), c.n, c.b, c.t, false);
+    } else {
+      push(new Date(+p[0], +p[1] - 1, +p[2]), c.n, c.b, c.t, false);
+    }
+  });
 
   out.sort(function (a, b) { return a.dt - b.dt; });
   return out;
@@ -1630,6 +1840,11 @@ function renderUpcoming() {
   const LABEL = { h: 'Holiday', i: 'Important', r: 'Religious' };
   const now = new Date();
   const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  const cc = detectCountry();
+
+  const sub = document.querySelector('.hsub');
+  if (sub) sub.textContent = cc ? (flagOf(cc) + ' ' + countryName(cc)).trim() : '';
+
   const items = getUpcoming(today).slice(0, 7);
 
   if (!items.length) {
@@ -1653,7 +1868,77 @@ function renderUpcoming() {
   queueFade();
 }
 
-// Progressive blur: several stacked layers, each blurring a bit more near the edge.
+/* ---- settings sheet: country + own dates ---- */
+function openUpcomingSettings() {
+  const sel = globalSet.country || 'auto';
+  const names = COUNTRIES.map(function (c) { return { c: c, n: countryName(c) }; })
+    .sort(function (a, b) { return a.n.localeCompare(b.n); });
+
+  let h = '<div class="title">Upcoming dates</div>';
+  h += '<div class="row"><div class="label">Country</div><select id="upCc">' +
+    '<option value="auto">Auto (' + escapeAttr(countryName(autoCountry()) || 'unknown') + ')</option>' +
+    names.map(function (x) {
+      return '<option value="' + x.c + '"' + (sel === x.c ? ' selected' : '') + '>' + escapeAttr(flagOf(x.c) + ' ' + x.n) + '</option>';
+    }).join('') + '</select></div>';
+  h += '<div class="phint">Auto follows the phone. Holidays are saved on the phone after the first download, so they also show offline. ' +
+    'Moon-based days (Eid, Ramadan...) are worked out by the phone; the real date can differ by a day.</div>';
+  h += '<div class="row"><div class="label">Add my own date</div></div>';
+  h += '<div class="row"><input type="date" id="upDate"></div>';
+  h += '<div class="row"><input type="text" id="upName" placeholder="Name" maxlength="40"></div>';
+  h += '<div class="row"><select id="upType"><option value="i">Important</option><option value="h">Holiday</option><option value="r">Religious</option></select> ' +
+    '<select id="upRep"><option value="1">Every year</option><option value="0">One time</option></select></div>';
+  h += '<div class="row"><button class="btn" id="upAdd">Add</button></div>';
+  h += '<div id="upList"></div>';
+  h += '<div class="row"><button class="btn" id="upBack">Back</button><button class="btn" id="done">Done</button></div>';
+  openSheet(h);
+
+  function drawCustom() {
+    const list = loadCustom();
+    const box = document.getElementById('upList');
+    box.innerHTML = '';
+    list.forEach(function (c, i) {
+      const row = document.createElement('div');
+      row.className = 'row';
+      row.innerHTML = '<div class="label">' + escapeAttr(c.d + ' · ' + c.n + (c.r ? ' (yearly)' : '')) + '</div>' +
+        '<button class="btn danger" data-i="' + i + '">Delete</button>';
+      row.querySelector('button').onclick = function () {
+        const l = loadCustom();
+        l.splice(i, 1);
+        saveCustom(l);
+        drawCustom(); renderUpcoming();
+      };
+      box.appendChild(row);
+    });
+  }
+  drawCustom();
+
+  document.getElementById('upCc').onchange = function (e) {
+    globalSet.country = e.target.value;
+    saveGlobal();
+    lastCc = null;
+    syncCountry();
+  };
+
+  document.getElementById('upAdd').onclick = function () {
+    const d = document.getElementById('upDate').value;
+    const n = document.getElementById('upName').value.trim();
+    if (!d || !n) { toast('Choose a date and write a name'); return; }
+    const l = loadCustom();
+    l.push({
+      d: d, n: n, b: '',
+      t: document.getElementById('upType').value,
+      r: document.getElementById('upRep').value === '1' ? 1 : 0
+    });
+    saveCustom(l);
+    document.getElementById('upName').value = '';
+    drawCustom(); renderUpcoming();
+  };
+
+  document.getElementById('upBack').onclick = openSettings;
+  document.getElementById('done').onclick = closeSheet;
+}
+
+/* ---- progressive blur and scroll fade ---- */
 function blurLayer(blur, mask) {
   return '<div class="pbl" style="-webkit-backdrop-filter:blur(' + blur + 'px);backdrop-filter:blur(' + blur +
     'px);-webkit-mask-image:' + mask + ';mask-image:' + mask + '"></div>';
@@ -1663,11 +1948,10 @@ function buildBlurZones() {
   const hol = document.getElementById('holidays');
   if (!hol || document.getElementById('pbTop')) return;
 
-  const N = 4;                 // layer slots (only the ones with a blur value are drawn)
+  const N = 4;
   const BLUR = [0.8, 1.6];
-  const L = 112;               // length of the blur zone in px
+  const L = 112;
 
-  // a gradient stop that follows the measured heading height (--ft) and the scroll shift (--sh)
   function stop(k, c) {
     return 'calc(var(--ft,34px) * ' + k + ' + ' + c.toFixed(2) + 'px - var(--sh,0px))';
   }
@@ -1700,11 +1984,10 @@ function buildBlurZones() {
   hol.appendChild(bot);
 }
 
-// Measures the heading and the bottom bar, and publishes them as CSS variables.
 function measureUpcoming() {
   const box = document.getElementById('hList');
   const hol = document.getElementById('holidays');
-  if (!box || !hol || !box.offsetParent) return;      // Home tab is not showing
+  if (!box || !hol || !box.offsetParent) return;
 
   const br = box.getBoundingClientRect();
   const head = document.querySelector('.hhead');
@@ -1720,17 +2003,15 @@ function measureUpcoming() {
   applyScrollShift();
 }
 
-// While scrolling only one number changes, so the top zone slides in as soon as the list moves.
 function applyScrollShift() {
   const box = document.getElementById('hList');
   const hol = document.getElementById('holidays');
   if (!box || !hol) return;
-  const s = clamp01(box.scrollTop / 40);              // 0 at the very top, 1 after 40px of scrolling
+  const s = clamp01(box.scrollTop / 40);
   const sh = Math.round((1 - s) * (cachedFt + 98));
   if (sh !== lastSh) { lastSh = sh; hol.style.setProperty('--sh', sh + 'px'); }
 }
 
-// full re-measure, at most every 0.4 s
 function queueFade() {
   if (fadeQueued) return;
   fadeQueued = true;
@@ -1747,7 +2028,7 @@ function queueFade() {
 function initUpcoming() {
   const home = document.getElementById('v-home');
   const hol = document.getElementById('holidays');
-  if (home && hol) home.appendChild(hol);             // clock first, list below it
+  if (home && hol) home.appendChild(hol);
 
   const hh = document.querySelector('.hhead span');
   if (hh) hh.textContent = 'Upcoming';
@@ -1758,9 +2039,9 @@ function initUpcoming() {
   if (box) {
     let lastIdx = 0;
     box.addEventListener('scroll', function () {
-      applyScrollShift();                              // same frame, no delay
+      applyScrollShift();
       queueFade();
-      const first = box.querySelector('.hcard');       // haptic tick for every card passed
+      const first = box.querySelector('.hcard');
       const rowH = first ? first.offsetHeight + 10 : 80;
       const idx = Math.round(box.scrollTop / rowH);
       if (idx !== lastIdx) { lastIdx = idx; haptic(7); }
@@ -1789,7 +2070,7 @@ function initUpcoming() {
    ========================================================================== */
 function lightUp(el) {
   el.classList.remove('lit');
-  void el.offsetWidth;                  // restart the animation
+  void el.offsetWidth;
   el.classList.add('lit');
   clearTimeout(el._litT);
   el._litT = setTimeout(function () { el.classList.remove('lit'); }, 700);
@@ -1805,7 +2086,6 @@ function initPressFeedback() {
   }, true);
 }
 
-// bottom bar: switch the page the moment the finger lands
 function initNav() {
   const nav = document.getElementById('nav');
   if (!nav) return;
@@ -1818,8 +2098,6 @@ function initNav() {
     showTab(b.dataset.tab);
   }, true);
 
-  // the click that follows the touch would repeat the same switch (and it is the only
-  // path for keyboards / mouse without pointer events), so let it through unless it just happened
   nav.addEventListener('click', function (e) {
     const b = (e.target && e.target.closest) ? e.target.closest('[data-tab]') : null;
     if (!b) return;
@@ -1832,7 +2110,6 @@ function initNav() {
   }, true);
 }
 
-// three dots turn sideways while the settings popover is open
 function setPenOut(on) {
   if (on === penOut) return;
   penOut = on;
@@ -1841,7 +2118,6 @@ function setPenOut(on) {
   haptic(on ? 8 : 10);
 }
 
-// plus turns while the add-widget popover is open
 function setPlusOut(on) {
   if (on === plusOut) return;
   plusOut = on;
@@ -1866,7 +2142,6 @@ function initSettingsButton() {
   cog.onclick = openSettings;
 }
 
-// the plus (add widget) button: its icon is wrapped so it can turn like the three dots
 function initAddButton() {
   const add = document.getElementById('add');
   if (!add) return;
@@ -1876,7 +2151,6 @@ function initAddButton() {
   add.setAttribute('aria-label', 'Add widget');
 }
 
-// one observer for both popovers: dots turn for settings, plus turns for add widget
 function initPopoverWatch() {
   new MutationObserver(function () {
     const open = sheet.classList.contains('open') && sheet.classList.contains('pop');
@@ -1889,7 +2163,6 @@ function initPopoverWatch() {
 /* ==========================================================================
    16. CONNECTION, PERMISSIONS & SERVICE WORKER
    ========================================================================== */
-// ---- small message bubble above the bottom bar ----
 function hideToast() {
   const el = document.getElementById('toast');
   if (el) el.classList.remove('show');
@@ -1920,7 +2193,6 @@ function toast(text, opt) {
   if (!opt.sticky) toastTimer = setTimeout(hideToast, opt.ms || 3500);
 }
 
-// ---- internet: fetch with time limit, one retry, and clear error kinds ----
 function netError(kind) { const e = new Error(kind); e.kind = kind; return e; }
 function delay(ms) { return new Promise(function (r) { setTimeout(r, ms); }); }
 
@@ -1953,7 +2225,7 @@ function fetchJson(url, opt) {
       })
       .catch(function (err) {
         clearTimeout(timer);
-        if (opt.signal && opt.signal.aborted) throw err;       // cancelled on purpose
+        if (opt.signal && opt.signal.aborted) throw err;
         const e = (err && err.kind) ? err : netError(timedOut ? 'timeout' : (navigator.onLine === false ? 'offline' : 'network'));
         const retryable = e.kind === 'timeout' || e.kind === 'network' || (e.kind === 'http' && e.status >= 500);
         if (retryable && n < retries) return delay(700 * (n + 1)).then(function () { return attempt(n + 1); });
@@ -1964,19 +2236,18 @@ function fetchJson(url, opt) {
 }
 
 function onBackOnline() {
-  // finish what was waiting for the connection
-  if (hasHome()) refreshMyPlace(false);                    // get the place name that was missing offline
+  if (hasHome()) refreshMyPlace(false);
+  loadHolidays(detectCountry());                           // download the holidays that were missing offline
   const q = document.getElementById('wsq');
   if (q && q.value.trim().length >= 2 && q.oninput) q.oninput();
 }
 
 function initConnection() {
-  window.addEventListener('offline', function () { toast('You are offline. Place search uses the offline list.', { ms: 4500 }); });
+  window.addEventListener('offline', function () { toast('You are offline. Everything saved still works.', { ms: 4500 }); });
   window.addEventListener('online', function () { toast('Back online'); onBackOnline(); });
-  if (navigator.onLine === false) toast('You are offline. Place search uses the offline list.', { ms: 4500 });
 }
 
-// ---- notifications (alarm / timer alerts while the app is in the background) ----
+/* ---- notifications ---- */
 function notifSupported() { return 'Notification' in window; }
 
 function requestNotifications() {
@@ -1990,7 +2261,6 @@ function requestNotifications() {
   });
 }
 
-// asks once, right after the person sets an alarm or starts a timer
 function maybeAskNotifications() {
   if (!notifSupported() || Notification.permission !== 'default') return;
   let asked = false;
@@ -2018,13 +2288,12 @@ function closeNotif(tag) {
   } catch (e) {}
 }
 
-// ---- keep the browser from deleting alarms and settings ----
 function requestPersistentStorage() {
   if (!(navigator.storage && navigator.storage.persist && navigator.storage.persisted)) return Promise.resolve(false);
   return navigator.storage.persisted().then(function (p) { return p || navigator.storage.persist(); }).catch(function () { return false; });
 }
 
-// ---- permission status sheet ----
+/* ---- permission status sheet ---- */
 function geoPermState() {
   if (!navigator.geolocation) return 'unsupported';
   if (window.isSecureContext === false) return 'insecure';
@@ -2050,7 +2319,7 @@ function permLabel(st) {
 function openPermissions() {
   Promise.all([geoPermState(), notifState(), storageState()]).then(function (r) {
     const rows = [
-      ['geo', 'Location', 'Shows the time and date of the place where you are.', r[0]],
+      ['geo', 'Location', 'Shows the time and date of the place where you are, and picks the country for Upcoming dates.', r[0]],
       ['notif', 'Notifications', 'Alerts for alarms and timers while the app is in the background.', r[1]],
       ['store', 'Keep my data', 'Stops the browser from deleting your alarms and settings.', r[2]]
     ];
@@ -2090,31 +2359,27 @@ function openPermissions() {
   });
 }
 
-// react when the person changes a permission in the browser settings
 function watchPermissions() {
   if (!navigator.permissions || !navigator.permissions.query) return;
   navigator.permissions.query({ name: 'geolocation' }).then(function (st) {
     st.onchange = function () {
-      if (st.state === 'granted') { if (hasHome()) refreshMyPlace(true); }
+      if (st.state === 'granted') refreshMyPlace(true);
       else if (st.state === 'denied') setGeo('denied');
     };
   }).catch(function () {});
 }
 
-// My location clock: keep the place and time zone fresh while the app is open
 function initWorldHome() {
-  // coming back to the app: check the time zone and the place at once
   window.addEventListener('focus', function () {
     checkZoneChange();
     if (hasHome()) refreshMyPlace(false);
   });
-  // while the app stays open, check the place now and then (the phone may be travelling)
   setInterval(function () {
     if (hasHome() && !document.hidden) refreshMyPlace(false);
   }, 10 * 60 * 1000);
 }
 
-// ---- service worker: offline support, notifications, update prompt ----
+/* ---- service worker: offline support, notifications, update prompt ---- */
 function offerUpdate(worker) {
   toast('A new version is ready', {
     sticky: true,
@@ -2129,8 +2394,7 @@ function registerSW() {
     if (updateRequested) location.reload();
   });
 
-  navigator.serviceWorker.getRegistration()
-    .then(function (reg) { return reg || navigator.serviceWorker.register('sw.js'); })
+  navigator.serviceWorker.register('sw.js')
     .then(function (reg) {
       swReg = reg;
       if (reg.waiting && navigator.serviceWorker.controller) offerUpdate(reg.waiting);
@@ -2142,7 +2406,9 @@ function registerSW() {
         });
       });
       setInterval(function () { reg.update().catch(function () {}); }, 60 * 60 * 1000);
+      return navigator.serviceWorker.ready;
     })
+    .then(function (reg) { if (reg) swReg = reg; })
     .catch(function () {});
 }
 
@@ -2189,18 +2455,17 @@ function bindEvents() {
     saveTm(); renderTm();
   };
 
-  // audio can only start after a user gesture
   ['click', 'touchstart'].forEach(function (ev) {
     document.addEventListener(ev, unlockAudio, { passive: true });
   });
 
-  // keep the screen awake: re-acquire the lock when the page comes back
   document.addEventListener('visibilitychange', function () {
     if (document.visibilityState !== 'visible') return;
     if (globalSet.awake) setAwake(true);
-    checkAlarms();                           // catch up on anything that came due while the page slept
+    checkAlarms();
     if (tm.running) renderTm();
     tick();
+    renderUpcoming();
     queueFade();
   });
   document.addEventListener('click', function () {
@@ -2223,9 +2488,10 @@ function initApp() {
   buildWheels();
   renderLaps();
   renderPresets();
-  renderUpcoming();
-  applyDigitMode();        // renders widgets, stopwatch, timer and alarms
+  applyDigitMode();
   syncWheels();
+  syncCountry();           // finds the country, loads holidays, draws the Upcoming list
+  renderUpcoming();
   if (globalSet.awake) setAwake(true);
   initConnection();
   initWorldHome();
@@ -2238,6 +2504,7 @@ function initApp() {
   setInterval(function () { if (sw.running) renderSw(); }, 50);
   setInterval(function () { if (tm.running) renderTm(); }, 200);
   setInterval(renderUpcoming, 60000);
+  setInterval(function () { loadHolidays(detectCountry()); }, 6 * 3600 * 1000);
   setInterval(queueFade, 500);
   requestAnimationFrame(sweepLoop);
 
