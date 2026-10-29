@@ -886,7 +886,7 @@ async function setAwake(on) {
 }
 
 function openSheet(html) {
-  sheet.classList.remove('pop');
+  sheet.classList.remove('pop', 'popl');
   sheet.innerHTML = html;
   sheet.classList.add('open');
   overlay.classList.add('open');
@@ -1068,7 +1068,7 @@ function openEdit(id) {
   h += '<div class="row"><button class="btn" id="up">&#8593; Move up</button><button class="btn" id="down">&#8595; Move down</button></div>';
   h += '<div class="row"><button class="btn danger" id="del">Delete</button><button class="btn" id="done">Done</button></div>';
   openSheet(h);
-
+    sheet.classList.add('popl');   // "+" opens as a popover under the + button   
   function labels() {
     const f = document.getElementById('fmt');
     const r = document.getElementById('rt');
