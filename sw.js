@@ -10,8 +10,8 @@
    ========================================================================== */
 
 // ফাইল বদলালে শুধু এই নম্বরটা বাড়ান (v1 -> v2), তাহলে ইউজার "A new version is ready" দেখবে
-const VERSION = 'v1';
-const SHELL_CACHE = 'clock-shell-' + VERSION;
+const VERSION = 'v2';
+const SHELL_CACHE = 'clock-shell-' + VERSION1;
 const RUNTIME_CACHE = 'clock-runtime-v1';          // ফন্ট: ভার্সন বদলালেও থাকে
 const KEEP = [SHELL_CACHE, RUNTIME_CACHE];
 
