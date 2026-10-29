@@ -6,7 +6,7 @@
     3. Injected styles           12. Stopwatch
     4. Storage                   13. Timer & presets
     5. Audio & ringing           14. Upcoming list (holidays)
-    6. Digits & time HTML        15. Press feedback, nav, settings + add buttons
+    6. Digits & time HTML        15. Press feedback, nav, settings button, plus button
     7. Home widgets              16. Connection, permissions, service worker
        (World clock = search,    17. Init
         My location clock = follows the phone)
@@ -125,8 +125,8 @@ let ringTimer = null;
 let ringSnoozeFn = null;
 let snoozeAt = 0;
 let wakeLock = null;
-let penOut = false;         // settings dots are turned sideways
-let plusOut = false;        // add (+) icon is turned
+let penOut = false;     // settings popover is open (three dots turned sideways)
+let plusOut = false;    // add-widget popover is open (plus turned)
 
 // upcoming-list measuring
 let lastFt = -1, lastFb = -1, lastSh = -1;
@@ -217,17 +217,13 @@ body.light .hcard{background:linear-gradient(150deg,rgba(255,255,255,.88),rgba(2
 #pbTop{top:0;height:calc(var(--ft,34px) + 98px)}
 #pbBot{bottom:calc(var(--fb,92px) - 14px);height:112px}
 
-/* ---- settings: blurred background and a glass panel ---- */
+/* ---- settings and add-widget: blurred background and a glass panel ---- */
 #overlay.open{background:rgba(0,0,0,.28)!important;-webkit-backdrop-filter:blur(14px);backdrop-filter:blur(14px)}
 body.light #overlay.open{background:rgba(255,255,255,.25)!important}
 #sheet{background:rgba(30,32,38,.62)!important;-webkit-backdrop-filter:blur(26px) saturate(1.6);backdrop-filter:blur(26px) saturate(1.6);border:1px solid rgba(255,255,255,.16);box-shadow:0 20px 50px rgba(0,0,0,.45),inset 0 1px 0 rgba(255,255,255,.2)}
 body.light #sheet{background:rgba(255,255,255,.72)!important;border-color:rgba(255,255,255,.85);box-shadow:0 20px 50px rgba(0,0,0,.15),inset 0 1px 0 rgba(255,255,255,.9)}
 @keyframes popIn{from{opacity:0;transform:scale(.86) translateY(-8px)}to{opacity:1;transform:none}}
-@keyframes popInUp{from{opacity:0;transform:scale(.86) translateY(8px)}to{opacity:1;transform:none}}
-#sheet.open.pop{left:auto!important;right:12px!important;bottom:auto!important;top:calc(64px + env(safe-area-inset-top,0px))!important;width:min(90vw,340px);max-height:calc(100vh - 150px);border-radius:24px!important;transform-origin:top right;animation:popIn .28s cubic-bezier(.22,.8,.25,1) both}
-
-/* ---- add widget: pops in right above the + button ---- */
-#sheet.open.pop.popadd{top:auto!important;left:auto!important;right:var(--addr,12px)!important;bottom:var(--addb,150px)!important;max-height:var(--addmax,70vh);overflow-y:auto;transform-origin:bottom right;animation:popInUp .3s cubic-bezier(.22,.8,.25,1) both}
+#sheet.open.pop{left:auto!important;right:12px!important;bottom:auto!important;top:calc(64px + env(safe-area-inset-top,0px))!important;width:min(90vw,340px);max-height:calc(100vh - 150px);overflow-y:auto;border-radius:24px!important;transform-origin:top right;animation:popIn .28s cubic-bezier(.22,.8,.25,1) both}
 
 /* ---- settings button: three dots ---- */
 #cog{width:46px;height:46px;padding:0!important;opacity:1!important;display:flex!important;align-items:center;justify-content:center;font-size:0}
@@ -236,12 +232,9 @@ body.light #sheet{background:rgba(255,255,255,.72)!important;border-color:rgba(2
 #cog.press .dots i{transform:scale(.68)}
 #cog.out .dots{transform:rotate(90deg)}
 
-/* ---- add button: the + turns while the add popover is open ---- */
-#add .plusi{display:flex;align-items:center;justify-content:center;width:100%;height:100%;pointer-events:none;transition:transform .42s cubic-bezier(.3,1.5,.5,1)}
-#add .plusi svg{width:26px;height:26px;display:block}
-#add.press .plusi{transform:scale(.8)}
+/* ---- add button: plus turns while the add-widget popover is open ---- */
+.plusi{position:relative;display:flex;align-items:center;justify-content:center;width:100%;height:100%;pointer-events:none;transition:transform .38s cubic-bezier(.3,1.5,.5,1)}
 #add.out .plusi{transform:rotate(135deg)}
-#add.out.press .plusi{transform:rotate(135deg) scale(.8)}
 
 /* ---- message bubble, permission rows ---- */
 #toast{position:fixed;left:50%;bottom:calc(88px + env(safe-area-inset-bottom,0px));transform:translate(-50%,12px);z-index:70;display:flex;align-items:center;gap:12px;max-width:min(92vw,420px);padding:11px 16px;border-radius:999px;background:rgba(30,32,38,.72);color:#fff;-webkit-backdrop-filter:blur(20px) saturate(1.6);backdrop-filter:blur(20px) saturate(1.6);border:1px solid rgba(255,255,255,.16);box-shadow:0 10px 30px rgba(0,0,0,.4);font-size:14px;line-height:1.3;opacity:0;pointer-events:none;transition:opacity .25s ease,transform .25s ease}
@@ -897,12 +890,20 @@ async function setAwake(on) {
   } catch (e) {}
 }
 
+// Opens the bottom sheet. Settings and Add widget switch it into a popover afterwards (openPopover).
 function openSheet(html) {
   sheet.classList.remove('pop');
-  sheet.classList.remove('popadd');   // the add popover is switched on again only by openAddWidget
+  delete sheet.dataset.kind;
   sheet.innerHTML = html;
   sheet.classList.add('open');
   overlay.classList.add('open');
+}
+
+// popover: kind is 'settings' (under the three dots) or 'add' (the plus button turns)
+function openPopover(kind) {
+  sheet.dataset.kind = kind;
+  sheet.classList.add('pop');
+  sheet.scrollTop = 0;
 }
 
 function closeSheet() {
@@ -927,7 +928,7 @@ function openSettings() {
   h += '<div class="row"><button class="btn" id="permbtn">Permissions &amp; connection</button></div>';
   h += '<div class="row"><button class="btn" id="done">Done</button></div>';
   openSheet(h);
-  sheet.classList.add('pop');   // settings opens as a popover under the dots button
+  openPopover('settings');   // settings opens as a popover under the dots button
   document.getElementById('permbtn').onclick = openPermissions;
 
   function labels() {
@@ -1121,7 +1122,6 @@ function openEdit(id) {
   document.getElementById('done').onclick = closeSheet;
 }
 
-// Add widget: opens as a popover right above the + button (same style as settings).
 function openAddWidget() {
   let h = '<div class="title">Add widget</div>';
   Object.keys(TYPE_NAMES).forEach(function (t) {
@@ -1129,19 +1129,7 @@ function openAddWidget() {
   });
   h += '<div class="row"><button class="btn danger" id="reset">Reset all</button><button class="btn" id="done">Close</button></div>';
   openSheet(h);
-
-  // place the popover just above the + button, growing out of its corner
-  const btn = document.getElementById('add');
-  if (btn) {
-    const r = btn.getBoundingClientRect();
-    const right = Math.max(12, Math.round(window.innerWidth - r.right));
-    const bottom = Math.max(12, Math.round(window.innerHeight - r.top + 12));
-    const maxH = Math.max(220, Math.round(r.top - 12 - 64));
-    sheet.style.setProperty('--addr', right + 'px');
-    sheet.style.setProperty('--addb', bottom + 'px');
-    sheet.style.setProperty('--addmax', maxH + 'px');
-  }
-  sheet.classList.add('pop', 'popadd');
+  openPopover('add');   // opens as a popover, the same way as settings; the plus button turns
 
   sheet.querySelectorAll('[data-t]').forEach(function (b) {
     b.onclick = function () {
@@ -1797,7 +1785,7 @@ function initUpcoming() {
 }
 
 /* ==========================================================================
-   15. PRESS FEEDBACK, BOTTOM BAR, SETTINGS + ADD BUTTONS
+   15. PRESS FEEDBACK, BOTTOM BAR, SETTINGS BUTTON, PLUS BUTTON
    ========================================================================== */
 function lightUp(el) {
   el.classList.remove('lit');
@@ -1844,6 +1832,7 @@ function initNav() {
   }, true);
 }
 
+// three dots turn sideways while the settings popover is open
 function setPenOut(on) {
   if (on === penOut) return;
   penOut = on;
@@ -1852,6 +1841,7 @@ function setPenOut(on) {
   haptic(on ? 8 : 10);
 }
 
+// plus turns while the add-widget popover is open
 function setPlusOut(on) {
   if (on === plusOut) return;
   plusOut = on;
@@ -1876,36 +1866,24 @@ function initSettingsButton() {
   cog.onclick = openSettings;
 }
 
-// The + button: draws its own plus icon, turns while the add popover is open.
+// the plus (add widget) button: its icon is wrapped so it can turn like the three dots
 function initAddButton() {
   const add = document.getElementById('add');
   if (!add) return;
-  add.innerHTML = '<span class="plusi"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" ' +
-    'stroke-width="2.6" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg></span>';
+  if (!add.querySelector('.plusi')) {
+    add.innerHTML = '<span class="plusi">' + (add.innerHTML.trim() || '+') + '</span>';
+  }
   add.setAttribute('aria-label', 'Add widget');
-
-  add.addEventListener('pointerdown', function () {
-    add.classList.add('press');
-  });
-  ['pointerup', 'pointercancel', 'pointerleave'].forEach(function (ev) {
-    add.addEventListener(ev, function () { add.classList.remove('press'); });
-  });
-  add.onclick = function () {
-    // tapping + again while the popover is open closes it (the icon turns back)
-    if (sheet.classList.contains('open') && sheet.classList.contains('popadd')) closeSheet();
-    else openAddWidget();
-  };
 }
 
-// One watcher for both popovers: the dots turn for settings, the + turns for add widget.
-function initPopoverWatcher() {
+// one observer for both popovers: dots turn for settings, plus turns for add widget
+function initPopoverWatch() {
   new MutationObserver(function () {
-    const open = sheet.classList.contains('open');
-    const pop = sheet.classList.contains('pop');
-    const isAdd = sheet.classList.contains('popadd');
-    setPenOut(open && pop && !isAdd);
-    setPlusOut(open && pop && isAdd);
-  }).observe(sheet, { attributes: true, attributeFilter: ['class'] });
+    const open = sheet.classList.contains('open') && sheet.classList.contains('pop');
+    const kind = sheet.dataset.kind || '';
+    setPenOut(open && kind === 'settings');
+    setPlusOut(open && kind === 'add');
+  }).observe(sheet, { attributes: true, attributeFilter: ['class', 'data-kind'] });
 }
 
 /* ==========================================================================
@@ -2181,7 +2159,7 @@ function bindEvents() {
     if (f) f();
   };
 
-  // (the + button is set up in initAddButton)
+  document.getElementById('add').onclick = openAddWidget;
 
   document.getElementById('aPlus').onclick = function () { openAlarmSheet(null); };
   document.getElementById('aEdit').onclick = function () {
@@ -2238,7 +2216,7 @@ function initApp() {
   initNav();
   initSettingsButton();
   initAddButton();
-  initPopoverWatcher();
+  initPopoverWatch();
   initUpcoming();
 
   buildDial();
