@@ -140,7 +140,7 @@ body {
   padding: 16px 20px 28px;
   border-radius: 16px 16px 0 0;
 }
-#sheet.open.popl{left:12px!important;right:auto!important;bottom:auto!important;top:calc(64px + env(safe-area-inset-top,0px))!important;width:min(90vw,340px);max-height:calc(100vh - 150px);border-radius:24px!important;transform-origin:top left;animation:popIn .28s cubic-bezier(.22,.8,.25,1) both}
+#sheet.open { display: block; }
 .title { font-size: 18px; margin-bottom: 4px; }
 .row { margin: 16px 0; }
 .label { font-size: 14px; opacity: 0.6; margin-bottom: 8px; }
@@ -399,8 +399,7 @@ body.light .preset { box-shadow: 0 1px 3px rgba(0, 0, 0, 0.07); }
 #nav { animation: navUp 0.55s var(--ease) 0.1s both; }
 
 #overlay.open { animation: fadeIn 0.25s ease both; }
-#sheet.open { animation: sheetUp 0.3s var(--ease) both; }
-
+#sheet.open.popl{left:12px!important;right:auto!important;bottom:auto!important;top:calc(64px + env(safe-area-inset-top,0px))!important;width:min(90vw,340px);max-height:calc(100vh - 150px);border-radius:24px!important;transform-origin:top left;animation:popIn .28s cubic-bezier(.22,.8,.25,1) both}
 #ring.open { animation: fadeIn 0.3s ease both; }
 #ring.open #ringTitle { animation: rise 0.5s var(--ease) 0.1s both; }
 
