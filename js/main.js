@@ -11,7 +11,7 @@
        (World clock = search,    17. Init
         My location clock = follows the phone)
     8. Theme, wake lock, settings sheet
-    9. Edit / Add widget sheets
+    9. Edit sheet + Add widget menu (own popover, independent of the sheet)
    ========================================================================== */
 
 /* ==========================================================================
@@ -127,6 +127,7 @@ let snoozeAt = 0;
 let wakeLock = null;
 let penOut = false;         // settings dots turned sideways
 let plusOut = false;        // add button turned into a cross
+let addMenuOpen = false;    // add widget menu is showing
 
 // upcoming-list measuring
 let lastFt = -1, lastFb = -1, lastSh = -1;
@@ -225,10 +226,6 @@ body.light #sheet{background:rgba(255,255,255,.72)!important;border-color:rgba(2
 @keyframes popIn{from{opacity:0;transform:scale(.86) translateY(-8px)}to{opacity:1;transform:none}}
 #sheet.open.pop{left:auto!important;right:12px!important;bottom:auto!important;top:calc(64px + env(safe-area-inset-top,0px))!important;width:min(90vw,340px);max-height:calc(100vh - 150px);border-radius:24px!important;transform-origin:top right;animation:popIn .28s cubic-bezier(.22,.8,.25,1) both}
 
-/* ---- add widget: popover right above the + button ---- */
-@keyframes popInUp{from{opacity:0;transform:scale(.86) translateY(10px)}to{opacity:1;transform:none}}
-#sheet.open.popadd{left:auto!important;top:auto!important;right:var(--ar,12px)!important;bottom:var(--ab,150px)!important;width:min(90vw,320px);max-height:min(70vh,520px);overflow-y:auto;border-radius:24px!important;transform-origin:bottom right;animation:popInUp .28s cubic-bezier(.22,.8,.25,1) both}
-
 /* ---- settings button: three dots ---- */
 #cog{width:46px;height:46px;padding:0!important;opacity:1!important;display:flex!important;align-items:center;justify-content:center;font-size:0}
 .dots{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:3px;pointer-events:none;transition:transform .38s cubic-bezier(.3,1.5,.5,1)}
@@ -236,13 +233,29 @@ body.light #sheet{background:rgba(255,255,255,.72)!important;border-color:rgba(2
 #cog.press .dots i{transform:scale(.68)}
 #cog.out .dots{transform:rotate(90deg)}
 
-/* ---- add button: plus turns into a cross ---- */
-#add{font-size:0!important}
+/* ---- add button: plus turns into a cross, and stays sharp above everything ---- */
+#add{font-size:0!important;-webkit-backdrop-filter:none!important;backdrop-filter:none!important}
 #add .plus{position:absolute;left:50%;top:50%;width:22px;height:22px;margin:-11px 0 0 -11px;pointer-events:none;transition:transform .38s cubic-bezier(.3,1.5,.5,1)}
 #add .plus::before,#add .plus::after{content:"";position:absolute;left:0;top:50%;width:22px;height:3px;margin-top:-1.5px;border-radius:2px;background:currentColor;box-shadow:0 1px 1.5px rgba(0,0,0,.35)}
 #add .plus::after{transform:rotate(90deg)}
 #add.press .plus{transform:scale(.8)}
+#add.out{z-index:9100!important}
 #add.out .plus{transform:rotate(135deg)}
+
+/* ---- add widget menu: own popover above the + button (no shared sheet, no blur over the button) ---- */
+#addScrim{position:fixed;inset:0;z-index:9000;display:none;background:transparent;-webkit-tap-highlight-color:transparent;touch-action:none}
+#addScrim.open{display:block}
+#addMenu{position:fixed;right:12px;bottom:150px;z-index:9050;box-sizing:border-box;width:min(90vw,320px);overflow-y:auto;padding:14px;border-radius:24px;background:rgba(30,32,38,.74);color:#fff;-webkit-backdrop-filter:blur(26px) saturate(1.6);backdrop-filter:blur(26px) saturate(1.6);border:1px solid rgba(255,255,255,.16);box-shadow:0 20px 50px rgba(0,0,0,.45),inset 0 1px 0 rgba(255,255,255,.2);opacity:0;visibility:hidden;pointer-events:none;transform:scale(.86) translateY(12px);transform-origin:bottom right;transition:opacity .2s ease,transform .3s cubic-bezier(.22,.8,.25,1),visibility 0s linear .3s}
+#addMenu.open{opacity:1;visibility:visible;pointer-events:auto;transform:none;transition:opacity .2s ease,transform .3s cubic-bezier(.22,.8,.25,1),visibility 0s}
+body.light #addMenu{background:rgba(255,255,255,.84);color:#1c1c1e;border-color:rgba(255,255,255,.9);box-shadow:0 20px 50px rgba(0,0,0,.18),inset 0 1px 0 rgba(255,255,255,.9)}
+#addMenu .am-title{font-size:18px;font-weight:800!important;letter-spacing:-0.03em;margin:2px 4px 10px}
+#addMenu .am-item{display:block;width:100%;box-sizing:border-box;text-align:left;padding:13px 16px;margin:0 0 8px;border-radius:16px;border:1px solid rgba(255,255,255,.14);background:rgba(255,255,255,.09);color:inherit;font-size:15px;-webkit-tap-highlight-color:transparent;transition:transform .12s ease,background-color .12s ease}
+#addMenu .am-item:active{transform:scale(.97);background:rgba(255,255,255,.18)}
+body.light #addMenu .am-item{background:rgba(0,0,0,.05);border-color:rgba(0,0,0,.08)}
+body.light #addMenu .am-item:active{background:rgba(0,0,0,.1)}
+#addMenu .am-row{display:flex;gap:8px;margin-top:4px}
+#addMenu .am-row .am-item{margin:0;text-align:center}
+#addMenu .am-item.danger{color:#ff453a}
 
 /* ---- message bubble, permission rows ---- */
 #toast{position:fixed;left:50%;bottom:calc(88px + env(safe-area-inset-bottom,0px));transform:translate(-50%,12px);z-index:70;display:flex;align-items:center;gap:12px;max-width:min(92vw,420px);padding:11px 16px;border-radius:999px;background:rgba(30,32,38,.72);color:#fff;-webkit-backdrop-filter:blur(20px) saturate(1.6);backdrop-filter:blur(20px) saturate(1.6);border:1px solid rgba(255,255,255,.16);box-shadow:0 10px 30px rgba(0,0,0,.4);font-size:14px;line-height:1.3;opacity:0;pointer-events:none;transition:opacity .25s ease,transform .25s ease}
@@ -898,15 +911,17 @@ async function setAwake(on) {
   } catch (e) {}
 }
 
-// every sheet starts as a normal bottom sheet; settings adds "pop", add widget adds "popadd"
+// every sheet starts as a normal bottom sheet; settings adds "pop"
 function openSheet(html) {
-  sheet.classList.remove('pop', 'popadd');
+  closeAddMenu();                       // never show the add menu and a sheet together
+  sheet.classList.remove('pop');
   sheet.innerHTML = html;
   sheet.classList.add('open');
   overlay.classList.add('open');
 }
 
 function closeSheet() {
+  closeAddMenu();
   sheet.classList.remove('open');
   overlay.classList.remove('open');
 }
@@ -972,7 +987,7 @@ function openSettings() {
 }
 
 /* ==========================================================================
-   9. EDIT / ADD WIDGET SHEETS
+   9. EDIT SHEET + ADD WIDGET MENU
    ========================================================================== */
 // the part of the edit sheet that belongs to the World clock (search) and My location clock
 function worldEditHtml(w) {
@@ -1122,38 +1137,93 @@ function openEdit(id) {
   document.getElementById('done').onclick = closeSheet;
 }
 
-// Add widget: opens as a popover right above the + button, the plus turns into a cross
-function openAddWidget() {
-  let h = '<div class="title">Add widget</div>';
+/* ---- Add widget menu ----
+   Its own popover (not the shared sheet): it opens right above the + button, the + turns
+   into a cross, and the button stays above everything so it is never covered or blurred. */
+function ensureAddMenu() {
+  let scrim = document.getElementById('addScrim');
+  let menu = document.getElementById('addMenu');
+  if (scrim && menu) return menu;
+
+  scrim = document.createElement('div');
+  scrim.id = 'addScrim';
+  scrim.addEventListener('click', function () { closeAddMenu(); });
+
+  menu = document.createElement('div');
+  menu.id = 'addMenu';
+  menu.setAttribute('role', 'menu');
+
+  let h = '<div class="am-title">Add widget</div>';
   Object.keys(TYPE_NAMES).forEach(function (t) {
-    h += '<button class="btn block" data-t="' + t + '">' + TYPE_NAMES[t] + '</button>';
+    h += '<button type="button" class="am-item" data-t="' + t + '">' + TYPE_NAMES[t] + '</button>';
   });
-  h += '<div class="row"><button class="btn danger" id="reset">Reset all</button><button class="btn" id="done">Close</button></div>';
-  openSheet(h);
+  h += '<div class="am-row">' +
+    '<button type="button" class="am-item danger" id="amReset">Reset all</button>' +
+    '<button type="button" class="am-item" id="amClose">Close</button></div>';
+  menu.innerHTML = h;
 
-  // place the popover above the + button, aligned to its right edge
-  const addBtn = document.getElementById('add');
-  if (addBtn) {
-    const r = addBtn.getBoundingClientRect();
-    sheet.style.setProperty('--ar', Math.max(12, Math.round(window.innerWidth - r.right)) + 'px');
-    sheet.style.setProperty('--ab', Math.round(window.innerHeight - r.top + 12) + 'px');
-  }
-  sheet.classList.add('popadd');
-
-  sheet.querySelectorAll('[data-t]').forEach(function (b) {
-    b.onclick = function () {
+  menu.querySelectorAll('[data-t]').forEach(function (b) {
+    b.addEventListener('click', function () {
       widgets.push(newWidget(b.dataset.t));
-      saveWidgets(); closeSheet(); renderAll();
+      saveWidgets();
+      closeAddMenu();
+      renderAll();
       window.scrollTo(0, document.body.scrollHeight);
-    };
+    });
   });
-  document.getElementById('reset').onclick = function () {
+  menu.querySelector('#amReset').addEventListener('click', function () {
     if (confirm('Reset all widgets to default?')) {
       widgets = defaultWidgets();
-      saveWidgets(); closeSheet(); renderAll();
+      saveWidgets();
+      closeAddMenu();
+      renderAll();
     }
-  };
-  document.getElementById('done').onclick = closeSheet;
+  });
+  menu.querySelector('#amClose').addEventListener('click', function () { closeAddMenu(); });
+
+  document.body.appendChild(scrim);
+  document.body.appendChild(menu);
+  return menu;
+}
+
+function openAddMenu() {
+  const add = document.getElementById('add');
+  if (!add) return;
+  closeSheet();                          // close any other sheet first
+
+  // the button needs a position so that its z-index works while the menu is open
+  if (window.getComputedStyle(add).position === 'static') add.style.position = 'relative';
+
+  const menu = ensureAddMenu();
+  const scrim = document.getElementById('addScrim');
+
+  // place the menu above the + button, aligned to its right edge
+  const r = add.getBoundingClientRect();
+  menu.style.right = Math.max(12, Math.round(window.innerWidth - r.right)) + 'px';
+  menu.style.bottom = Math.round(window.innerHeight - r.top + 12) + 'px';
+  menu.style.maxHeight = Math.max(160, Math.round(r.top - 24)) + 'px';
+  menu.scrollTop = 0;
+
+  addMenuOpen = true;
+  scrim.classList.add('open');
+  void menu.offsetWidth;                 // make sure the start state is painted, so the animation plays
+  menu.classList.add('open');
+  setPlusOut(true);
+}
+
+function closeAddMenu() {
+  if (!addMenuOpen) return;
+  addMenuOpen = false;
+  const menu = document.getElementById('addMenu');
+  const scrim = document.getElementById('addScrim');
+  if (menu) menu.classList.remove('open');
+  if (scrim) scrim.classList.remove('open');
+  setPlusOut(false);
+}
+
+function toggleAddMenu() {
+  if (addMenuOpen) closeAddMenu();
+  else openAddMenu();
 }
 
 /* ==========================================================================
@@ -1167,7 +1237,7 @@ function showTab(name) {
   // flex keeps the plus exactly in the middle of the round button
   document.getElementById('add').style.display = name === 'home' ? 'flex' : 'none';
   window.scrollTo(0, 0);
-  closeSheet();
+  closeSheet();                          // also closes the add menu
   if (name === 'timer') setTimeout(syncWheels, 50);
   if (name === 'home') {
     renderUpcoming();
@@ -1851,7 +1921,7 @@ function setPenOut(on) {
   haptic(on ? 8 : 10);
 }
 
-// the + turns into a cross while the add widget popover is open
+// the + turns into a cross while the add widget menu is open
 function setPlusOut(on) {
   if (on === plusOut) return;
   plusOut = on;
@@ -1881,17 +1951,16 @@ function initSettingsButton() {
   if (add) {
     add.innerHTML = '<span class="plus"></span>';
     add.setAttribute('aria-label', 'Add widget');
+    if (window.getComputedStyle(add).position === 'static') add.style.position = 'relative';
     add.addEventListener('pointerdown', function () { add.classList.add('press'); });
     ['pointerup', 'pointercancel', 'pointerleave'].forEach(function (ev) {
       add.addEventListener(ev, function () { add.classList.remove('press'); });
     });
   }
 
-  // follow the sheet: the dots and the plus animate by themselves whenever it opens or closes
+  // the dots turn sideways whenever the settings popover opens or closes
   new MutationObserver(function () {
-    const open = sheet.classList.contains('open');
-    setPenOut(open && sheet.classList.contains('pop'));
-    setPlusOut(open && sheet.classList.contains('popadd'));
+    setPenOut(sheet.classList.contains('open') && sheet.classList.contains('pop'));
   }).observe(sheet, { attributes: true, attributeFilter: ['class'] });
 }
 
@@ -2168,7 +2237,7 @@ function bindEvents() {
     if (f) f();
   };
 
-  document.getElementById('add').onclick = openAddWidget;
+  document.getElementById('add').onclick = toggleAddMenu;
 
   document.getElementById('aPlus').onclick = function () { openAlarmSheet(null); };
   document.getElementById('aEdit').onclick = function () {
@@ -2201,6 +2270,11 @@ function bindEvents() {
   // audio can only start after a user gesture
   ['click', 'touchstart'].forEach(function (ev) {
     document.addEventListener(ev, unlockAudio, { passive: true });
+  });
+
+  // Escape closes the add menu or the open sheet
+  document.addEventListener('keydown', function (e) {
+    if (e.key === 'Escape') closeSheet();
   });
 
   // keep the screen awake: re-acquire the lock when the page comes back
