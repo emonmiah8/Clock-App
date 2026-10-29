@@ -6,9 +6,9 @@
     3. Injected styles           12. Stopwatch
     4. Storage                   13. Timer & presets
     5. Audio & ringing           14. Upcoming list (holidays)
-    6. Digits & time HTML        15. Press feedback, nav, settings button
+    6. Digits & time HTML        15. Press feedback, nav, settings + add buttons
     7. Home widgets              16. Connection, permissions, service worker
-       (World clock = search,     17. Init
+       (World clock = search,    17. Init
         My location clock = follows the phone)
     8. Theme, wake lock, settings sheet
     9. Edit / Add widget sheets
@@ -125,7 +125,8 @@ let ringTimer = null;
 let ringSnoozeFn = null;
 let snoozeAt = 0;
 let wakeLock = null;
-let penOut = false;
+let penOut = false;         // settings dots turned sideways
+let plusOut = false;        // add button turned into a cross
 
 // upcoming-list measuring
 let lastFt = -1, lastFb = -1, lastSh = -1;
@@ -221,8 +222,12 @@ body.light .hcard{background:linear-gradient(150deg,rgba(255,255,255,.88),rgba(2
 body.light #overlay.open{background:rgba(255,255,255,.25)!important}
 #sheet{background:rgba(30,32,38,.62)!important;-webkit-backdrop-filter:blur(26px) saturate(1.6);backdrop-filter:blur(26px) saturate(1.6);border:1px solid rgba(255,255,255,.16);box-shadow:0 20px 50px rgba(0,0,0,.45),inset 0 1px 0 rgba(255,255,255,.2)}
 body.light #sheet{background:rgba(255,255,255,.72)!important;border-color:rgba(255,255,255,.85);box-shadow:0 20px 50px rgba(0,0,0,.15),inset 0 1px 0 rgba(255,255,255,.9)}
-@keyframes popIn{from{opacity:0;transform:scale(.86) translateY(-8px)}to{opacity:1;transform:none}
-#sheet.open.popl{left:12px!important;right:auto!important;bottom:auto!important;top:calc(64px + env(safe-area-inset-top,0px))!important;width:min(90vw,340px);max-height:calc(100vh - 150px);border-radius:24px!important;transform-origin:top left;animation:popIn .28s cubic-bezier(.22,.8,.25,1) both}
+@keyframes popIn{from{opacity:0;transform:scale(.86) translateY(-8px)}to{opacity:1;transform:none}}
+#sheet.open.pop{left:auto!important;right:12px!important;bottom:auto!important;top:calc(64px + env(safe-area-inset-top,0px))!important;width:min(90vw,340px);max-height:calc(100vh - 150px);border-radius:24px!important;transform-origin:top right;animation:popIn .28s cubic-bezier(.22,.8,.25,1) both}
+
+/* ---- add widget: popover right above the + button ---- */
+@keyframes popInUp{from{opacity:0;transform:scale(.86) translateY(10px)}to{opacity:1;transform:none}}
+#sheet.open.popadd{left:auto!important;top:auto!important;right:var(--ar,12px)!important;bottom:var(--ab,150px)!important;width:min(90vw,320px);max-height:min(70vh,520px);overflow-y:auto;border-radius:24px!important;transform-origin:bottom right;animation:popInUp .28s cubic-bezier(.22,.8,.25,1) both}
 
 /* ---- settings button: three dots ---- */
 #cog{width:46px;height:46px;padding:0!important;opacity:1!important;display:flex!important;align-items:center;justify-content:center;font-size:0}
@@ -230,6 +235,14 @@ body.light #sheet{background:rgba(255,255,255,.72)!important;border-color:rgba(2
 .dots i{display:block;width:4px;height:4px;border-radius:50%;background:currentColor;transition:transform .16s cubic-bezier(.3,1.8,.5,1),opacity .2s ease}
 #cog.press .dots i{transform:scale(.68)}
 #cog.out .dots{transform:rotate(90deg)}
+
+/* ---- add button: plus turns into a cross ---- */
+#add{font-size:0!important}
+#add .plus{position:absolute;left:50%;top:50%;width:22px;height:22px;margin:-11px 0 0 -11px;pointer-events:none;transition:transform .38s cubic-bezier(.3,1.5,.5,1)}
+#add .plus::before,#add .plus::after{content:"";position:absolute;left:0;top:50%;width:22px;height:3px;margin-top:-1.5px;border-radius:2px;background:currentColor;box-shadow:0 1px 1.5px rgba(0,0,0,.35)}
+#add .plus::after{transform:rotate(90deg)}
+#add.press .plus{transform:scale(.8)}
+#add.out .plus{transform:rotate(135deg)}
 
 /* ---- message bubble, permission rows ---- */
 #toast{position:fixed;left:50%;bottom:calc(88px + env(safe-area-inset-bottom,0px));transform:translate(-50%,12px);z-index:70;display:flex;align-items:center;gap:12px;max-width:min(92vw,420px);padding:11px 16px;border-radius:999px;background:rgba(30,32,38,.72);color:#fff;-webkit-backdrop-filter:blur(20px) saturate(1.6);backdrop-filter:blur(20px) saturate(1.6);border:1px solid rgba(255,255,255,.16);box-shadow:0 10px 30px rgba(0,0,0,.4);font-size:14px;line-height:1.3;opacity:0;pointer-events:none;transition:opacity .25s ease,transform .25s ease}
@@ -885,8 +898,9 @@ async function setAwake(on) {
   } catch (e) {}
 }
 
+// every sheet starts as a normal bottom sheet; settings adds "pop", add widget adds "popadd"
 function openSheet(html) {
-  sheet.classList.remove('pop', 'popl');
+  sheet.classList.remove('pop', 'popadd');
   sheet.innerHTML = html;
   sheet.classList.add('open');
   overlay.classList.add('open');
@@ -1068,7 +1082,7 @@ function openEdit(id) {
   h += '<div class="row"><button class="btn" id="up">&#8593; Move up</button><button class="btn" id="down">&#8595; Move down</button></div>';
   h += '<div class="row"><button class="btn danger" id="del">Delete</button><button class="btn" id="done">Done</button></div>';
   openSheet(h);
-    sheet.classList.add('popl');   // "+" opens as a popover under the + button   
+
   function labels() {
     const f = document.getElementById('fmt');
     const r = document.getElementById('rt');
@@ -1108,6 +1122,7 @@ function openEdit(id) {
   document.getElementById('done').onclick = closeSheet;
 }
 
+// Add widget: opens as a popover right above the + button, the plus turns into a cross
 function openAddWidget() {
   let h = '<div class="title">Add widget</div>';
   Object.keys(TYPE_NAMES).forEach(function (t) {
@@ -1115,6 +1130,15 @@ function openAddWidget() {
   });
   h += '<div class="row"><button class="btn danger" id="reset">Reset all</button><button class="btn" id="done">Close</button></div>';
   openSheet(h);
+
+  // place the popover above the + button, aligned to its right edge
+  const addBtn = document.getElementById('add');
+  if (addBtn) {
+    const r = addBtn.getBoundingClientRect();
+    sheet.style.setProperty('--ar', Math.max(12, Math.round(window.innerWidth - r.right)) + 'px');
+    sheet.style.setProperty('--ab', Math.round(window.innerHeight - r.top + 12) + 'px');
+  }
+  sheet.classList.add('popadd');
 
   sheet.querySelectorAll('[data-t]').forEach(function (b) {
     b.onclick = function () {
@@ -1140,7 +1164,8 @@ function showTab(name) {
     document.getElementById('v-' + t).classList.toggle('active', t === name);
     document.querySelector('#nav [data-tab="' + t + '"]').classList.toggle('active', t === name);
   });
-  document.getElementById('add').style.display = name === 'home' ? 'block' : 'none';
+  // flex keeps the plus exactly in the middle of the round button
+  document.getElementById('add').style.display = name === 'home' ? 'flex' : 'none';
   window.scrollTo(0, 0);
   closeSheet();
   if (name === 'timer') setTimeout(syncWheels, 50);
@@ -1770,7 +1795,7 @@ function initUpcoming() {
 }
 
 /* ==========================================================================
-   15. PRESS FEEDBACK, BOTTOM BAR, SETTINGS BUTTON
+   15. PRESS FEEDBACK, BOTTOM BAR, SETTINGS + ADD BUTTONS
    ========================================================================== */
 function lightUp(el) {
   el.classList.remove('lit');
@@ -1817,6 +1842,7 @@ function initNav() {
   }, true);
 }
 
+// settings dots turn sideways while the settings popover is open
 function setPenOut(on) {
   if (on === penOut) return;
   penOut = on;
@@ -1825,24 +1851,47 @@ function setPenOut(on) {
   haptic(on ? 8 : 10);
 }
 
+// the + turns into a cross while the add widget popover is open
+function setPlusOut(on) {
+  if (on === plusOut) return;
+  plusOut = on;
+  const a = document.getElementById('add');
+  if (a) a.classList.toggle('out', on);
+  haptic(on ? 8 : 10);
+}
+
 function initSettingsButton() {
+  // ---- settings button (three dots) ----
   const cog = document.getElementById('cog');
-  if (!cog) return;
-  cog.innerHTML = '<span class="dots"><i></i><i></i><i></i></span>';
-  cog.setAttribute('aria-label', 'Settings');
+  if (cog) {
+    cog.innerHTML = '<span class="dots"><i></i><i></i><i></i></span>';
+    cog.setAttribute('aria-label', 'Settings');
+    cog.addEventListener('pointerdown', function () {
+      cog.classList.add('press');
+      haptic(10);
+    });
+    ['pointerup', 'pointercancel', 'pointerleave'].forEach(function (ev) {
+      cog.addEventListener(ev, function () { cog.classList.remove('press'); });
+    });
+    cog.onclick = openSettings;
+  }
 
-  cog.addEventListener('pointerdown', function () {
-    cog.classList.add('press');
-    haptic(10);
-  });
-  ['pointerup', 'pointercancel', 'pointerleave'].forEach(function (ev) {
-    cog.addEventListener(ev, function () { cog.classList.remove('press'); });
-  });
-  cog.onclick = openSettings;
+  // ---- add button (plus) ----
+  const add = document.getElementById('add');
+  if (add) {
+    add.innerHTML = '<span class="plus"></span>';
+    add.setAttribute('aria-label', 'Add widget');
+    add.addEventListener('pointerdown', function () { add.classList.add('press'); });
+    ['pointerup', 'pointercancel', 'pointerleave'].forEach(function (ev) {
+      add.addEventListener(ev, function () { add.classList.remove('press'); });
+    });
+  }
 
-  // the dots turn sideways while the settings popover is open
+  // follow the sheet: the dots and the plus animate by themselves whenever it opens or closes
   new MutationObserver(function () {
-    setPenOut(sheet.classList.contains('open') && sheet.classList.contains('pop'));
+    const open = sheet.classList.contains('open');
+    setPenOut(open && sheet.classList.contains('pop'));
+    setPlusOut(open && sheet.classList.contains('popadd'));
   }).observe(sheet, { attributes: true, attributeFilter: ['class'] });
 }
 
