@@ -1,7 +1,7 @@
 /* ==========================================================================
    CLOCK APP - main.js
    1 Config & state        7 Home widgets            13 Timer & presets
-   2 Helpers & icons       8 Sheet system, settings  14 Upcoming dates
+   2 Helpers & icons       8 Sheet system, settings  14 Upcoming (dynamic)
    3 Injected styles       9 Edit / Add widget       15 Press feedback, nav
    4 Storage              10 Tabs                    16 Connection, permissions, SW
    5 Tones & ringing      11 Alarms                  17 Init
@@ -21,11 +21,14 @@ const PLASKED = 'clockPlaceAsked';
 const NOTIF_ASKED = 'clockNotifAsked';
 const CUSTOM_KEY = 'customUpcomingEvents';
 const HKEY = 'clockHol_';
+const IPKEY = 'clockIpCc';
 const GEO_URL = 'https://geocoding-api.open-meteo.com/v1/search';
 const REVERSE_URL = 'https://api.bigdatacloud.net/data/reverse-geocode-client';
 const HOL_URL = 'https://date.nager.at/api/v3/PublicHolidays/';
+const PACK_URL = 'days/';                      // fallback: days/BD.json, days/IN.json ...
 const PLACE_FRESH_MS = 20 * 60 * 1000;
-const HOL_TTL = 30 * 24 * 3600 * 1000;
+const HOL_TTL = 7 * 24 * 3600 * 1000;          // holidays refresh by themselves every 7 days
+const RETRY_TTL = 24 * 3600 * 1000;            // no data found: ask again after 1 day
 
 const RETRO = ['#4aa3d8', '#ef5b55', '#f4f1ea'];
 const COLORS = ['#ffffff', '#4fc3f7', '#81c784', '#ffb74d', '#f06292'];
@@ -58,7 +61,6 @@ let zoneIndex = null;
 const searchCache = {};
 const searchKeys = [];
 let swReg = null;
-let updateRequested = false;
 let toastTimer = null;
 let closeTimer = null;
 
@@ -428,8 +430,6 @@ function toneName(id) {
   if (id === 'custom') return globalSet.customName || 'Custom tone';
   return toneById(id).name;
 }
-
-function toneOf(kind) { return kind === 'alarm' ? globalSet.alarmTone : globalSet.timerTone; }
 
 function unlockAudio() {
   try {
@@ -1798,32 +1798,14 @@ function openPresetSheet(origin) {
 }
 
 /* ==========================================================================
-   14. UPCOMING  (country-aware, works offline)
-   Sources: public holidays (saved after first download) + built-in national
-   days + Islamic calendar events + your own dates.
+   14. UPCOMING  (dynamic: all countries, updates itself over the internet)
+   --------------------------------------------------------------------------
+   Country : your choice in Settings, otherwise GPS -> internet (IP) -> time zone -> language
+   Dates   : a) holidays of the country: Nager.Date, else your pack file days/XX.json
+                (saved on the phone, refreshed every 7 days, works offline)
+             b) Islamic calendar events worked out by the browser
+             c) your own dates
    ========================================================================== */
-const COUNTRIES = ('AD AF AL AR AT AU AZ BA BB BD BE BG BH BN BO BR BS BW BY BZ CA CD CH CL CN CO CR CU CY CZ DE DK DO DZ EC EE EG ES ET ' +
-  'FI FR GB GE GH GR GT HK HN HR HT HU ID IE IN IQ IR IS IT JM JO JP KE KG KH KR KW KZ LA LB LK LT LU LV LY MA MD ME MK MM MN MT MV MX MY ' +
-  'NA NG NI NL NO NP NZ OM PA PE PG PH PK PL PR PT PY QA RO RS RU SA SD SE SG SI SK SN SY TH TJ TN TR TZ UA UG US UY UZ VE VN YE ZA ZW').split(' ');
-
-const CC_TZ = {};
-('Asia/Dhaka:BD,Asia/Kolkata:IN,Asia/Calcutta:IN,Asia/Karachi:PK,Asia/Kathmandu:NP,Asia/Katmandu:NP,Asia/Colombo:LK,Asia/Riyadh:SA,' +
- 'Asia/Dubai:AE,Asia/Qatar:QA,Asia/Kuwait:KW,Asia/Muscat:OM,Asia/Bahrain:BH,Asia/Baghdad:IQ,Asia/Tehran:IR,Asia/Kabul:AF,Asia/Amman:JO,' +
- 'Asia/Beirut:LB,Asia/Damascus:SY,Asia/Aden:YE,Asia/Jakarta:ID,Asia/Makassar:ID,Asia/Jayapura:ID,Asia/Pontianak:ID,Asia/Kuala_Lumpur:MY,' +
- 'Asia/Kuching:MY,Asia/Singapore:SG,Asia/Bangkok:TH,Asia/Manila:PH,Asia/Ho_Chi_Minh:VN,Asia/Saigon:VN,Asia/Yangon:MM,Asia/Rangoon:MM,' +
- 'Asia/Phnom_Penh:KH,Asia/Vientiane:LA,Asia/Brunei:BN,Indian/Maldives:MV,Asia/Tokyo:JP,Asia/Seoul:KR,Asia/Shanghai:CN,Asia/Hong_Kong:HK,' +
- 'Asia/Ulaanbaatar:MN,Asia/Tashkent:UZ,Asia/Dushanbe:TJ,Asia/Bishkek:KG,Asia/Baku:AZ,Asia/Tbilisi:GE,Asia/Almaty:KZ,Europe/Istanbul:TR,' +
- 'Africa/Cairo:EG,Africa/Casablanca:MA,Africa/Algiers:DZ,Africa/Tunis:TN,Africa/Tripoli:LY,Africa/Khartoum:SD,Africa/Dakar:SN,' +
- 'Africa/Lagos:NG,Africa/Nairobi:KE,Africa/Addis_Ababa:ET,Africa/Accra:GH,Africa/Dar_es_Salaam:TZ,Africa/Kampala:UG,' +
- 'Africa/Johannesburg:ZA,Africa/Harare:ZW,Europe/London:GB,Europe/Dublin:IE,Europe/Paris:FR,Europe/Berlin:DE,Europe/Madrid:ES,' +
- 'Europe/Rome:IT,Europe/Amsterdam:NL,Europe/Brussels:BE,Europe/Zurich:CH,Europe/Vienna:AT,Europe/Stockholm:SE,Europe/Oslo:NO,' +
- 'Europe/Copenhagen:DK,Europe/Helsinki:FI,Europe/Warsaw:PL,Europe/Prague:CZ,Europe/Budapest:HU,Europe/Athens:GR,Europe/Lisbon:PT,' +
- 'Europe/Moscow:RU,Europe/Kiev:UA,Europe/Kyiv:UA,Europe/Bucharest:RO,Europe/Sofia:BG,Australia/Sydney:AU,Australia/Melbourne:AU,' +
- 'Australia/Brisbane:AU,Australia/Perth:AU,Australia/Adelaide:AU,Pacific/Auckland:NZ,America/New_York:US,America/Chicago:US,' +
- 'America/Denver:US,America/Los_Angeles:US,America/Phoenix:US,America/Anchorage:US,Pacific/Honolulu:US,America/Toronto:CA,' +
- 'America/Vancouver:CA,America/Mexico_City:MX,America/Sao_Paulo:BR,America/Argentina/Buenos_Aires:AR,America/Bogota:CO,' +
- 'America/Lima:PE,America/Santiago:CL').split(',').forEach(function (p) { const a = p.split(':'); CC_TZ[a[0]] = a[1]; });
-
 const MUSLIM = new Set(('BD PK IN SA AE EG QA KW OM BH JO LB IQ IR AF UZ TJ KG AZ TR ID MY BN MV MA DZ TN LY YE SY PS SD SN NG LK').split(' '));
 const MOON_LATE = new Set(['BD', 'IN', 'PK']);
 const ARABIC = new Set(('SA AE EG QA KW OM BH JO LB IQ MA DZ TN LY YE SY PS SD').split(' '));
@@ -1845,102 +1827,76 @@ const HIJRI = [
 const ISL_RE = /eid|id al|id-|fitr|adha|ramadan|ramazan|arafah|arafat|ashura|mawlid|maulid|barat|qadr|mi.?raj|isra|islamic new|hijri|muharram|bayram|kurban|idul|lebaran|nuzul|raya/i;
 const REL_RE = /christmas|easter|good friday|epiphany|ascension|pentecost|whit|corpus|assumption|all saints|all souls|immaculate|diwali|deepavali|holi\b|vesak|buddha|navratri|dussehra|durga|janmashtami|ramadan|eid|fitr|adha|ashura|mawlid|passover|hanukkah|yom kippur|rosh hashan|nyepi|waisak|thaipusam|boxing|palm sunday|maundy/i;
 
-// [month, day, English, local-language name, type]
-const COUNTRY_DAYS = {
-  BD: [
-    [1, 1, 'New Year’s Day', 'ইংরেজি নববর্ষ', 'i'],
-    [2, 13, 'Pohela Falgun', 'পহেলা ফাল্গুন', 'i'],
-    [2, 21, 'Shaheed Day', 'শহীদ ও মাতৃভাষা দিবস', 'h'],
-    [3, 8, 'Women’s Day', 'আন্তর্জাতিক নারী দিবস', 'i'],
-    [3, 17, 'Sheikh Mujib’s Birthday', 'জাতীয় শিশু দিবস', 'i'],
-    [3, 25, 'Genocide Remembrance Day', 'গণহত্যা দিবস', 'i'],
-    [3, 26, 'Independence Day', 'স্বাধীনতা দিবস', 'h'],
-    [4, 14, 'Pohela Boishakh', 'পহেলা বৈশাখ', 'h'],
-    [4, 17, 'Mujibnagar Day', 'মুজিবনগর দিবস', 'i'],
-    [5, 1, 'May Day', 'মে দিবস', 'h'],
-    [8, 5, 'July Uprising Day', 'জুলাই গণ-অভ্যুত্থান দিবস', 'h'],
-    [11, 7, 'Solidarity Day', 'সংহতি দিবস', 'i'],
-    [12, 10, 'Human Rights Day', 'মানবাধিকার দিবস', 'i'],
-    [12, 14, 'Martyred Intellectuals Day', 'শহীদ বুদ্ধিজীবী দিবস', 'i'],
-    [12, 16, 'Victory Day', 'বিজয় দিবস', 'h'],
-    [12, 25, 'Christmas Day', 'বড়দিন', 'r']
-  ],
-  IN: [
-    [1, 1, 'New Year’s Day', '', 'i'],
-    [1, 23, 'Netaji Subhas Chandra Bose Jayanti', 'नेताजी जयंती', 'i'],
-    [1, 26, 'Republic Day', 'गणतंत्र दिवस', 'h'],
-    [4, 14, 'Ambedkar Jayanti', 'अंबेडकर जयंती', 'h'],
-    [5, 1, 'Labour Day', 'मज़दूर दिवस', 'i'],
-    [8, 15, 'Independence Day', 'स्वतंत्रता दिवस', 'h'],
-    [9, 5, 'Teachers’ Day', 'शिक्षक दिवस', 'i'],
-    [10, 2, 'Gandhi Jayanti', 'गांधी जयंती', 'h'],
-    [11, 14, 'Children’s Day', 'बाल दिवस', 'i'],
-    [11, 26, 'Constitution Day', 'संविधान दिवस', 'i'],
-    [12, 25, 'Christmas Day', 'क्रिसमस', 'r']
-  ],
-  PK: [
-    [2, 5, 'Kashmir Solidarity Day', 'یوم یکجہتی کشمیر', 'i'],
-    [3, 23, 'Pakistan Day', 'یوم پاکستان', 'h'],
-    [5, 1, 'Labour Day', 'یوم مزدور', 'h'],
-    [5, 28, 'Youm-e-Takbir', 'یوم تکبیر', 'i'],
-    [8, 14, 'Independence Day', 'یوم آزادی', 'h'],
-    [9, 6, 'Defence Day', 'یوم دفاع', 'i'],
-    [11, 9, 'Iqbal Day', 'یوم اقبال', 'i'],
-    [12, 25, 'Quaid-e-Azam Day', 'یوم قائد', 'h']
-  ],
-  LK: [
-    [2, 4, 'Independence Day', '', 'h'],
-    [5, 1, 'May Day', '', 'h'],
-    [12, 25, 'Christmas Day', '', 'r']
-  ],
-  SA: [
-    [2, 22, 'Founding Day', 'يوم التأسيس', 'h'],
-    [9, 23, 'National Day', 'اليوم الوطني', 'h']
-  ],
-  AE: [
-    [1, 1, 'New Year’s Day', '', 'h'],
-    [11, 30, 'Commemoration Day', 'يوم الشهيد', 'i'],
-    [12, 2, 'National Day', 'اليوم الوطني', 'h']
-  ],
-  MY: [
-    [1, 1, 'New Year’s Day', '', 'h'],
-    [5, 1, 'Labour Day', 'Hari Pekerja', 'h'],
-    [8, 31, 'Merdeka Day', 'Hari Merdeka', 'h'],
-    [9, 16, 'Malaysia Day', 'Hari Malaysia', 'h'],
-    [12, 25, 'Christmas Day', '', 'r']
-  ],
-  US: [
-    [6, 14, 'Flag Day', '', 'i'],
-    [9, 11, 'Patriot Day', '', 'i'],
-    [9, 17, 'Constitution Day', '', 'i'],
-    [12, 7, 'Pearl Harbor Remembrance Day', '', 'i']
-  ],
-  GB: [
-    [4, 23, 'St George’s Day', '', 'i'],
-    [6, 6, 'D-Day Anniversary', '', 'i'],
-    [11, 5, 'Bonfire Night', '', 'i'],
-    [11, 11, 'Remembrance Day', '', 'i']
-  ]
-};
-
-const GLOBAL_DAYS = [
-  [1, 1, 'New Year’s Day', '', 'i'],
-  [2, 21, 'International Mother Language Day', '', 'i'],
-  [3, 8, 'International Women’s Day', '', 'i'],
-  [4, 22, 'Earth Day', '', 'i'],
-  [5, 1, 'Labour Day', '', 'i'],
-  [6, 5, 'World Environment Day', '', 'i'],
-  [12, 10, 'Human Rights Day', '', 'i']
-];
-
 let hijriCache = { key: '', list: [] };
 let lastCc = null;
+let countryCache = null;
+let zoneMap = null;
+let ipPlace = loadIpPlace();
+let ipBusy = false;
 const holBusy = {};
+
+/* ---- all countries: the list is made by the browser, no fixed table ---- */
+function countryList() {
+  if (countryCache) return countryCache;
+  const skip = { ZZ: 1, XA: 1, XB: 1, QO: 1, EU: 1, UN: 1, EZ: 1 };
+  const out = [];
+  let dn = null;
+  try { dn = new Intl.DisplayNames(['en'], { type: 'region' }); } catch (e) {}
+  if (dn) {
+    for (let a = 65; a <= 90; a++) {
+      for (let b = 65; b <= 90; b++) {
+        const cc = String.fromCharCode(a, b);
+        if (skip[cc]) continue;
+        let n = '';
+        try { n = dn.of(cc); } catch (e) {}
+        if (n && n !== cc) out.push({ c: cc, n: n });
+      }
+    }
+  }
+  out.sort(function (x, y) { return x.n.localeCompare(y.n); });
+  countryCache = out;
+  return out;
+}
+
+function countryName(cc) {
+  if (!cc) return '';
+  try { return new Intl.DisplayNames(['en'], { type: 'region' }).of(cc) || cc; } catch (e) { return cc; }
+}
+
+function flagOf(cc) {
+  if (!cc || cc.length !== 2) return '';
+  try { return String.fromCodePoint(127397 + cc.charCodeAt(0), 127397 + cc.charCodeAt(1)); } catch (e) { return ''; }
+}
+
+/* ---- which country? GPS -> internet (IP) -> time zone -> language ---- */
+function loadIpPlace() {
+  try {
+    const p = JSON.parse(localStorage.getItem(IPKEY));
+    if (p && typeof p.cc === 'string') return p;
+  } catch (e) {}
+  return { cc: '', tz: '', ts: 0 };
+}
+
+function zoneCountry(z) {
+  if (!zoneMap) {
+    zoneMap = {};
+    countryList().forEach(function (x) {
+      try {
+        const l = new Intl.Locale('en-' + x.c);
+        const zs = l.getTimeZones ? l.getTimeZones() : (l.timeZones || []);
+        zs.forEach(function (t) { if (!zoneMap[t]) zoneMap[t] = x.c; });
+      } catch (e) {}
+    });
+  }
+  return zoneMap[z] || '';
+}
 
 function autoCountry() {
   const dz = deviceZone();
   if (myPlace.cc && myPlace.tz === dz) return myPlace.cc;
-  if (CC_TZ[dz]) return CC_TZ[dz];
+  if (ipPlace.cc && ipPlace.tz === dz) return ipPlace.cc;
+  const zc = zoneCountry(dz);
+  if (zc) return zc;
   const langs = (navigator.languages && navigator.languages.length) ? navigator.languages : [navigator.language || ''];
   for (let i = 0; i < langs.length; i++) {
     const m = /[-_]([A-Za-z]{2})$/.exec(String(langs[i]));
@@ -1955,18 +1911,30 @@ function detectCountry() {
   return autoCountry();
 }
 
-function countryName(cc) {
-  if (!cc) return '';
-  try { return new Intl.DisplayNames(['en'], { type: 'region' }).of(cc) || cc; } catch (e) { return cc; }
-}
-
-function flagOf(cc) {
-  if (!cc || cc.length !== 2) return '';
-  try { return String.fromCodePoint(127397 + cc.charCodeAt(0), 127397 + cc.charCodeAt(1)); } catch (e) { return ''; }
+// country from the internet connection (works without the GPS permission)
+function ensureIpCountry() {
+  const dz = deviceZone();
+  if (ipBusy || navigator.onLine === false) return;
+  if (myPlace.cc && myPlace.tz === dz) return;
+  if (ipPlace.cc && ipPlace.tz === dz && Date.now() - ipPlace.ts < HOL_TTL) return;
+  ipBusy = true;
+  fetchJson(REVERSE_URL + '?localityLanguage=en', { timeout: 8000, retries: 0 })
+    .then(function (d) {
+      const cc = d && d.countryCode ? String(d.countryCode).toUpperCase() : '';
+      if (!cc) return;
+      ipPlace = { cc: cc, tz: deviceZone(), ts: Date.now() };
+      try { localStorage.setItem(IPKEY, JSON.stringify(ipPlace)); } catch (e) {}
+    })
+    .catch(function () {})
+    .then(function () {
+      ipBusy = false;
+      if (detectCountry() !== lastCc) syncCountry();
+    });
 }
 
 function syncCountry() {
   const cc = detectCountry();
+  ensureIpCountry();
   if (cc === lastCc) return;
   lastCc = cc;
   hijriCache.key = '';
@@ -1974,6 +1942,7 @@ function syncCountry() {
   renderUpcoming();
 }
 
+/* ---- holidays: Nager.Date -> your pack file (days/XX.json) -> saved on the phone ---- */
 function readHol(cc, y) {
   try {
     const o = JSON.parse(localStorage.getItem(HKEY + cc + '_' + y));
@@ -1982,27 +1951,72 @@ function readHol(cc, y) {
   return null;
 }
 
-function loadHolidays(cc) {
+function saveHol(cc, y, list) {
+  try {
+    localStorage.setItem(HKEY + cc + '_' + y, JSON.stringify({ ts: Date.now(), ttl: list.length ? HOL_TTL : RETRY_TTL, list: list }));
+  } catch (e) {}
+}
+
+function holExpired(c) { return !c || Date.now() - c.ts > (c.ttl || HOL_TTL); }
+
+function isTemp(e) { return !!e && (e.kind === 'offline' || e.kind === 'timeout' || (e.kind === 'http' && e.status >= 500)); }
+
+// pack file: [{"m":3,"d":26,"n":"Independence Day","l":"...","t":"h"}]  (every year)
+//            [{"date":"2027-03-30","n":"Eid-ul-Fitr","t":"h"}]          (one date)
+function expandPack(data, yr) {
+  const arr = Array.isArray(data) ? data : ((data && data.items) || []);
+  const out = [];
+  arr.forEach(function (x) {
+    if (!x || !x.n) return;
+    let d = '';
+    if (x.date) {
+      if (String(x.date).slice(0, 4) !== String(yr)) return;
+      d = String(x.date);
+    } else if (x.m && x.d) {
+      d = yr + '-' + pad(x.m) + '-' + pad(x.d);
+    } else return;
+    out.push({ d: d, n: x.n, l: x.l || '', c: x.t || 'i', t: [] });
+  });
+  return out;
+}
+
+function fetchHol(cc, yr) {
+  return fetchJson(HOL_URL + yr + '/' + cc, { timeout: 10000, retries: 1 })
+    .then(function (d) {
+      return Array.isArray(d) ? d.map(function (x) {
+        return { d: x.date, n: x.name || '', l: x.localName || '', t: x.types || [] };
+      }) : [];
+    })
+    .catch(function (e) {
+      if (isTemp(e)) throw e;
+      return [];
+    })
+    .then(function (list) {
+      if (list.length) return list;
+      return fetchJson(PACK_URL + cc + '.json', { timeout: 8000, retries: 0 })
+        .then(function (d) { return expandPack(d, yr); })
+        .catch(function (e) {
+          if (isTemp(e)) throw e;
+          return [];
+        });
+    });
+}
+
+function loadHolidays(cc, force) {
   if (!cc || navigator.onLine === false) return;
   const y = new Date().getFullYear();
   [y, y + 1].forEach(function (yr) {
     const c = readHol(cc, yr);
-    if (c && Date.now() - c.ts < HOL_TTL) return;
+    if (!force && !holExpired(c)) return;
     const k = cc + yr;
     if (holBusy[k]) return;
     holBusy[k] = 1;
-    fetchJson(HOL_URL + yr + '/' + cc, { timeout: 10000, retries: 1 })
-      .then(function (d) {
-        const list = Array.isArray(d) ? d.map(function (x) {
-          return { d: x.date, n: x.name || '', l: x.localName || '', t: x.types || [] };
-        }) : [];
-        try { localStorage.setItem(HKEY + cc + '_' + yr, JSON.stringify({ ts: Date.now(), list: list })); } catch (e) {}
+    fetchHol(cc, yr)
+      .then(function (list) {
+        if (!list.length && c && c.list.length) { saveHol(cc, yr, c.list); return; }   // keep the old copy
+        saveHol(cc, yr, list);
       })
-      .catch(function (e) {
-        if (e && e.status && e.status < 500) {
-          try { localStorage.setItem(HKEY + cc + '_' + yr, JSON.stringify({ ts: Date.now(), list: [] })); } catch (x) {}
-        }
-      })
+      .catch(function () {})                                                        // temporary problem: try again later
       .then(function () {
         delete holBusy[k];
         if (cc === detectCountry()) renderUpcoming();
@@ -2010,6 +2024,7 @@ function loadHolidays(cc) {
   });
 }
 
+/* ---- Islamic calendar events (worked out by the browser, moves every year) ---- */
 function islamicFormatter() {
   const cals = ['islamic-umalqura', 'islamic-civil', 'islamic'];
   for (let i = 0; i < cals.length; i++) {
@@ -2047,6 +2062,7 @@ function hijriUpcoming(today, cc) {
   return list;
 }
 
+/* ---- your own dates ---- */
 function loadCustom() {
   try {
     const c = JSON.parse(localStorage.getItem(CUSTOM_KEY));
@@ -2056,6 +2072,7 @@ function loadCustom() {
 }
 function saveCustom(list) { try { localStorage.setItem(CUSTOM_KEY, JSON.stringify(list)); } catch (e) {} }
 
+/* ---- build the list ---- */
 function getUpcoming(today) {
   const cc = detectCountry();
   const y = today.getFullYear();
@@ -2074,6 +2091,7 @@ function getUpcoming(today) {
     push(dt, n, b, t, false);
   }
 
+  // a) holidays of the country (internet copy saved on the phone)
   if (cc) {
     for (let yr = y; yr <= y + 1; yr++) {
       const c = readHol(cc, yr);
@@ -2081,20 +2099,17 @@ function getUpcoming(today) {
       c.list.forEach(function (x) {
         const p = String(x.d).split('-');
         if (p.length !== 3) return;
-        const types = x.t || [];
-        let t = 'i';
-        if (types.indexOf('Public') > -1) t = 'h';
-        if (REL_RE.test(x.n)) t = 'r';
+        let t = x.c;
+        if (!t) {
+          t = (x.t || []).indexOf('Public') > -1 ? 'h' : 'i';
+          if (REL_RE.test(x.n)) t = 'r';
+        }
         addFixed(new Date(+p[0], +p[1] - 1, +p[2]), x.n, (x.l && x.l !== x.n) ? x.l : '', t);
       });
     }
   }
 
-  const own = COUNTRY_DAYS[cc] || [];
-  for (let yr = y; yr <= y + 1; yr++) {
-    own.forEach(function (ev) { addFixed(new Date(yr, ev[0] - 1, ev[1]), ev[2], ev[3], ev[4]); });
-  }
-
+  // b) Islamic calendar events (skipped when the holiday list already has the same one)
   hijriUpcoming(today, cc).forEach(function (x) {
     const dup = out.some(function (o) { return Math.abs(o.dt - x.dt) <= 2 * 86400000 && ISL_RE.test(o.h.n); });
     if (dup) return;
@@ -2102,10 +2117,7 @@ function getUpcoming(today) {
     push(x.dt, x.ev[2], local, x.ev[5], true);
   });
 
-  for (let yr = y; yr <= y + 1; yr++) {
-    GLOBAL_DAYS.forEach(function (ev) { addFixed(new Date(yr, ev[0] - 1, ev[1]), ev[2], ev[3], ev[4]); });
-  }
-
+  // c) your own dates
   loadCustom().forEach(function (c) {
     const p = String(c.d).split('-');
     if (p.length !== 3 || !c.n) return;
@@ -2157,8 +2169,7 @@ function renderUpcoming() {
 
 function openUpcomingSettings() {
   const sel = globalSet.country || 'auto';
-  const names = COUNTRIES.map(function (c) { return { c: c, n: countryName(c) }; })
-    .sort(function (a, b) { return a.n.localeCompare(b.n); });
+  const names = countryList();
 
   let h = '<div class="title">Upcoming dates</div>';
   h += '<div class="row"><div class="label">Country</div><select id="upCc">' +
@@ -2166,7 +2177,7 @@ function openUpcomingSettings() {
     names.map(function (x) {
       return '<option value="' + x.c + '"' + (sel === x.c ? ' selected' : '') + '>' + escapeAttr(flagOf(x.c) + ' ' + x.n) + '</option>';
     }).join('') + '</select></div>';
-  h += '<div class="phint">Auto follows the phone. Holidays are saved on the phone after the first download, so they also show offline. ' +
+  h += '<div class="phint">Auto follows the phone. Holidays update themselves from the internet and are saved on the phone, so they also show offline. ' +
     'Moon-based days (Eid, Ramadan...) are worked out by the phone; the real date can differ by a day.</div>';
   h += '<div class="row"><div class="label">Add my own date</div></div>';
   h += '<div class="row"><input type="date" id="upDate"></div>';
@@ -2531,6 +2542,7 @@ function fetchJson(url, opt) {
 
 function onBackOnline() {
   if (hasHome()) refreshMyPlace(false);
+  syncCountry();
   loadHolidays(detectCountry());
   const q = document.getElementById('wsq');
   if (q && q.value.trim().length >= 2 && q.oninput) q.oninput();
@@ -2673,19 +2685,18 @@ function initWorldHome() {
   }, 10 * 60 * 1000);
 }
 
-/* ---- service worker: offline support, notifications, update prompt ---- */
+/* ---- service worker: offline support, notifications, silent update ---- */
+// a new version takes over by itself, no "new version" message
 function offerUpdate(worker) {
-  toast('A new version is ready', {
-    sticky: true,
-    action: { label: 'Reload', fn: function () { updateRequested = true; worker.postMessage('SKIP_WAITING'); } }
-  });
+  worker.postMessage('SKIP_WAITING');
 }
 
 function registerSW() {
   if (!('serviceWorker' in navigator)) return;
 
   navigator.serviceWorker.addEventListener('controllerchange', function () {
-    if (updateRequested) location.reload();
+    // reload only when nothing is running, so an alarm, timer or stopwatch is never interrupted
+    if (!ringOn && !tm.running && !sw.running) location.reload();
   });
 
   navigator.serviceWorker.register('sw.js')
@@ -2759,6 +2770,7 @@ function bindEvents() {
     checkAlarms();
     if (tm.running) renderTm();
     tick();
+    loadHolidays(detectCountry());
     renderUpcoming();
     queueFade();
   });
