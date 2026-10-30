@@ -2,8 +2,8 @@
    CLOCK APP - main.js
    1 Config & state        7 Digits & time HTML       13 Stopwatch
    2 Helpers & icons       8 Home widgets             14 Timer & presets
-   3 Injected styles       9 Settings                 15 Upcoming (holidays)
-   4 Storage              10 Edit / Add widget        16 Bottom bar & buttons
+   3 Injected styles       9 Settings                 15 Upcoming (full calendar)
+   4 Storage              10 Edit / Add widget        16 Bottom bar & button effects
    5 Sheet system & UI    11 Tabs                     17 Connection, permissions, SW
    6 Tones & ringing      12 Alarms                   18 Init
    ========================================================================== */
@@ -25,7 +25,6 @@ const IPKEY = 'clockIpCc';
 const GEO_URL = 'https://geocoding-api.open-meteo.com/v1/search';
 const REVERSE_URL = 'https://api.bigdatacloud.net/data/reverse-geocode-client';
 const HOL_URL = 'https://date.nager.at/api/v3/PublicHolidays/';
-const HOLAPI_URL = 'https://holidaycalendar.pages.dev/api/v1/holidays';
 const PLACE_FRESH_MS = 20 * 60 * 1000;
 const HOL_TTL = 7 * 24 * 3600 * 1000;
 
@@ -116,18 +115,37 @@ const ICON = {
   plus: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>'
 };
 
+// replaces the icon but keeps the light-effect layers (.fx) alive while they animate
+function swapIcon(el, svg) {
+  Array.from(el.childNodes).forEach(function (n) {
+    if (n.nodeType === 3 || (n.nodeType === 1 && !n.classList.contains('fx'))) n.remove();
+  });
+  el.insertAdjacentHTML('afterbegin', svg);
+}
+
 function setIcon(id, svg, label) {
   const el = $(id);
   if (!el) return;
-  el.innerHTML = svg;
+  swapIcon(el, svg);
   if (label) el.setAttribute('aria-label', label);
 }
 
 /* ==========================================================================
    3. INJECTED STYLES
    --------------------------------------------------------------------------
-   One design system: neutral surfaces, one orange accent, one type scale.
+   One design system: calm neutral surfaces, one orange accent, state colours
+   (green start, orange pause, red reset, blue lap) that also drive the glow.
    ========================================================================== */
+
+// Upcoming categories: [label, colour]
+const UP_TYPES = {
+  h: ['Holiday', '#ff6a5c'],
+  r: ['Religious', '#30d158'],
+  i: ['Observance', '#4a8cf7'],
+  w: ['World day', '#bf5af2'],
+  s: ['Season', '#2ec4b6']
+};
+
 function injectStyles() {
   if (navigator.onLine !== false && !document.querySelector('link[data-clock-font]')) {
     const l = document.createElement('link');
@@ -137,10 +155,14 @@ function injectStyles() {
     document.head.appendChild(l);
   }
 
+  const typeCss = Object.keys(UP_TYPES).map(function (k) {
+    return '.t-' + k + '{--tc:' + UP_TYPES[k][1] + '}';
+  }).join('');
+
   const css = `
 @font-face{font-family:"ClockNum";src:url("digits.ttf") format("truetype");font-weight:100 900;font-style:normal;font-display:swap;unicode-range:U+0030-0039}
-:root{--sf:"ClockNum","Poppins",system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;--accent:#ff9f0a;--danger:#ff453a;--ok:#30d158;--surf:rgba(255,255,255,.06);--surf2:rgba(255,255,255,.11);--line:rgba(255,255,255,.10);--pop:rgba(28,30,36,.78)}
-body.light{--surf:rgba(0,0,0,.04);--surf2:rgba(0,0,0,.07);--line:rgba(0,0,0,.09);--pop:rgba(255,255,255,.82)}
+:root{--sf:"ClockNum","Poppins",system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;--accent:#ff9f0a;--danger:#ff453a;--ok:#30d158;--info:#0a84ff;--surf:rgba(255,255,255,.06);--surf2:rgba(255,255,255,.11);--line:rgba(255,255,255,.10);--pop:rgba(28,30,36,.80)}
+body.light{--surf:rgba(0,0,0,.04);--surf2:rgba(0,0,0,.07);--line:rgba(0,0,0,.09);--pop:rgba(255,255,255,.84)}
 html,body,button,input,select,textarea,svg text,.time .txt,.hcard,.preset,.btn{font-family:var(--sf)!important}
 *{font-weight:800!important}
 body{letter-spacing:-.01em;-webkit-font-smoothing:antialiased}
@@ -150,58 +172,60 @@ body .time .txt{font-size:min(calc(var(--size)*1),20vw);letter-spacing:0;line-he
 
 /* ---- Upcoming ---- */
 #holidays{position:relative!important;flex:1 1 auto!important;display:flex!important;flex-direction:column;min-height:320px;padding:0!important;animation:none!important}
-.hhead{position:static!important;display:flex!important;justify-content:space-between;align-items:baseline;gap:10px;padding:14px 20px 8px!important;white-space:nowrap;pointer-events:auto;font-size:19px;font-weight:700;letter-spacing:-.02em}
+.hhead{position:static!important;display:flex!important;justify-content:space-between;align-items:baseline;gap:10px;padding:14px 20px 8px!important;white-space:nowrap;pointer-events:auto;font-size:20px;letter-spacing:-.02em}
 .hhead::before{display:none!important}
-.hsub{font-size:13px;font-weight:600;letter-spacing:0;opacity:.7;overflow:hidden;text-overflow:ellipsis}
-.hfilter{flex:none;display:flex;gap:8px;padding:2px 16px 10px;overflow-x:auto;scrollbar-width:none}
+.hsub{font-size:13px;letter-spacing:0;opacity:.65;overflow:hidden;text-overflow:ellipsis}
+.hfilter{flex:none;display:flex;gap:8px;padding:2px 16px 12px;overflow-x:auto;scrollbar-width:none}
 .hfilter::-webkit-scrollbar{display:none}
-.hchip{flex:none;padding:6px 14px;border-radius:999px;font-size:13px;font-weight:600;color:inherit;background:var(--surf);border:1px solid var(--line);cursor:pointer;-webkit-tap-highlight-color:transparent;transition:background .15s ease,color .15s ease,border-color .15s ease}
-.hchip.on{background:var(--accent);border-color:var(--accent);color:#1a1100}
-#hList{flex:1 1 0!important;display:flex!important;flex-direction:column!important;gap:8px!important;min-height:220px;max-height:none!important;overflow-y:auto!important;overflow-x:hidden!important;padding:6px 16px calc(var(--ov,0px) + 28px)!important;scroll-snap-type:none!important;overscroll-behavior:contain;touch-action:pan-y;scrollbar-width:none}
+.hchip{flex:none;padding:7px 15px;border-radius:999px;font-size:13px;color:inherit;background:var(--surf);border:1px solid var(--line);cursor:pointer;-webkit-tap-highlight-color:transparent;transition:background .18s ease,color .18s ease,border-color .18s ease,transform .12s ease}
+.hchip:active{transform:scale(.95)}
+.hchip.on{background:var(--accent);border-color:var(--accent);color:#1a1100;box-shadow:0 4px 14px rgba(255,159,10,.35)}
+#hList{flex:1 1 0!important;display:flex!important;flex-direction:column!important;gap:9px!important;min-height:220px;max-height:none!important;overflow-y:auto!important;overflow-x:hidden!important;padding:6px 16px calc(var(--ov,0px) + 28px)!important;scroll-snap-type:none!important;overscroll-behavior:contain;touch-action:pan-y;scrollbar-width:none}
 #hList::-webkit-scrollbar{display:none}
-.hgrp{flex:none;padding:12px 4px 2px;font-size:13px;font-weight:600;opacity:.55}
+.hgrp{flex:none;padding:14px 4px 2px;font-size:13px;opacity:.55}
 .hgrp:first-child{padding-top:2px}
-.hcard{width:auto!important;flex:none!important;display:flex!important;align-items:center;gap:14px;padding:10px 14px 10px 10px!important;border-radius:16px!important;background:var(--surf)!important;-webkit-backdrop-filter:none!important;backdrop-filter:none!important;border:1px solid var(--line);box-shadow:none;transition:transform .12s ease}
+.hcard{width:auto!important;flex:none!important;display:flex!important;align-items:center;gap:14px;padding:10px 14px 10px 10px!important;border-radius:18px!important;background:linear-gradient(135deg,var(--surf2),var(--surf))!important;-webkit-backdrop-filter:none!important;backdrop-filter:none!important;border:1px solid var(--line);box-shadow:0 1px 0 rgba(255,255,255,.04) inset;transition:transform .14s ease,border-color .2s ease}
 .hcard:active{transform:scale(.985)}
-.hcard.today{border-color:var(--tc);background:color-mix(in srgb,var(--tc) 12%,transparent)!important}
-.t-h{--tc:#ff6a5c}.t-i{--tc:#4a8cf7}.t-r{--tc:#30d158}
-.hd{flex:none;display:flex;flex-direction:column;align-items:center;justify-content:center;width:50px;height:54px;border-radius:12px;background:color-mix(in srgb,var(--tc) 16%,transparent)}
-.hd .hmon{font-size:11px;font-weight:700;color:var(--tc)}
-.hd .hday{font-size:23px;line-height:1.05;font-weight:700}
+.hcard.today{border-color:var(--tc);background:linear-gradient(135deg,color-mix(in srgb,var(--tc) 22%,transparent),color-mix(in srgb,var(--tc) 8%,transparent))!important;box-shadow:0 0 22px color-mix(in srgb,var(--tc) 28%,transparent)}
+${typeCss}
+.hd{flex:none;display:flex;flex-direction:column;align-items:center;justify-content:center;width:54px;height:58px;border-radius:15px;background:linear-gradient(160deg,color-mix(in srgb,var(--tc) 30%,transparent),color-mix(in srgb,var(--tc) 12%,transparent));border:1px solid color-mix(in srgb,var(--tc) 38%,transparent)}
+.hd .hmon{font-size:10.5px;letter-spacing:.06em;color:var(--tc);-webkit-text-stroke:.35px currentColor}
+.hd .hday{font-size:26px;line-height:1.05;font-weight:900!important;-webkit-text-stroke:.9px currentColor}
 .hmid{flex:1;min-width:0}
 .hmid .hname{margin:0;font-size:15px;line-height:1.25;overflow:hidden;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical}
 .hbn{margin-top:2px;font-size:12px;opacity:.55;overflow:hidden;white-space:nowrap;text-overflow:ellipsis}
 .hbn:empty{display:none}
 .hright{flex:none;display:flex;flex-direction:column;align-items:flex-end;gap:3px;text-align:right}
-.hright .hleft{margin:0;font-size:13px;font-weight:700}
+.hright .hleft{margin:0;font-size:13px}
 .hleft.soon{color:var(--accent)}
-.hwd{margin:0;font-size:11.5px;opacity:.55}
+.hwd{margin:0;display:flex;align-items:center;gap:5px;font-size:11.5px;opacity:.7}
+.hwd::before{content:"";width:7px;height:7px;border-radius:50%;background:var(--tc)}
 .hempty{padding:36px 24px;text-align:center;font-size:14px;line-height:1.5;opacity:.55}
-.hdiag{margin-top:10px;font-size:11px;opacity:.7;word-break:break-word}
+.hmore{flex:none;align-self:center;margin-top:6px;padding:10px 22px;border-radius:999px;font-size:14px;color:var(--accent);background:rgba(255,159,10,.14);border:1px solid rgba(255,159,10,.32);cursor:pointer;-webkit-tap-highlight-color:transparent}
+.hmore:active{transform:scale(.96)}
 
 /* ---- sheets: one pop-in card ---- */
 #overlay.open{background:rgba(0,0,0,.28)!important;-webkit-backdrop-filter:blur(10px);backdrop-filter:blur(10px)}
 body.light #overlay.open{background:rgba(255,255,255,.25)!important}
-#sheet{background:var(--pop)!important;-webkit-backdrop-filter:blur(28px) saturate(1.5);backdrop-filter:blur(28px) saturate(1.5);border:1px solid var(--line);box-shadow:0 20px 50px rgba(0,0,0,.4);color-scheme:dark}
-body.light #sheet{color-scheme:light;box-shadow:0 20px 50px rgba(0,0,0,.14)}
+#sheet{background:var(--pop)!important;-webkit-backdrop-filter:blur(28px) saturate(1.5);backdrop-filter:blur(28px) saturate(1.5);border:1px solid var(--line);box-shadow:0 24px 60px rgba(0,0,0,.45);color-scheme:dark}
+body.light #sheet{color-scheme:light;box-shadow:0 24px 60px rgba(0,0,0,.16)}
 @keyframes popIn{from{opacity:0;transform:scale(.88) translateY(-8px)}to{opacity:1;transform:none}}
 @keyframes popOut{from{opacity:1;transform:none}to{opacity:0;transform:scale(.9) translateY(-6px)}}
 #sheet:not(.open){pointer-events:none}
-#sheet.open{left:auto!important;right:12px!important;bottom:auto!important;top:calc(64px + env(safe-area-inset-top,0px))!important;width:min(92vw,360px)!important;max-height:calc(100vh - 150px);max-height:calc(100dvh - 150px);overflow-y:auto;border-radius:24px!important;padding:18px 16px 16px!important;animation:popIn .26s cubic-bezier(.22,.8,.25,1) both;scrollbar-width:none}
+#sheet.open{left:auto!important;right:12px!important;bottom:auto!important;top:calc(64px + env(safe-area-inset-top,0px))!important;width:min(92vw,360px)!important;max-height:calc(100vh - 150px);max-height:calc(100dvh - 150px);overflow-y:auto;border-radius:26px!important;padding:18px 16px 16px!important;animation:popIn .26s cubic-bezier(.22,.8,.25,1) both;scrollbar-width:none}
 #sheet.open::-webkit-scrollbar{display:none}
 #sheet.open.closing{animation:popOut .16s ease both;pointer-events:none}
-@media (prefers-reduced-motion:reduce){#sheet.open,#sheet.open.closing{animation:none}}
 
 #sheet button{background:none;border:0;color:inherit;font:inherit;padding:0;margin:0;cursor:pointer;-webkit-tap-highlight-color:transparent}
-#sheet button:focus-visible,.hchip:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+#sheet button:focus-visible,.hchip:focus-visible,.hmore:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
 #sheet .shead{display:flex;align-items:center;gap:10px;min-height:34px;margin:0 0 14px}
-#sheet .stitle{flex:1;font-size:22px;font-weight:700;letter-spacing:-.03em}
+#sheet .stitle{flex:1;font-size:22px;letter-spacing:-.03em}
 #sheet .back{width:34px;height:34px;flex:none;border-radius:50%;display:flex;align-items:center;justify-content:center;padding:0 0 3px!important;font-size:24px;line-height:1;background:var(--surf2)}
-#sheet .sl{font-size:13px;font-weight:600;opacity:.55;margin:18px 8px 7px}
+#sheet .sl{font-size:13px;opacity:.55;margin:18px 8px 7px}
 #sheet .shead+.sl{margin-top:2px}
-#sheet .grp{margin-top:14px;border-radius:14px;overflow:hidden;background:var(--surf);border:1px solid var(--line)}
+#sheet .grp{margin-top:14px;border-radius:16px;overflow:hidden;background:var(--surf);border:1px solid var(--line)}
 #sheet .sl+.grp,#sheet .shead+.grp,#sheet .pcard+.grp{margin-top:0}
-#sheet .li{display:flex;align-items:center;gap:12px;width:100%;min-height:48px;padding:10px 14px;box-sizing:border-box;text-align:left;font-size:15px}
+#sheet .li{display:flex;align-items:center;gap:12px;width:100%;min-height:50px;padding:10px 14px;box-sizing:border-box;text-align:left;font-size:15px}
 #sheet .li+.li{border-top:1px solid var(--line)}
 #sheet button.li{transition:background .12s ease}
 #sheet button.li:active{background:var(--surf2)}
@@ -227,8 +251,8 @@ body.light #sheet{color-scheme:light;box-shadow:0 20px 50px rgba(0,0,0,.14)}
 #sheet .bigtime{width:100%;padding:6px 0;text-align:center;font-size:46px;letter-spacing:-.02em}
 #sheet .li.cen{justify-content:center}
 
-#sheet .seg{display:flex;gap:2px;padding:3px;border-radius:10px;background:var(--surf2);min-width:150px}
-#sheet .seg button{flex:1;padding:7px 10px;border-radius:8px;font-size:13px;font-weight:600;opacity:.65;white-space:nowrap;transition:background .2s ease,opacity .2s ease}
+#sheet .seg{display:flex;gap:2px;padding:3px;border-radius:11px;background:var(--surf2);min-width:150px}
+#sheet .seg button{flex:1;padding:7px 10px;border-radius:8px;font-size:13px;opacity:.65;white-space:nowrap;transition:background .2s ease,opacity .2s ease}
 #sheet .seg button.on{opacity:1;background:rgba(255,255,255,.22);box-shadow:0 1px 3px rgba(0,0,0,.2)}
 body.light #sheet .seg button.on{background:#fff}
 
@@ -246,17 +270,17 @@ body.light #sheet .seg button.on{background:#fff}
 #sheet input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:24px;height:24px;border-radius:50%;background:#fff;box-shadow:0 2px 6px rgba(0,0,0,.4)}
 #sheet input[type=range]::-moz-range-thumb{width:24px;height:24px;border:0;border-radius:50%;background:#fff;box-shadow:0 2px 6px rgba(0,0,0,.4)}
 
-#sheet .pcard{padding:14px 16px;border-radius:14px;background:rgba(255,159,10,.12);border:1px solid rgba(255,159,10,.30)}
-#sheet .pcn{font-size:21px;font-weight:700;letter-spacing:-.02em;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+#sheet .pcard{padding:14px 16px;border-radius:16px;background:rgba(255,159,10,.12);border:1px solid rgba(255,159,10,.30)}
+#sheet .pcn{font-size:21px;letter-spacing:-.02em;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 #sheet .pcs{margin-top:3px;font-size:12.5px;opacity:.7}
 
 #sheet .acts{display:flex;gap:10px;margin-top:16px}
 #sheet .acts+.acts{margin-top:10px}
-#sheet .bt{flex:1;padding:13px 10px;border-radius:12px;font-size:15px;font-weight:600;text-align:center;background:var(--surf2);transition:transform .12s ease,background .2s ease}
+#sheet .bt{flex:1;padding:13px 10px;border-radius:13px;font-size:15px;text-align:center;background:var(--surf2);transition:transform .12s ease,background .2s ease}
 #sheet .bt:active{transform:scale(.97)}
-#sheet .bt.pri,body.light #sheet .bt.pri{color:#fff;background:var(--accent)}
+#sheet .bt.pri,body.light #sheet .bt.pri{color:#fff;background:var(--accent);box-shadow:0 6px 18px rgba(255,140,20,.32)}
 #sheet .bt.dng{color:var(--danger)}
-#sheet .mini{flex:none;padding:6px 13px;border-radius:999px;font-size:13px;font-weight:600;white-space:nowrap;color:var(--accent);background:rgba(255,159,10,.16)}
+#sheet .mini{flex:none;padding:6px 13px;border-radius:999px;font-size:13px;white-space:nowrap;color:var(--accent);background:rgba(255,159,10,.16)}
 #sheet .mini.dng{color:var(--danger);background:rgba(255,69,58,.14)}
 
 #sheet .trip{display:flex;gap:8px;padding:12px}
@@ -278,7 +302,7 @@ body.light #sheet .seg button.on{background:#fff}
 /* ---- toast ---- */
 #toast{position:fixed;left:50%;bottom:calc(88px + env(safe-area-inset-bottom,0px));transform:translate(-50%,12px);z-index:70;display:flex;align-items:center;gap:12px;max-width:min(92vw,420px);padding:11px 16px;border-radius:999px;background:var(--pop);color:inherit;-webkit-backdrop-filter:blur(20px) saturate(1.5);backdrop-filter:blur(20px) saturate(1.5);border:1px solid var(--line);box-shadow:0 10px 30px rgba(0,0,0,.3);font-size:14px;line-height:1.3;opacity:0;pointer-events:none;transition:opacity .25s ease,transform .25s ease}
 #toast.show{opacity:1;transform:translate(-50%,0);pointer-events:auto}
-#toast .tact{background:none;border:0;color:var(--accent);padding:0;font-size:14px;font-weight:600;white-space:nowrap}
+#toast .tact{background:none;border:0;color:var(--accent);padding:0;font-size:14px;white-space:nowrap}
 
 /* ---- widgets & stopwatch ---- */
 .wdate{margin-top:6px;opacity:.8}
@@ -290,13 +314,33 @@ body.light #sheet .seg button.on{background:#fff}
 .dialwrap{isolation:isolate}
 .dialwrap::before{content:"";position:absolute;inset:.8%;border-radius:50%;z-index:-1;background:rgba(255,255,255,.05);-webkit-backdrop-filter:blur(20px) saturate(1.6) brightness(.6);backdrop-filter:blur(20px) saturate(1.6) brightness(.6);box-shadow:0 20px 40px rgba(0,0,0,.4)}
 
-/* ---- round buttons ---- */
-.round,.fab{position:relative;display:flex;align-items:center;justify-content:center;transition:transform .18s cubic-bezier(.3,1.6,.5,1)!important}
+/* ---- round buttons: every button has a colour (--gc) that drives its glow ---- */
+.round,.fab{position:relative;display:flex;align-items:center;justify-content:center;overflow:visible!important;--gc:255,159,10;transition:transform .18s cubic-bezier(.3,1.6,.5,1),box-shadow .3s ease!important}
 .round:active,.fab:active{transform:scale(.92)!important}
 .round:not(.main){background:var(--surf2)!important;border:1px solid var(--line)!important;box-shadow:none!important;-webkit-backdrop-filter:blur(16px);backdrop-filter:blur(16px)}
 body.light .round:not(.main){color:#1c1c1e}
 .round.main,.fab{background:var(--accent)!important;border:0!important;color:#fff;box-shadow:0 8px 22px rgba(255,140,20,.38)!important}
-#swGo,#tmGo{background:rgba(255,159,10,.18)!important;border:1px solid rgba(255,159,10,.45)!important;color:var(--accent)!important;box-shadow:none!important}
+
+/* start = green, pause = orange (while running), lap = blue, reset = red */
+#swGo,#tmGo{--gc:48,209,88;background:rgba(var(--gc),.16)!important;border:1px solid rgba(var(--gc),.50)!important;color:rgb(var(--gc))!important;box-shadow:0 0 16px rgba(var(--gc),.18),inset 0 0 14px rgba(var(--gc),.10)!important}
+#swGo.live,#tmGo.live{--gc:255,159,10;animation:breathe 2.6s ease-in-out infinite}
+#swLap{--gc:10,132,255}
+#swReset,#tmReset{--gc:255,69,58}
+#swLap,#swReset,#tmReset{border-color:rgba(var(--gc),.38)!important;color:rgb(var(--gc))!important;background:rgba(var(--gc),.10)!important}
+#aPlus,#pAdd{--gc:255,159,10}
+
+@keyframes breathe{
+  0%,100%{box-shadow:0 0 12px rgba(var(--gc),.22),inset 0 0 12px rgba(var(--gc),.10)}
+  50%{box-shadow:0 0 0 5px rgba(var(--gc),.07),0 0 30px rgba(var(--gc),.50),inset 0 0 16px rgba(var(--gc),.18)}
+}
+/* press effect: a glowing ring leaves the button and a soft flash fills it */
+.fx{position:absolute;inset:0;border-radius:inherit;pointer-events:none}
+.fx.burst{border:2px solid rgba(var(--gc),.95);box-shadow:0 0 22px 4px rgba(var(--gc),.65),inset 0 0 14px rgba(var(--gc),.45);animation:burst .7s cubic-bezier(.15,.7,.3,1) forwards}
+.fx.flash{background:radial-gradient(circle,rgba(var(--gc),.60) 0,rgba(var(--gc),0) 72%);animation:flash .55s ease-out forwards}
+@keyframes burst{from{opacity:.95;transform:scale(1)}to{opacity:0;transform:scale(1.75)}}
+@keyframes flash{from{opacity:1;transform:scale(.7)}to{opacity:0;transform:scale(1.25)}}
+@media (prefers-reduced-motion:reduce){#sheet.open,#sheet.open.closing{animation:none}#swGo.live,#tmGo.live{animation:none}.fx{display:none}}
+
 .phead button{color:var(--accent)!important}
 #nav button{transition:background-color .14s ease,opacity .14s ease,transform .1s ease!important}
 #nav button:active{transform:scale(.94)}
@@ -1413,7 +1457,6 @@ function initWorldEdit(w) {
 function openEdit(id, origin) {
   const w = widgets.find(function (x) { return x.id === id; });
   if (!w) return;
-  editW = w;
   const zone = isZoneWidget(w);
 
   let h = head(TYPES[w.type].n);
@@ -1656,13 +1699,15 @@ function csHtml(cs) {
     timeHtml(cs, false);
 }
 
+// play / pause icon + the "live" state that makes a running button breathe
 function setGoIcon(id, running) {
   const go = $(id);
   if (!go) return;
   const k = running ? 'pause' : 'play';
-  if (go.getAttribute('data-k') !== k) {
-    go.setAttribute('data-k', k);
-    go.innerHTML = running ? ICON.pause : ICON.play;
+  go.classList.toggle('live', running);
+  if (go.dataset.k !== k) {
+    go.dataset.k = k;
+    swapIcon(go, ICON[k]);
     go.setAttribute('aria-label', running ? 'Pause' : 'Start');
   }
 }
@@ -1880,24 +1925,31 @@ function openPresetSheet(origin) {
 }
 
 /* ==========================================================================
-   15. UPCOMING  (every country, nothing fixed, updates itself)
+   15. UPCOMING  (every important day of the calendar, nothing typed by hand)
    --------------------------------------------------------------------------
-   Country : Settings choice, otherwise GPS -> internet (IP) -> time zone -> language
-   Dates   : a) date-holidays library: about 200 countries, public holidays,
-                optional days and observances, calculated for any year.
-                The library file is saved in the browser cache, so it works offline
-                and is refreshed whenever the internet is available.
-             b) free holiday APIs as backup when the library has no data for a country
-             c) holidaycalendar API (199 countries) next, then Nager.Date
-             d) your own dates
-   Optional: put holidays.min.js next to index.html (tried first); the CDN is the backup.
+   Country  : Settings choice, otherwise GPS -> internet (IP) -> time zone -> language
+   Sources, all merged into one list for the next 12 months:
+     1. date-holidays library (about 200 countries): public holidays, bank
+        holidays, optional days, observances. Saved in the browser cache.
+     2. Nager.Date API as a backup when the library has nothing for a country.
+     3. Built-in worldwide calendar (always works, even offline):
+        - Islamic calendar  : Ramadan, Eid, Ashura, Mawlid, Shab-e-Barat ...
+        - Hebrew calendar   : Rosh Hashanah, Yom Kippur, Hanukkah, Passover ...
+        - Chinese calendar  : Lunar New Year, Lantern, Dragon Boat, Mid-Autumn ...
+        - Christian dates   : Easter (Western and Orthodox), Ash Wednesday ...
+        - Seasons           : equinoxes and solstices
+        - World days        : UN and international days, Valentine's, Mother's Day ...
+        - Local days        : small extra list for some countries (for example BD)
+     4. Your own dates.
+   Duplicates between sources are removed (same name within 3 days).
    ========================================================================== */
 const LIB_URLS = ['holidays.min.js', 'https://cdn.jsdelivr.net/npm/date-holidays@3/dist/umd.min.js', 'https://unpkg.com/date-holidays@3/dist/umd.min.js'];
 const LIB_CACHE = 'clock-holidays-lib';
-const REL_RE = /christmas|easter|good friday|epiphany|ascension|pentecost|whit|corpus|assumption|all saints|all souls|immaculate|diwali|deepavali|holi\b|vesak|buddha|navratri|dussehra|durga|janmashtami|ramadan|eid|fitr|adha|ashura|mawlid|passover|hanukkah|yom kippur|rosh hashan|nyepi|waisak|thaipusam|palm sunday|maundy|ramazan|bayram|kurban|raya|nuzul|arafah|shab-e|miladun/i;
-const UP_LABEL = { h: 'Holiday', i: 'Observance', r: 'Religious' };
-const UP_FILTERS = [['all', 'All'], ['h', 'Holidays'], ['r', 'Religious'], ['i', 'Observances']];
-const UP_MAX = 30;
+const REL_RE = /christmas|\beaster|good friday|epiphany|ascension|pentecost|\bwhit(sun|\s|$)|corpus christi|assumption|all saints|all souls|immaculate|diwali|deepavali|\bholi\b|vesak|buddha|navratri|dussehra|durga|janmashtami|ramadan|\beid|fitr|adha|ashura|mawlid|passover|hanukkah|yom kippur|rosh hashan|nyepi|waisak|thaipusam|palm sunday|maundy|ramazan|bayram|kurban|\braya\b|nuzul|arafah|shab-e|miladun|isra|qadr|purim|sukkot|shavuot|ash wednesday|nanak|baisakhi|vaisakhi|mahavir|onam|pongal|ganesh|rath yatra|shivaratri|ram navami|poya/i;
+const WORLD_RE = /^(world|international|global|universal|united nations)\b/i;
+const UP_FILTERS = [['all', 'All'], ['h', 'Holidays'], ['r', 'Religious'], ['i', 'Observances'], ['w', 'World days'], ['s', 'Seasons']];
+const UP_ORDER = 'hrisw';
+const UP_PAGE = 40;
 const UP_DAYS = 366;
 
 let lastCc = null;
@@ -1909,9 +1961,10 @@ let libBusy = null;
 let holLoading = false;
 let lastUpSig = '';
 let lastOv = -1;
+let upLimit = UP_PAGE;
+let calMemo = { sig: '', list: [] };
 const holMemo = {};
 const extraBusy = {};
-const holDiag = { lib: 'not started', extra: '-' };
 
 /* ---- all countries: the list is made by the browser ---- */
 function countryList() {
@@ -2011,11 +2064,12 @@ function syncCountry() {
   ensureIpCountry();
   if (cc === lastCc) return;
   lastCc = cc;
+  upLimit = UP_PAGE;
   loadHolidays(cc);
   renderUpcoming();
 }
 
-/* ---- holiday library: network first, browser cache as offline copy ---- */
+/* ---- source 1: holiday library (network first, browser cache as offline copy) ---- */
 function loadScript(url) {
   return new Promise(function (res, rej) {
     const s = document.createElement('script');
@@ -2026,7 +2080,6 @@ function loadScript(url) {
   });
 }
 
-// offline copy: saved once in the browser cache, used only when the normal load fails
 function saveLibCopy(url) {
   if (!window.caches || navigator.onLine === false) return;
   caches.open(LIB_CACHE).then(function (c) {
@@ -2072,14 +2125,14 @@ function loadLib() {
       });
     });
   }, Promise.reject(new Error('start')))
-    .then(function () { holDiag.lib = 'ok'; return true; })
-    .catch(function () { holDiag.lib = 'could not load (blocked or offline)'; return false; })
+    .then(function () { return true; })
+    .catch(function () { return false; })
     .then(function (ok) { libBusy = null; return ok; });
   return libBusy;
 }
 
 // null = library not loaded yet, [] = no data for this country
-// types: public -> holiday, bank/optional/observance -> observance
+// every type is kept: public days are "h", everything else is "i" (sorted later)
 function libList(cc, yr) {
   const k = cc + yr;
   if (holMemo[k]) return holMemo[k];
@@ -2093,18 +2146,16 @@ function libList(cc, yr) {
     en.getHolidays(yr).forEach(function (x) { names[x.date.slice(0, 10) + x.rule] = x.name; });
 
     new H(cc).getHolidays(yr).forEach(function (x) {
-      const t = x.type === 'public' ? 'h' : ((x.type === 'bank' || x.type === 'optional' || x.type === 'observance') ? 'i' : '');
-      if (!t) return;
       const d = x.date.slice(0, 10);
       const n = names[d + x.rule] || x.name;
-      out.push({ d: d, n: n, l: x.name !== n ? x.name : '', c: t });
+      out.push({ d: d, n: n, l: x.name !== n ? x.name : '', c: x.type === 'public' ? 'h' : 'i' });
     });
-  } catch (e) { holDiag.lib = 'error: ' + (e && e.message); }
+  } catch (e) {}
   holMemo[k] = out;
   return out;
 }
 
-/* ---- backup sources: free holiday APIs, saved for a week ---- */
+/* ---- source 2: backup API, saved for a week ---- */
 function readExtra(cc, yr) {
   const o = readJson(HKEY + cc + '_' + yr);
   return o && Array.isArray(o.list) ? o : null;
@@ -2118,31 +2169,18 @@ function fetchExtra(cc, yr) {
 
   function save(list) { writeJson(HKEY + cc + '_' + yr, { ts: Date.now(), list: list }); }
 
-  return fetchJson(HOLAPI_URL + '?country=' + cc + '&year=' + yr, { timeout: 10000, retries: 1 })
+  return fetchJson(HOL_URL + yr + '/' + cc, { timeout: 10000, retries: 1 })
     .then(function (d) {
-      const list = d && Array.isArray(d.holidays) ? d.holidays.map(function (x) {
-        return { d: x.date, n: x.name || '', l: '', c: x.type === 'public' ? 'h' : 'i' };
-      }) : [];
-      if (!list.length) throw netError('empty');
-      save(list);
-      holDiag.extra = 'holidaycalendar ok';
-    })
-    .catch(function () {
-      return fetchJson(HOL_URL + yr + '/' + cc, { timeout: 10000, retries: 1 }).then(function (d) {
-        const list = Array.isArray(d) ? d.map(function (x) {
-          return {
-            d: x.date, n: x.name || '',
-            l: x.localName && x.localName !== x.name ? x.localName : '',
-            c: (x.types || []).indexOf('Public') > -1 ? 'h' : 'i'
-          };
-        }) : [];
-        save(list);
-        holDiag.extra = 'nager ok';
-      });
+      save(Array.isArray(d) ? d.map(function (x) {
+        return {
+          d: x.date, n: x.name || '',
+          l: x.localName && x.localName !== x.name ? x.localName : '',
+          c: (x.types || []).indexOf('Public') > -1 ? 'h' : 'i'
+        };
+      }) : []);
     })
     .catch(function (e) {
-      // a country that no service covers is remembered for a week; network errors are retried later
-      holDiag.extra = 'none (' + ((e && e.kind) || 'error') + ')';
+      // a country the service does not cover is remembered; network errors are retried later
       if (e && e.kind === 'http' && e.status < 500) save([]);
     })
     .then(function () { delete extraBusy[k]; });
@@ -2172,58 +2210,333 @@ function loadHolidays(cc) {
   });
 }
 
-/* ---- your own dates ---- */
+/* ---- source 3: built-in worldwide calendar ---- */
+// [month, day, name, type, regex of other names for the same day]
+const FIXED = [
+  [1, 1, "New Year's Day", 'h', "new year'?s day|^new year$"],
+  [1, 24, 'International Day of Education', 'w'],
+  [1, 27, 'International Holocaust Remembrance Day', 'w'],
+  [2, 4, 'World Cancer Day', 'w'],
+  [2, 11, 'International Day of Women and Girls in Science', 'w'],
+  [2, 13, 'World Radio Day', 'w'],
+  [2, 14, "Valentine's Day", 'i', "valentine"],
+  [2, 20, 'World Day of Social Justice', 'w'],
+  [2, 21, 'International Mother Language Day', 'w'],
+  [3, 3, 'World Wildlife Day', 'w'],
+  [3, 8, "International Women's Day", 'w', "women'?s day"],
+  [3, 14, 'Pi Day', 'i'],
+  [3, 20, 'International Day of Happiness', 'w'],
+  [3, 21, 'Nowruz (Persian New Year)', 'i', 'nowruz|norouz|nawruz'],
+  [3, 21, 'International Day of Forests', 'w'],
+  [3, 21, 'World Poetry Day', 'w'],
+  [3, 22, 'World Water Day', 'w'],
+  [3, 23, 'World Meteorological Day', 'w'],
+  [3, 24, 'World Tuberculosis Day', 'w'],
+  [4, 1, "April Fools' Day", 'i'],
+  [4, 2, 'World Autism Awareness Day', 'w'],
+  [4, 7, 'World Health Day', 'w'],
+  [4, 22, 'Earth Day', 'w', '^earth day|mother earth'],
+  [4, 23, 'World Book Day', 'w'],
+  [4, 25, 'World Malaria Day', 'w'],
+  [4, 30, 'International Jazz Day', 'w'],
+  [5, 1, "International Workers' Day", 'h', "labou?r day|workers|may day"],
+  [5, 3, 'World Press Freedom Day', 'w'],
+  [5, 8, 'World Red Cross Day', 'w'],
+  [5, 12, "International Nurses Day", 'w'],
+  [5, 15, 'International Day of Families', 'w'],
+  [5, 17, 'World Telecommunication Day', 'w'],
+  [5, 22, 'International Day for Biological Diversity', 'w'],
+  [5, 31, 'World No Tobacco Day', 'w'],
+  [6, 1, "Global Day of Parents", 'w'],
+  [6, 5, 'World Environment Day', 'w'],
+  [6, 8, 'World Oceans Day', 'w'],
+  [6, 14, 'World Blood Donor Day', 'w'],
+  [6, 20, 'World Refugee Day', 'w'],
+  [6, 21, 'International Day of Yoga', 'w', 'yoga'],
+  [6, 21, 'World Music Day', 'w'],
+  [6, 26, 'International Day against Drug Abuse', 'w'],
+  [7, 11, 'World Population Day', 'w'],
+  [7, 18, 'Nelson Mandela International Day', 'w'],
+  [7, 30, 'International Day of Friendship', 'w'],
+  [8, 9, "International Day of the World's Indigenous Peoples", 'w'],
+  [8, 12, 'International Youth Day', 'w'],
+  [8, 19, 'World Humanitarian Day', 'w'],
+  [9, 8, 'International Literacy Day', 'w'],
+  [9, 15, 'International Day of Democracy', 'w'],
+  [9, 21, 'International Day of Peace', 'w'],
+  [9, 27, 'World Tourism Day', 'w'],
+  [10, 1, 'International Day of Older Persons', 'w'],
+  [10, 4, 'World Animal Day', 'w'],
+  [10, 5, "World Teachers' Day", 'w', "teachers'? day"],
+  [10, 10, 'World Mental Health Day', 'w'],
+  [10, 16, 'World Food Day', 'w'],
+  [10, 24, 'United Nations Day', 'w'],
+  [10, 31, 'Halloween', 'i'],
+  [11, 14, 'World Diabetes Day', 'w'],
+  [11, 16, 'International Day for Tolerance', 'w'],
+  [11, 19, "International Men's Day", 'w'],
+  [11, 20, "Universal Children's Day", 'w', "children'?s day"],
+  [11, 25, 'International Day for the Elimination of Violence against Women', 'w'],
+  [12, 1, 'World AIDS Day', 'w'],
+  [12, 3, 'International Day of Persons with Disabilities', 'w'],
+  [12, 10, 'Human Rights Day', 'w'],
+  [12, 18, 'International Migrants Day', 'w'],
+  [12, 24, 'Christmas Eve', 'r', 'christmas eve'],
+  [12, 25, 'Christmas Day', 'r', 'christmas day|^christmas$'],
+  [12, 31, "New Year's Eve", 'i', "new year'?s eve"]
+];
+
+// extra national days for some countries (library names are matched, so no duplicates)
+const LOCAL = {
+  BD: [
+    [2, 21, "Language Martyrs' Day (Shaheed Dibash)", 'h', 'martyrs|shaheed|language'],
+    [3, 25, 'Genocide Remembrance Day', 'i', 'genocide'],
+    [3, 26, 'Independence Day', 'h', 'independence'],
+    [4, 14, 'Pohela Boishakh (Bengali New Year)', 'h', 'boishakh|baisakh|bengali new year'],
+    [12, 14, 'Martyred Intellectuals Day', 'i', 'intellectual'],
+    [12, 16, 'Victory Day', 'h', 'victory']
+  ]
+};
+
+// days counted from Western Easter: [offset, name, regex]
+const EASTER = [
+  [-46, 'Ash Wednesday', 'ash wednesday'],
+  [-7, 'Palm Sunday', 'palm sunday'],
+  [-3, 'Maundy Thursday', 'maundy|holy thursday'],
+  [-2, 'Good Friday', 'good friday'],
+  [0, 'Easter Sunday', '^easter( sunday| day)?$'],
+  [39, 'Ascension Day', 'ascension'],
+  [49, 'Pentecost', 'pentecost|whit sunday']
+];
+
+// Islamic calendar: 'month-day' -> [name, regex]
+const ISL = {
+  '1-1': ['Islamic New Year', 'islamic new year|hijri new year|muharram|awal muharram'],
+  '1-10': ['Day of Ashura', 'ashura'],
+  '3-12': ["Mawlid (Prophet's Birthday)", 'mawlid|milad|prophet.*birthday|birthday of the prophet'],
+  '7-27': ["Isra and Mi'raj", "isra|mi'?raj"],
+  '8-15': ['Shab-e-Barat', 'shab-e-barat|shab e barat|bara.?at|mid-?sha'],
+  '9-1': ['Ramadan begins', 'ramadan.*(begin|start)|first day of ramadan|^ramadan$'],
+  '9-27': ['Laylat al-Qadr (Shab-e-Qadr)', 'qadr|qadar'],
+  '10-1': ['Eid al-Fitr', 'fitr'],
+  '12-9': ['Day of Arafah', 'arafah|arafat'],
+  '12-10': ['Eid al-Adha', 'adha|kurban|qurban|bakr']
+};
+const ISL_MONTHS = ['Muharram', 'Safar', "Rabi' al-awwal", "Rabi' al-thani", 'Jumada al-awwal', 'Jumada al-thani',
+  'Rajab', "Sha'ban", 'Ramadan', 'Shawwal', "Dhu al-Qi'dah", 'Dhu al-Hijjah'];
+
+// Hebrew calendar: 'month-day' (month in lower case)
+const HEB = {
+  'tishri-1': ['Rosh Hashanah', 'rosh hashan'],
+  'tishri-10': ['Yom Kippur', 'yom kippur'],
+  'tishri-15': ['Sukkot', 'sukkot'],
+  'kislev-25': ['Hanukkah (first day)', 'hanukkah|chanukah'],
+  'adar-14': ['Purim', 'purim'],
+  'adar ii-14': ['Purim', 'purim'],
+  'nisan-15': ['Passover (first day)', 'passover|pesach'],
+  'sivan-6': ['Shavuot', 'shavuot']
+};
+
+// Chinese calendar: 'month-day'
+const CHI = {
+  '1-1': ['Chinese New Year (Lunar New Year)', 'chinese new year|lunar new year|spring festival'],
+  '1-15': ['Lantern Festival', 'lantern'],
+  '5-5': ['Dragon Boat Festival', 'dragon boat|duanwu'],
+  '7-7': ['Qixi Festival', 'qixi'],
+  '8-15': ['Mid-Autumn Festival', 'mid-?autumn|moon festival'],
+  '9-9': ['Double Ninth Festival', 'double ninth|chongyang']
+};
+
+// equinoxes and solstices (Meeus mean-event polynomials, accurate to within minutes)
+const SEASON_C = [
+  [2451623.80984, 365242.37404, 0.05169, -0.00411, -0.00057],
+  [2451716.56767, 365241.62603, 0.00325, 0.00888, -0.00030],
+  [2451810.21715, 365242.01767, -0.11575, 0.00337, 0.00078],
+  [2451900.05952, 365242.74049, -0.06223, -0.00823, 0.00032]
+];
+const SEASON_N = ['March Equinox', 'June Solstice', 'September Equinox', 'December Solstice'];
+
+function addDays(d, n) { return new Date(d.getFullYear(), d.getMonth(), d.getDate() + n); }
+
+// n-th weekday of a month (month 0-11, weekday 0 = Sunday)
+function nthWeekday(y, m, wd, n) {
+  const first = new Date(y, m, 1);
+  return new Date(y, m, 1 + ((wd - first.getDay() + 7) % 7) + (n - 1) * 7);
+}
+
+function easterWestern(y) {
+  const a = y % 19, b = Math.floor(y / 100), c = y % 100;
+  const d = Math.floor(b / 4), e = b % 4, f = Math.floor((b + 8) / 25);
+  const g = Math.floor((b - f + 1) / 3), h = (19 * a + b - d - g + 15) % 30;
+  const i = Math.floor(c / 4), k = c % 4, l = (32 + 2 * e + 2 * i - h - k) % 7;
+  const m = Math.floor((a + 11 * h + 22 * l) / 451);
+  const mo = Math.floor((h + l - 7 * m + 114) / 31);
+  const da = ((h + l - 7 * m + 114) % 31) + 1;
+  return new Date(y, mo - 1, da);
+}
+
+function easterOrthodox(y) {
+  const a = y % 4, b = y % 7, c = y % 19, d = (19 * c + 15) % 30;
+  const e = (2 * a + 4 * b - d + 34) % 7;
+  const mo = Math.floor((d + e + 114) / 31);
+  const da = ((d + e + 114) % 31) + 1;
+  return new Date(y, mo - 1, da + 13); // Julian date + 13 days (valid 1900-2099)
+}
+
+function seasonDates(y) {
+  const t = (y - 2000) / 1000;
+  return SEASON_C.map(function (c, i) {
+    const jde = c[0] + t * (c[1] + t * (c[2] + t * (c[3] + t * c[4])));
+    const d = new Date((jde - 2440587.5) * 864e5);
+    return { n: SEASON_N[i], dt: new Date(d.getFullYear(), d.getMonth(), d.getDate()) };
+  });
+}
+
+function calFmt(cals, opt) {
+  for (let i = 0; i < cals.length; i++) {
+    try {
+      const f = new Intl.DateTimeFormat('en-u-ca-' + cals[i], opt);
+      if (f.resolvedOptions().calendar === cals[i]) return f;
+    } catch (e) {}
+  }
+  return null;
+}
+
+function calParts(f, d) {
+  const o = {};
+  f.formatToParts(d).forEach(function (p) { o[p.type] = p.value; });
+  return o;
+}
+
+function rx(s) { return s ? new RegExp(s, 'i') : null; }
+
+// walks every day of the next year through the Islamic, Hebrew and Chinese calendars
+function lunarEvents(today) {
+  const out = [];
+  const isl = calFmt(['islamic-umalqura', 'islamic-civil', 'islamic'], { day: 'numeric', month: 'numeric', year: 'numeric' });
+  const heb = calFmt(['hebrew'], { day: 'numeric', month: 'long' });
+  const chi = calFmt(['chinese'], { day: 'numeric', month: 'numeric' });
+  if (!isl && !heb && !chi) return out;
+
+  for (let i = 0; i <= UP_DAYS + 1; i++) {
+    const noon = new Date(today.getFullYear(), today.getMonth(), today.getDate() + i, 12);
+    const dt = new Date(noon.getFullYear(), noon.getMonth(), noon.getDate());
+
+    if (isl) {
+      const p = calParts(isl, noon);
+      const e = ISL[(+p.month) + '-' + (+p.day)];
+      if (e) out.push({ dt: dt, n: e[0], t: 'r', k: rx(e[1]), b: p.day + ' ' + ISL_MONTHS[p.month - 1] + ' ' + p.year + ' AH' });
+    }
+    if (heb) {
+      const p = calParts(heb, noon);
+      const e = HEB[String(p.month).toLowerCase() + '-' + (+p.day)];
+      if (e) out.push({ dt: dt, n: e[0], t: 'r', k: rx(e[1]), b: '' });
+    }
+    if (chi) {
+      const p = calParts(chi, noon);
+      if (/^\d+$/.test(p.month)) {
+        const e = CHI[(+p.month) + '-' + (+p.day)];
+        if (e) out.push({ dt: dt, n: e[0], t: 'i', k: rx(e[1]), b: '' });
+      }
+    }
+  }
+  return out;
+}
+
+// every built-in event for this year and the next (kept for the whole day)
+function calEvents(today, cc) {
+  const sig = dayKey(today) + cc;
+  if (calMemo.sig === sig) return calMemo.list;
+
+  const y = today.getFullYear();
+  const out = [];
+  function ev(dt, n, t, k, b) { out.push({ dt: dt, n: n, t: t, k: rx(k), b: b || '' }); }
+
+  for (let yr = y; yr <= y + 1; yr++) {
+    FIXED.concat(LOCAL[cc] || []).forEach(function (x) { ev(new Date(yr, x[0] - 1, x[1]), x[2], x[3], x[4]); });
+    ev(nthWeekday(yr, 4, 0, 2), "Mother's Day", 'i', "mother'?s day");
+    ev(nthWeekday(yr, 5, 0, 3), "Father's Day", 'i', "father'?s day");
+    const easter = easterWestern(yr);
+    EASTER.forEach(function (x) { ev(addDays(easter, x[0]), x[1], 'r', x[2]); });
+    ev(easterOrthodox(yr), 'Orthodox Easter', 'r', 'orthodox easter');
+    seasonDates(yr).forEach(function (s) { ev(s.dt, s.n, 's', null); });
+  }
+  lunarEvents(today).forEach(function (e) { out.push(e); });
+
+  calMemo = { sig: sig, list: out };
+  return out;
+}
+
+/* ---- source 4: your own dates ---- */
 function loadCustom() {
   const c = readJson(CUSTOM_KEY);
   return Array.isArray(c) ? c : [];
 }
 function saveCustom(list) { writeJson(CUSTOM_KEY, list); }
 
-/* ---- build the list: today until one year ahead ---- */
+/* ---- merge everything: today until one year ahead ---- */
+function norm(s) { return String(s).toLowerCase().replace(/\bthe\b|\bday\b/g, '').replace(/[^a-z0-9]/g, ''); }
+
+function upType(name, base) {
+  if (REL_RE.test(name)) return 'r';
+  if (base === 'i' && WORLD_RE.test(name)) return 'w';
+  return base;
+}
+
+function sameName(e, b) {
+  return norm(e.n) === norm(b.n) || (e.k && e.k.test(b.n));
+}
+
 function getUpcoming(today) {
   const cc = detectCountry();
   const y = today.getFullYear();
   const out = [];
   const seen = {};
 
-  function add(dt, n, b, t) {
-    const diff = Math.round((dt - today) / 86400000);
-    const k = dayKey(dt) + n.toLowerCase();
-    if (diff < 0 || diff > UP_DAYS || seen[k]) return;
+  function push(dt, n, b, t) {
+    const diff = Math.round((dt - today) / 864e5);
+    if (diff < 0 || diff > UP_DAYS) return;
+    const k = dayKey(dt) + norm(n);
+    if (seen[k]) return;
     seen[k] = 1;
-    out.push({ h: { n: n, b: b || '', t: t || 'i' }, dt: dt, diff: diff });
+    out.push({ dt: dt, n: n, b: b || '', t: UP_TYPES[t] ? t : 'i', diff: diff });
   }
 
+  // 1 + 2: library or backup API
   if (cc) {
     for (let yr = y; yr <= y + 1; yr++) {
       holItems(cc, yr).forEach(function (x) {
         const p = String(x.d).split('-');
-        if (p.length === 3) add(new Date(+p[0], +p[1] - 1, +p[2]), x.n, x.l, REL_RE.test(x.n) ? 'r' : x.c);
+        if (p.length === 3) push(new Date(+p[0], +p[1] - 1, +p[2]), x.n, x.l, upType(x.n, x.c));
       });
     }
   }
 
+  // 3: built-in calendar, skipped when the same day is already listed (name match within 3 days)
+  const base = out.slice();
+  calEvents(today, cc).forEach(function (e) {
+    const clash = base.some(function (b) { return Math.abs(b.dt - e.dt) <= 3.5 * 864e5 && sameName(e, b); });
+    if (!clash) push(e.dt, e.n, e.b, e.t);
+  });
+
+  // 4: your own dates
   loadCustom().forEach(function (c) {
     const p = String(c.d).split('-');
     if (p.length !== 3 || !c.n) return;
     if (c.r) {
-      for (let yr = y; yr <= y + 1; yr++) add(new Date(yr, +p[1] - 1, +p[2]), c.n, c.b, c.t);
+      for (let yr = y; yr <= y + 1; yr++) push(new Date(yr, +p[1] - 1, +p[2]), c.n, c.b, c.t);
     } else {
-      add(new Date(+p[0], +p[1] - 1, +p[2]), c.n, c.b, c.t);
+      push(new Date(+p[0], +p[1] - 1, +p[2]), c.n, c.b, c.t);
     }
   });
 
-  out.sort(function (a, b) { return a.dt - b.dt; });
+  out.sort(function (a, b) {
+    return (a.dt - b.dt) || (UP_ORDER.indexOf(a.t) - UP_ORDER.indexOf(b.t)) || a.n.localeCompare(b.n);
+  });
   return out;
 }
 
-function upEmptyText() {
-  if (holLoading) return 'Loading dates...';
-  const diag = '<div class="hdiag">Library: ' + esc(holDiag.lib) + '<br>Backup: ' + esc(holDiag.extra) + '</div>';
-  if (navigator.onLine === false) return 'No saved dates for this country yet. Connect to the internet once and they will be kept for offline use.' + diag;
-  return 'No upcoming dates for this country. You can add your own in Settings, Upcoming dates.' + diag;
-}
-
+/* ---- screen ---- */
 function drawChips() {
   const box = $('hFilter');
   if (!box) return;
@@ -2245,18 +2558,17 @@ function renderUpcoming() {
   const sub = document.querySelector('.hsub');
   if (sub) sub.textContent = cc ? (flagOf(cc) + ' ' + countryName(cc)).trim() : '';
 
-  const list = getUpcoming(today).filter(function (it) {
-    return f === 'all' || it.h.t === f;
-  }).slice(0, UP_MAX);
+  const all = getUpcoming(today).filter(function (it) { return f === 'all' || it.t === f; });
+  const list = all.slice(0, upLimit);
 
   // draw again only when something really changed (keeps the scroll position)
-  const sig = [dayKey(today), cc, f, holLoading, navigator.onLine !== false, holDiag.lib, holDiag.extra,
-    list.map(function (it) { return dayKey(it.dt) + it.h.n + it.h.t; }).join('|')].join('#');
+  const sig = [dayKey(today), cc, f, holLoading, upLimit, all.length,
+    list.map(function (it) { return dayKey(it.dt) + it.n + it.t; }).join('|')].join('#');
   if (sig === lastUpSig) return;
   lastUpSig = sig;
 
   if (!list.length) {
-    box.innerHTML = '<div class="hempty">' + upEmptyText() + '</div>';
+    box.innerHTML = '<div class="hempty">' + (holLoading ? 'Loading dates...' : 'Nothing here for the next 12 months. Try another filter, or add your own date in Settings.') + '</div>';
     return;
   }
 
@@ -2268,17 +2580,19 @@ function renderUpcoming() {
       month = mk;
       html += '<div class="hgrp">' + it.dt.toLocaleDateString('en-GB', { month: 'long', year: 'numeric' }) + '</div>';
     }
-    const t = UP_LABEL[it.h.t] ? it.h.t : 'i';
     const left = it.diff === 0 ? 'Today' : (it.diff === 1 ? 'Tomorrow' : 'In ' + it.diff + ' days');
     const wd = it.dt.toLocaleDateString('en-GB', { weekday: 'short' });
-    html += '<div class="hcard t-' + t + (it.diff === 0 ? ' today' : '') + '">' +
+    html += '<div class="hcard t-' + it.t + (it.diff === 0 ? ' today' : '') + '">' +
       '<div class="hd"><span class="hmon">' + MON[it.dt.getMonth()] + '</span>' +
       '<span class="hday">' + it.dt.getDate() + '</span></div>' +
-      '<div class="hmid"><div class="hname">' + esc(it.h.n) + '</div><div class="hbn">' + esc(it.h.b) + '</div></div>' +
+      '<div class="hmid"><div class="hname">' + esc(it.n) + '</div><div class="hbn">' + esc(it.b) + '</div></div>' +
       '<div class="hright"><span class="hleft' + (it.diff <= 7 ? ' soon' : '') + '">' + left + '</span>' +
-      '<span class="hwd">' + wd + ', ' + UP_LABEL[t] + '</span></div>' +
+      '<span class="hwd">' + wd + ', ' + UP_TYPES[it.t][0] + '</span></div>' +
       '</div>';
   });
+  if (all.length > list.length) {
+    html += '<button class="hmore" data-more="1">Show more (' + (all.length - list.length) + ' left)</button>';
+  }
   box.innerHTML = html;
 }
 
@@ -2292,7 +2606,7 @@ function openUpcomingSettings() {
     opt('auto', 'Auto (' + esc(countryName(autoCountry()) || 'unknown') + ')', sel === 'auto') +
     countryList().map(function (x) { return opt(x.c, esc(flagOf(x.c) + ' ' + x.n), sel === x.c); }).join('') +
     '</select></div>',
-    'Auto follows the phone. Dates are calculated for every year by a worldwide library, so nothing is typed in by hand. ' +
+    'Public holidays follow this country. Religious days, world days, seasons and other calendars are shown for everyone. ' +
     'Moon-based days (Eid, Ramadan...) are calculated, so the real date can differ by a day.');
   h += sec('Add your own date',
     '<div class="li"><span class="k">Date</span><input type="date" class="inp" id="upDate"></div>' +
@@ -2381,6 +2695,7 @@ function initUpcoming() {
       if (!b) return;
       globalSet.upFilter = b.dataset.f;
       saveGlobal();
+      upLimit = UP_PAGE;
       drawChips();
       renderUpcoming();
       box.scrollTop = 0;
@@ -2390,10 +2705,17 @@ function initUpcoming() {
   }
   drawChips();
 
+  box.addEventListener('click', function (e) {
+    if (e.target.closest && e.target.closest('[data-more]')) {
+      upLimit += UP_PAGE;
+      renderUpcoming();
+    }
+  });
+
   let lastIdx = 0;
   box.addEventListener('scroll', function () {
     const first = box.querySelector('.hcard');
-    const rowH = first ? first.offsetHeight + 8 : 70;
+    const rowH = first ? first.offsetHeight + 9 : 70;
     const idx = Math.round(box.scrollTop / rowH);
     if (idx !== lastIdx) { lastIdx = idx; haptic(7); }
   }, { passive: true });
@@ -2406,13 +2728,36 @@ function initUpcoming() {
 }
 
 /* ==========================================================================
-   16. BOTTOM BAR, SETTINGS BUTTON, PLUS BUTTON
+   16. BOTTOM BAR, BUTTON EFFECTS, SETTINGS BUTTON, PLUS BUTTON
    ========================================================================== */
+// buttons that send out a light when pressed (the colour comes from --gc in the CSS)
+const FX_BUTTONS = '#swGo,#tmGo,#swLap,#swReset,#tmReset,#aPlus,#pAdd,#add';
+
+function burst(btn) {
+  if (window.matchMedia && matchMedia('(prefers-reduced-motion: reduce)').matches) return;
+  ['flash', 'burst'].forEach(function (c) {
+    const s = document.createElement('span');
+    s.className = 'fx ' + c;
+    s.setAttribute('aria-hidden', 'true');
+    s.addEventListener('animationend', function () { s.remove(); });
+    btn.appendChild(s);
+  });
+}
+
 function initPressFeedback() {
   document.addEventListener('pointerdown', function (e) {
     const t = (e.target && e.target.closest)
       ? e.target.closest('#swGo,#tmGo,.round,.fab,#nav button') : null;
     if (t) haptic(t.id === 'swGo' || t.id === 'tmGo' ? 16 : 8);
+    const f = (e.target && e.target.closest) ? e.target.closest(FX_BUTTONS) : null;
+    if (f) burst(f);
+  }, true);
+
+  // keyboard presses (no pointer) get the same light
+  document.addEventListener('click', function (e) {
+    if (e.detail !== 0) return;
+    const f = (e.target && e.target.closest) ? e.target.closest(FX_BUTTONS) : null;
+    if (f) burst(f);
   }, true);
 }
 
