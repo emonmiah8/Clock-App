@@ -2,8 +2,8 @@
    CLOCK APP - main.js
    1 Config & state        7 Digits & time HTML       13 Stopwatch
    2 Helpers & icons       8 Home widgets             14 Timer & presets
-   3 Injected styles       9 Settings                 15 Upcoming
-   4 Storage              10 Edit / Add widget        16 Press feedback, nav
+   3 Injected styles       9 Settings                 15 Upcoming (holidays)
+   4 Storage              10 Edit / Add widget        16 Bottom bar & buttons
    5 Sheet system & UI    11 Tabs                     17 Connection, permissions, SW
    6 Tones & ringing      12 Alarms                   18 Init
    ========================================================================== */
@@ -86,11 +86,6 @@ let wakeLock = null;
 let penOut = false;
 let plusOut = false;
 
-let lastFt = -1, lastFb = -1, lastSh = -1;
-let cachedFt = 34;
-let lastMeasure = 0;
-let fadeQueued = false;
-
 const sheet = document.getElementById('sheet');
 const overlay = document.getElementById('overlay');
 
@@ -100,8 +95,10 @@ const overlay = document.getElementById('overlay');
 function $(id) { return document.getElementById(id); }
 function pad(n) { return String(n).padStart(2, '0'); }
 function dayKey(d) { return d.getFullYear() + '-' + pad(d.getMonth() + 1) + '-' + pad(d.getDate()); }
-function clamp01(x) { return x < 0 ? 0 : (x > 1 ? 1 : x); }
-function escapeAttr(s) { return String(s).replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;'); }
+function esc(s) {
+  return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+}
 function haptic(p) { try { if (navigator.vibrate) navigator.vibrate(p); } catch (e) {} }
 
 // click point for the pop-in origin
@@ -127,100 +124,85 @@ function setIcon(id, svg, label) {
 
 /* ==========================================================================
    3. INJECTED STYLES
+   --------------------------------------------------------------------------
+   One design system: neutral surfaces, one orange accent, one type scale.
    ========================================================================== */
-function buildListMask() {
-  const STEPS = 8;
-  const top = [];
-  const bot = [];
-  for (let q = 0; q <= STEPS; q++) {
-    const f = q / STEPS;
-    const a = 3 * f * f - 2 * f * f * f;
-    top.push('rgba(0,0,0,' + a.toFixed(3) + ') calc(var(--ft,34px) + ' + (f * 98).toFixed(1) + 'px - var(--sh,0px))');
-    bot.push('rgba(0,0,0,' + (1 - a).toFixed(3) + ') calc(100% - var(--fb,92px) - ' + ((1 - f) * 98).toFixed(1) + 'px)');
-  }
-  return 'linear-gradient(to bottom,transparent 0,' + top.join(',') + ',' + bot.join(',') + ')';
-}
-
 function injectStyles() {
   if (navigator.onLine !== false && !document.querySelector('link[data-clock-font]')) {
     const l = document.createElement('link');
     l.rel = 'stylesheet';
     l.setAttribute('data-clock-font', '1');
-    l.href = 'https://fonts.googleapis.com/css2?family=Poppins:wght@600;700;800&display=swap';
+    l.href = 'https://fonts.googleapis.com/css2?family=Inter:wght@500;600;700&display=swap';
     document.head.appendChild(l);
   }
 
-  const MASK = buildListMask();
   const css = `
 @font-face{font-family:"ClockNum";src:url("digits.ttf") format("truetype");font-weight:100 900;font-style:normal;font-display:swap;unicode-range:U+0030-0039}
-:root{--sf:"ClockNum","Poppins",system-ui,-apple-system,"Roboto",sans-serif;--outer:0 12px 26px rgba(0,0,0,.38),0 2px 6px rgba(0,0,0,.3)}
-body.light{--outer:0 10px 22px rgba(0,0,0,.20),0 2px 5px rgba(0,0,0,.14)}
+:root{--sf:"ClockNum","Inter",system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;--accent:#ff9f0a;--danger:#ff453a;--ok:#30d158;--surf:rgba(255,255,255,.06);--surf2:rgba(255,255,255,.11);--line:rgba(255,255,255,.10);--pop:rgba(28,30,36,.78)}
+body.light{--surf:rgba(0,0,0,.04);--surf2:rgba(0,0,0,.07);--line:rgba(0,0,0,.09);--pop:rgba(255,255,255,.82)}
 html,body,button,input,select,textarea,svg text,.time .txt,.hcard,.preset,.btn{font-family:var(--sf)!important}
-*{font-weight:700!important}
-.atitle,.title,.hname{font-weight:800!important;letter-spacing:-0.03em}
-body{letter-spacing:-0.01em}
+body{font-weight:500;letter-spacing:-.005em;-webkit-font-smoothing:antialiased}
+.time,.time .txt,#swMain,#swCs,#tmTime,.pi{font-weight:700}
+.atitle,.title,.hname{font-weight:700;letter-spacing:-.02em}
 body .time .txt{font-size:min(calc(var(--size)*1),20vw);letter-spacing:0;line-height:1}
 #stage{padding:64px 12px 12px!important;margin:0 auto!important}
 
-body::before{content:"";position:fixed;inset:-10%;z-index:-1;pointer-events:none;background:radial-gradient(40% 28% at 12% 8%,rgba(255,106,92,.20),transparent 70%),radial-gradient(46% 34% at 92% 38%,rgba(74,140,247,.20),transparent 70%),radial-gradient(42% 30% at 28% 96%,rgba(48,209,88,.14),transparent 70%)}
-body.light::before{opacity:.7}
-
-#holidays{position:relative!important;flex:1 1 auto!important;display:flex!important;flex-direction:column;min-height:300px;padding:0!important;animation:none!important}
-.hhead{position:absolute!important;left:0;right:0;top:0;z-index:3;display:flex!important;justify-content:space-between;align-items:center;padding:12px 22px 10px!important;white-space:nowrap;pointer-events:none;font-size:13px;letter-spacing:.08em}
+/* ---- Upcoming ---- */
+#holidays{position:relative!important;flex:1 1 auto!important;display:flex!important;flex-direction:column;min-height:320px;padding:0!important;animation:none!important;--mask:linear-gradient(to bottom,transparent 0,#000 10px,#000 calc(100% - var(--ov,0px) - 36px),transparent calc(100% - var(--ov,0px) + 2px))}
+.hhead{position:static!important;display:flex!important;justify-content:space-between;align-items:baseline;gap:10px;padding:14px 20px 8px!important;white-space:nowrap;pointer-events:auto;font-size:19px;font-weight:700;letter-spacing:-.02em}
 .hhead::before{display:none!important}
-.hsub{font-size:11px;letter-spacing:0;white-space:nowrap}
-#hList{flex:1 1 0!important;flex-direction:column!important;gap:10px!important;min-height:220px;max-height:none!important;overflow-y:auto!important;overflow-x:hidden!important;padding:calc(var(--ft,34px) + 16px) 16px calc(var(--fb,92px) + 134px)!important;scroll-snap-type:none!important;overscroll-behavior-x:contain;overscroll-behavior-y:none!important;touch-action:pan-y;-webkit-mask-image:${MASK}!important;mask-image:${MASK}!important}
-.hcard{width:auto!important;flex:none!important;display:flex!important;align-items:center;gap:14px;padding:12px 16px!important;border-radius:22px!important;background:linear-gradient(150deg,rgba(255,255,255,.12),rgba(255,255,255,.05))!important;-webkit-backdrop-filter:none!important;backdrop-filter:none!important;border:1px solid rgba(255,255,255,.14);box-shadow:0 8px 24px rgba(0,0,0,.28),inset 0 1px 0 rgba(255,255,255,.2);transition:scale .12s ease!important}
-.hcard:active{scale:.97}
-body.light .hcard{background:linear-gradient(150deg,rgba(255,255,255,.88),rgba(255,255,255,.64))!important;border-color:rgba(255,255,255,.8);box-shadow:0 8px 24px rgba(0,0,0,.08),inset 0 1px 0 rgba(255,255,255,.9)}
-.hd{display:flex;flex-direction:column;align-items:center;min-width:44px}
-.hd .hmon{font-size:12px;letter-spacing:.06em}
-.hd .hday{font-size:30px;line-height:1.05}
+.hsub{font-size:13px;font-weight:600;letter-spacing:0;opacity:.7;overflow:hidden;text-overflow:ellipsis}
+.hfilter{flex:none;display:flex;gap:8px;padding:2px 16px 10px;overflow-x:auto;scrollbar-width:none}
+.hfilter::-webkit-scrollbar{display:none}
+.hchip{flex:none;padding:6px 14px;border-radius:999px;font-size:13px;font-weight:600;color:inherit;background:var(--surf);border:1px solid var(--line);cursor:pointer;-webkit-tap-highlight-color:transparent;transition:background .15s ease,color .15s ease,border-color .15s ease}
+.hchip.on{background:var(--accent);border-color:var(--accent);color:#1a1100}
+#hList{flex:1 1 0!important;display:flex!important;flex-direction:column!important;gap:8px!important;min-height:220px;max-height:none!important;overflow-y:auto!important;overflow-x:hidden!important;padding:6px 16px calc(var(--ov,0px) + 28px)!important;scroll-snap-type:none!important;overscroll-behavior:contain;touch-action:pan-y;scrollbar-width:none;-webkit-mask-image:var(--mask);mask-image:var(--mask)}
+#hList::-webkit-scrollbar{display:none}
+.hgrp{flex:none;padding:12px 4px 2px;font-size:13px;font-weight:600;opacity:.55}
+.hgrp:first-child{padding-top:2px}
+.hcard{width:auto!important;flex:none!important;display:flex!important;align-items:center;gap:14px;padding:10px 14px 10px 10px!important;border-radius:16px!important;background:var(--surf)!important;-webkit-backdrop-filter:none!important;backdrop-filter:none!important;border:1px solid var(--line);box-shadow:none;transition:transform .12s ease}
+.hcard:active{transform:scale(.985)}
+.hcard.today{border-color:var(--tc);background:color-mix(in srgb,var(--tc) 12%,transparent)!important}
+.t-h{--tc:#ff6a5c}.t-i{--tc:#4a8cf7}.t-r{--tc:#30d158}
+.hd{flex:none;display:flex;flex-direction:column;align-items:center;justify-content:center;width:50px;height:54px;border-radius:12px;background:color-mix(in srgb,var(--tc) 16%,transparent)}
+.hd .hmon{font-size:11px;font-weight:700;color:var(--tc)}
+.hd .hday{font-size:23px;line-height:1.05;font-weight:700}
 .hmid{flex:1;min-width:0}
-.hmid .hname{margin-top:0;font-size:16px}
-.hright{display:flex;flex-direction:column;align-items:flex-end;gap:6px}
-.hright .hleft{margin-top:0}
-.hwd{margin-left:0}
-.t-h .hmon{color:#ff6a5c}
-.t-i .hmon{color:#4a8cf7}
-.t-r .hmon{color:#30d158}
+.hmid .hname{margin:0;font-size:15px;line-height:1.25;overflow:hidden;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical}
+.hbn{margin-top:2px;font-size:12px;opacity:.55;overflow:hidden;white-space:nowrap;text-overflow:ellipsis}
+.hbn:empty{display:none}
+.hright{flex:none;display:flex;flex-direction:column;align-items:flex-end;gap:3px;text-align:right}
+.hright .hleft{margin:0;font-size:13px;font-weight:700}
+.hleft.soon{color:var(--accent)}
+.hwd{margin:0;font-size:11.5px;opacity:.55}
+.hempty{padding:36px 24px;text-align:center;font-size:14px;line-height:1.5;opacity:.55}
 
-.pb{position:absolute;left:0;right:0;z-index:2;pointer-events:none}
-.pbl{position:absolute;left:0;right:0;top:0;bottom:0}
-#pbTop{top:0;height:calc(var(--ft,34px) + 98px)}
-#pbBot{bottom:calc(var(--fb,92px) - 14px);height:112px}
-
-/* ---- every sheet opens as the same pop-in card ---- */
-#overlay.open{background:rgba(0,0,0,.28)!important;-webkit-backdrop-filter:blur(14px);backdrop-filter:blur(14px)}
+/* ---- sheets: one pop-in card ---- */
+#overlay.open{background:rgba(0,0,0,.28)!important;-webkit-backdrop-filter:blur(10px);backdrop-filter:blur(10px)}
 body.light #overlay.open{background:rgba(255,255,255,.25)!important}
-#sheet{background:rgba(30,32,38,.62)!important;-webkit-backdrop-filter:blur(26px) saturate(1.6);backdrop-filter:blur(26px) saturate(1.6);border:1px solid rgba(255,255,255,.16);box-shadow:0 20px 50px rgba(0,0,0,.45),inset 0 1px 0 rgba(255,255,255,.2)}
-body.light #sheet{background:rgba(255,255,255,.72)!important;border-color:rgba(255,255,255,.85);box-shadow:0 20px 50px rgba(0,0,0,.15),inset 0 1px 0 rgba(255,255,255,.9)}
-@keyframes popIn{from{opacity:0;transform:scale(.86) translateY(-8px)}to{opacity:1;transform:none}}
-@keyframes popOut{from{opacity:1;transform:none}to{opacity:0;transform:scale(.88) translateY(-6px)}}
+#sheet{background:var(--pop)!important;-webkit-backdrop-filter:blur(28px) saturate(1.5);backdrop-filter:blur(28px) saturate(1.5);border:1px solid var(--line);box-shadow:0 20px 50px rgba(0,0,0,.4);color-scheme:dark}
+body.light #sheet{color-scheme:light;box-shadow:0 20px 50px rgba(0,0,0,.14)}
+@keyframes popIn{from{opacity:0;transform:scale(.88) translateY(-8px)}to{opacity:1;transform:none}}
+@keyframes popOut{from{opacity:1;transform:none}to{opacity:0;transform:scale(.9) translateY(-6px)}}
 #sheet:not(.open){pointer-events:none}
-#sheet.open{left:auto!important;right:12px!important;bottom:auto!important;top:calc(64px + env(safe-area-inset-top,0px))!important;width:min(92vw,360px)!important;max-height:calc(100vh - 150px);max-height:calc(100dvh - 150px);overflow-y:auto;border-radius:26px!important;padding:18px 16px 16px!important;animation:popIn .28s cubic-bezier(.22,.8,.25,1) both;scrollbar-width:none}
+#sheet.open{left:auto!important;right:12px!important;bottom:auto!important;top:calc(64px + env(safe-area-inset-top,0px))!important;width:min(92vw,360px)!important;max-height:calc(100vh - 150px);max-height:calc(100dvh - 150px);overflow-y:auto;border-radius:24px!important;padding:18px 16px 16px!important;animation:popIn .26s cubic-bezier(.22,.8,.25,1) both;scrollbar-width:none}
 #sheet.open::-webkit-scrollbar{display:none}
 #sheet.open.closing{animation:popOut .16s ease both;pointer-events:none}
+@media (prefers-reduced-motion:reduce){#sheet.open,#sheet.open.closing{animation:none}}
 
-/* ---- sheet building blocks ---- */
-#sheet{color-scheme:dark}
-body.light #sheet{color-scheme:light}
 #sheet button{background:none;border:0;color:inherit;font:inherit;padding:0;margin:0;cursor:pointer;-webkit-tap-highlight-color:transparent}
+#sheet button:focus-visible,.hchip:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
 #sheet .shead{display:flex;align-items:center;gap:10px;min-height:34px;margin:0 0 14px}
-#sheet .stitle{flex:1;font-size:22px;font-weight:800!important;letter-spacing:-.03em}
-#sheet .back{width:34px;height:34px;flex:none;border-radius:50%;display:flex;align-items:center;justify-content:center;padding:0 0 3px!important;font-size:24px;line-height:1;background:rgba(255,255,255,.12)}
-body.light #sheet .back{background:rgba(0,0,0,.07)}
-#sheet .sl{font-size:11px;letter-spacing:.09em;text-transform:uppercase;opacity:.55;margin:18px 8px 7px}
+#sheet .stitle{flex:1;font-size:22px;font-weight:700;letter-spacing:-.03em}
+#sheet .back{width:34px;height:34px;flex:none;border-radius:50%;display:flex;align-items:center;justify-content:center;padding:0 0 3px!important;font-size:24px;line-height:1;background:var(--surf2)}
+#sheet .sl{font-size:13px;font-weight:600;opacity:.55;margin:18px 8px 7px}
 #sheet .shead+.sl{margin-top:2px}
-#sheet .grp{margin-top:14px;border-radius:16px;overflow:hidden;background:rgba(255,255,255,.08);border:1px solid rgba(255,255,255,.08)}
-body.light #sheet .grp{background:rgba(0,0,0,.045);border-color:rgba(0,0,0,.05)}
+#sheet .grp{margin-top:14px;border-radius:14px;overflow:hidden;background:var(--surf);border:1px solid var(--line)}
 #sheet .sl+.grp,#sheet .shead+.grp,#sheet .pcard+.grp{margin-top:0}
 #sheet .li{display:flex;align-items:center;gap:12px;width:100%;min-height:48px;padding:10px 14px;box-sizing:border-box;text-align:left;font-size:15px}
-#sheet .li+.li{border-top:1px solid rgba(255,255,255,.08)}
-body.light #sheet .li+.li{border-top-color:rgba(0,0,0,.07)}
+#sheet .li+.li{border-top:1px solid var(--line)}
 #sheet button.li{transition:background .12s ease}
-#sheet button.li:active{background:rgba(255,255,255,.09)}
-body.light #sheet button.li:active{background:rgba(0,0,0,.06)}
+#sheet button.li:active{background:var(--surf2)}
 #sheet .k{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 #sheet .kk{flex:1;min-width:0}
 #sheet .kk .k{white-space:normal}
@@ -229,11 +211,11 @@ body.light #sheet button.li:active{background:rgba(0,0,0,.06)}
 #sheet .nav::after{content:"\\203A";flex:none;font-size:22px;line-height:1;opacity:.4;margin-left:-4px}
 #sheet .sn{margin:8px 8px 0;font-size:12px;line-height:1.4;opacity:.6}
 #sheet .sn.mid{text-align:center;margin:14px 0 4px}
-#sheet .chk{flex:none;opacity:0;color:#ff9f0a;font-size:17px}
+#sheet .chk{flex:none;opacity:0;color:var(--accent);font-size:17px}
 #sheet .li.sel .chk{opacity:1}
 #sheet .dot{display:inline-block;flex:none;width:8px;height:8px;border-radius:50%;background:#8e8e93}
-#sheet .dot.ok{background:#30d158}
-#sheet .dot.bad{background:#ff453a}
+#sheet .dot.ok{background:var(--ok)}
+#sheet .dot.bad{background:var(--danger)}
 
 #sheet input[type=text],#sheet input[type=date],#sheet input[type=time],#sheet select{box-sizing:border-box;min-width:0;padding:0;border:0;outline:0;background:transparent;color:inherit;font-size:15px;-webkit-appearance:none;appearance:none}
 #sheet .inp{flex:1;text-align:right}
@@ -243,103 +225,77 @@ body.light #sheet button.li:active{background:rgba(0,0,0,.06)}
 #sheet .bigtime{width:100%;padding:6px 0;text-align:center;font-size:46px;letter-spacing:-.02em}
 #sheet .li.cen{justify-content:center}
 
-#sheet .seg{display:flex;gap:2px;padding:3px;border-radius:11px;background:rgba(255,255,255,.10);min-width:150px}
-body.light #sheet .seg{background:rgba(0,0,0,.07)}
-#sheet .seg button{flex:1;padding:7px 10px;border-radius:9px;font-size:13px;opacity:.7;white-space:nowrap;transition:background .2s ease,opacity .2s ease}
-#sheet .seg button.on{opacity:1;background:rgba(255,255,255,.24);box-shadow:0 1px 3px rgba(0,0,0,.25)}
-body.light #sheet .seg button.on{background:#fff;box-shadow:0 1px 3px rgba(0,0,0,.15)}
+#sheet .seg{display:flex;gap:2px;padding:3px;border-radius:10px;background:var(--surf2);min-width:150px}
+#sheet .seg button{flex:1;padding:7px 10px;border-radius:8px;font-size:13px;font-weight:600;opacity:.65;white-space:nowrap;transition:background .2s ease,opacity .2s ease}
+#sheet .seg button.on{opacity:1;background:rgba(255,255,255,.22);box-shadow:0 1px 3px rgba(0,0,0,.2)}
+body.light #sheet .seg button.on{background:#fff}
 
-#sheet .sx{position:relative;flex:none;width:50px;height:30px;border-radius:15px;background:rgba(255,255,255,.2);transition:background .2s ease}
-body.light #sheet .sx{background:rgba(0,0,0,.18)}
+#sheet .sx{position:relative;flex:none;width:50px;height:30px;border-radius:15px;background:var(--surf2);transition:background .2s ease}
 #sheet .sx::after{content:"";position:absolute;top:2px;left:2px;width:26px;height:26px;border-radius:50%;background:#fff;box-shadow:0 2px 4px rgba(0,0,0,.3);transition:transform .22s cubic-bezier(.3,1.4,.5,1)}
-#sheet .sx.on{background:#ff9f0a}
+#sheet .sx.on{background:var(--accent)}
 #sheet .sx.on::after{transform:translateX(20px)}
 
 #sheet .sws{display:flex;flex-wrap:wrap;justify-content:flex-end;gap:9px}
-#sheet .sw{width:27px;height:27px;border-radius:50%;border:2px solid rgba(255,255,255,.28);transition:transform .15s ease}
-body.light #sheet .sw{border-color:rgba(0,0,0,.18)}
+#sheet .sw{width:27px;height:27px;border-radius:50%;border:2px solid var(--line);transition:transform .15s ease}
 #sheet .sw:active{transform:scale(.88)}
-#sheet .sw.on{outline:2px solid #ff9f0a;outline-offset:2px}
+#sheet .sw.on{outline:2px solid var(--accent);outline-offset:2px}
 
-#sheet input[type=range]{-webkit-appearance:none;appearance:none;flex:1;height:4px;margin:0;border-radius:2px;background:rgba(255,255,255,.25);outline:0}
-body.light #sheet input[type=range]{background:rgba(0,0,0,.18)}
+#sheet input[type=range]{-webkit-appearance:none;appearance:none;flex:1;height:4px;margin:0;border-radius:2px;background:var(--surf2);outline:0}
 #sheet input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:24px;height:24px;border-radius:50%;background:#fff;box-shadow:0 2px 6px rgba(0,0,0,.4)}
 #sheet input[type=range]::-moz-range-thumb{width:24px;height:24px;border:0;border-radius:50%;background:#fff;box-shadow:0 2px 6px rgba(0,0,0,.4)}
 
-#sheet .pcard{padding:14px 16px;margin-top:0;border-radius:16px;background:linear-gradient(150deg,rgba(255,159,10,.24),rgba(255,159,10,.06));border:1px solid rgba(255,159,10,.30)}
-#sheet .pcn{font-size:21px;font-weight:800!important;letter-spacing:-.02em;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+#sheet .pcard{padding:14px 16px;border-radius:14px;background:rgba(255,159,10,.12);border:1px solid rgba(255,159,10,.30)}
+#sheet .pcn{font-size:21px;font-weight:700;letter-spacing:-.02em;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 #sheet .pcs{margin-top:3px;font-size:12.5px;opacity:.7}
 
 #sheet .acts{display:flex;gap:10px;margin-top:16px}
 #sheet .acts+.acts{margin-top:10px}
-#sheet .bt{flex:1;padding:13px 10px;border-radius:14px;font-size:15px;text-align:center;background:rgba(255,255,255,.12);transition:transform .12s ease,background .2s ease}
-body.light #sheet .bt{background:rgba(0,0,0,.06)}
-#sheet .bt:active{transform:scale(.96)}
-#sheet .bt.pri,body.light #sheet .bt.pri{color:#fff;background:linear-gradient(150deg,#ffb54d,#ff8a00);box-shadow:0 6px 16px rgba(255,140,20,.35)}
-#sheet .bt.dng{color:#ff453a}
-#sheet .mini{flex:none;padding:6px 13px;border-radius:999px;font-size:13px;white-space:nowrap;color:#ff9f0a;background:rgba(255,159,10,.18)}
-#sheet .mini.dng{color:#ff453a;background:rgba(255,69,58,.16)}
+#sheet .bt{flex:1;padding:13px 10px;border-radius:12px;font-size:15px;font-weight:600;text-align:center;background:var(--surf2);transition:transform .12s ease,background .2s ease}
+#sheet .bt:active{transform:scale(.97)}
+#sheet .bt.pri,body.light #sheet .bt.pri{color:#fff;background:var(--accent)}
+#sheet .bt.dng{color:var(--danger)}
+#sheet .mini{flex:none;padding:6px 13px;border-radius:999px;font-size:13px;font-weight:600;white-space:nowrap;color:var(--accent);background:rgba(255,159,10,.16)}
+#sheet .mini.dng{color:var(--danger);background:rgba(255,69,58,.14)}
 
 #sheet .trip{display:flex;gap:8px;padding:12px}
 #sheet .trip>div{flex:1;text-align:center}
-#sheet .trip select{width:100%;padding:8px 0;border-radius:10px;font-size:24px;text-align:center;text-align-last:center;background:rgba(255,255,255,.10)}
-body.light #sheet .trip select{background:rgba(0,0,0,.06)}
-#sheet .trip i{display:block;margin-top:5px;font-style:normal;font-size:10.5px;letter-spacing:.08em;text-transform:uppercase;opacity:.55}
+#sheet .trip select{width:100%;padding:8px 0;border-radius:10px;font-size:24px;text-align:center;text-align-last:center;background:var(--surf2)}
+#sheet .trip i{display:block;margin-top:5px;font-style:normal;font-size:12px;opacity:.55}
 #sheet .tonebox{max-height:52vh;overflow-y:auto;margin:0 -6px;padding:0 6px;scrollbar-width:none}
 #sheet .tonebox::-webkit-scrollbar{display:none}
 
+/* ---- top-right and add buttons ---- */
 #cog{width:46px;height:46px;padding:0!important;opacity:1!important;display:flex!important;align-items:center;justify-content:center;font-size:0}
 .dots{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:3px;pointer-events:none;transition:transform .38s cubic-bezier(.3,1.5,.5,1)}
-.dots i{display:block;width:4px;height:4px;border-radius:50%;background:currentColor;transition:transform .16s cubic-bezier(.3,1.8,.5,1),opacity .2s ease}
+.dots i{display:block;width:4px;height:4px;border-radius:50%;background:currentColor;transition:transform .16s cubic-bezier(.3,1.8,.5,1)}
 #cog.press .dots i{transform:scale(.68)}
 #cog.out .dots{transform:rotate(90deg)}
-
-.plusi{position:relative;display:flex;align-items:center;justify-content:center;width:100%;height:100%;pointer-events:none;transition:transform .38s cubic-bezier(.3,1.5,.5,1)}
+.plusi{display:flex;align-items:center;justify-content:center;width:100%;height:100%;pointer-events:none;transition:transform .38s cubic-bezier(.3,1.5,.5,1)}
 #add.out .plusi{transform:rotate(135deg)}
 
-#toast{position:fixed;left:50%;bottom:calc(88px + env(safe-area-inset-bottom,0px));transform:translate(-50%,12px);z-index:70;display:flex;align-items:center;gap:12px;max-width:min(92vw,420px);padding:11px 16px;border-radius:999px;background:rgba(30,32,38,.72);color:#fff;-webkit-backdrop-filter:blur(20px) saturate(1.6);backdrop-filter:blur(20px) saturate(1.6);border:1px solid rgba(255,255,255,.16);box-shadow:0 10px 30px rgba(0,0,0,.4);font-size:14px;line-height:1.3;opacity:0;pointer-events:none;transition:opacity .25s ease,transform .25s ease}
+/* ---- toast ---- */
+#toast{position:fixed;left:50%;bottom:calc(88px + env(safe-area-inset-bottom,0px));transform:translate(-50%,12px);z-index:70;display:flex;align-items:center;gap:12px;max-width:min(92vw,420px);padding:11px 16px;border-radius:999px;background:var(--pop);color:inherit;-webkit-backdrop-filter:blur(20px) saturate(1.5);backdrop-filter:blur(20px) saturate(1.5);border:1px solid var(--line);box-shadow:0 10px 30px rgba(0,0,0,.3);font-size:14px;line-height:1.3;opacity:0;pointer-events:none;transition:opacity .25s ease,transform .25s ease}
 #toast.show{opacity:1;transform:translate(-50%,0);pointer-events:auto}
-#toast .tact{background:none;border:0;color:#ff9f0a;padding:0;font-size:14px;white-space:nowrap}
-body.light #toast{background:rgba(255,255,255,.85);color:#1c1c1e;border-color:rgba(255,255,255,.9);box-shadow:0 10px 30px rgba(0,0,0,.15)}
+#toast .tact{background:none;border:0;color:var(--accent);padding:0;font-size:14px;font-weight:600;white-space:nowrap}
 
+/* ---- widgets & stopwatch ---- */
 .wdate{margin-top:6px;opacity:.8}
 .woff{margin-top:2px!important;opacity:.6}
-.clsvg{width:calc(var(--size)*3.5);height:calc(var(--size)*3.5);filter:drop-shadow(0 8px 18px rgba(0,0,0,.35))}
-
-#swHand line{stroke:#ff9f0a!important}
-#swHand circle:first-of-type{fill:#ff9f0a!important}
-.dialtime .cs,.dialtime .time.cs,#swCs{color:#ff9f0a!important}
+.clsvg{width:calc(var(--size)*3.5);height:calc(var(--size)*3.5);filter:drop-shadow(0 6px 14px rgba(0,0,0,.3))}
+#swHand line{stroke:var(--accent)!important}
+#swHand circle:first-of-type{fill:var(--accent)!important}
+.dialtime .cs,.dialtime .time.cs,#swCs{color:var(--accent)!important}
 .dialwrap{isolation:isolate}
-#dg stop{stop-opacity:.82}
-#bz stop{stop-opacity:.92}
-.dialwrap::before{content:"";position:absolute;inset:.8%;border-radius:50%;z-index:-1;background:rgba(255,255,255,.05);-webkit-backdrop-filter:blur(22px) saturate(1.9) brightness(.6);backdrop-filter:blur(22px) saturate(1.9) brightness(.6);box-shadow:0 26px 50px rgba(0,0,0,.45),0 8px 18px rgba(0,0,0,.35)}
-.dialwrap::after{content:"";position:absolute;inset:.8%;border-radius:50%;z-index:3;pointer-events:none;background:radial-gradient(50% 32% at 28% 9%,rgba(255,255,255,.24),rgba(255,255,255,0) 72%),radial-gradient(55% 36% at 72% 96%,rgba(255,255,255,.10),rgba(255,255,255,0) 72%),linear-gradient(155deg,rgba(255,255,255,.10),rgba(255,255,255,0) 38%);box-shadow:inset 0 2px 2px rgba(255,255,255,.55),inset 0 -3px 6px rgba(255,255,255,.12),inset 0 0 0 1.5px rgba(255,255,255,.14),inset 10px 14px 34px rgba(255,255,255,.06),inset -14px -20px 44px rgba(0,0,0,.40)}
+.dialwrap::before{content:"";position:absolute;inset:.8%;border-radius:50%;z-index:-1;background:rgba(255,255,255,.05);-webkit-backdrop-filter:blur(20px) saturate(1.6) brightness(.6);backdrop-filter:blur(20px) saturate(1.6) brightness(.6);box-shadow:0 20px 40px rgba(0,0,0,.4)}
 
-.round,.fab{position:relative;isolation:isolate;display:flex;align-items:center;justify-content:center;transition:transform .22s cubic-bezier(.3,1.6,.5,1),box-shadow .2s ease!important}
-.round{-webkit-backdrop-filter:blur(16px) saturate(1.9);backdrop-filter:blur(16px) saturate(1.9)}
-.round::before,.fab::before{content:"";position:absolute;left:15%;right:15%;top:5%;height:42%;border-radius:50%;background:linear-gradient(rgba(255,255,255,.5),rgba(255,255,255,0));pointer-events:none}
+/* ---- round buttons ---- */
+.round,.fab{position:relative;display:flex;align-items:center;justify-content:center;transition:transform .18s cubic-bezier(.3,1.6,.5,1)!important}
 .round:active,.fab:active{transform:scale(.92)!important}
-.round svg,.fab svg{position:relative;filter:drop-shadow(0 1px 1.5px rgba(0,0,0,.45))}
-.round:not(.main){background:linear-gradient(150deg,rgba(255,255,255,.24),rgba(255,255,255,.05) 55%,rgba(255,255,255,.13))!important;-webkit-backdrop-filter:blur(20px) saturate(2);backdrop-filter:blur(20px) saturate(2);border:1px solid rgba(255,255,255,.38)!important;box-shadow:inset 0 1.5px 1px rgba(255,255,255,.8),inset 0 -2px 3px rgba(255,255,255,.18),inset 0 0 18px rgba(255,255,255,.12),inset -5px -7px 12px rgba(255,255,255,.06),var(--outer)!important}
-body.light .round:not(.main){background:linear-gradient(150deg,rgba(255,255,255,.75),rgba(255,255,255,.28) 55%,rgba(255,255,255,.55))!important;border-color:rgba(255,255,255,.95)!important;color:#1c1c1e;box-shadow:inset 0 1.5px 1px rgba(255,255,255,.95),inset 0 -2px 3px rgba(0,0,0,.06),inset 0 0 16px rgba(255,255,255,.5),var(--outer)!important}
-body.light .round:not(.main) svg{filter:drop-shadow(0 1px 1px rgba(255,255,255,.7))}
-.round.main,.fab{background:linear-gradient(150deg,rgba(255,200,120,.96),rgba(255,150,30,.82) 55%,rgba(236,112,0,.74))!important;border:1px solid rgba(255,236,205,.65)!important;color:#fff;box-shadow:inset 0 2px 1.5px rgba(255,255,255,.9),inset 0 -3px 5px rgba(255,255,255,.22),inset 0 0 22px rgba(255,255,255,.2),inset -8px -10px 20px rgba(170,70,0,.38),0 14px 34px rgba(255,140,20,.45),0 0 30px rgba(255,159,10,.35)!important}
-.round.main::before,.fab::before{top:4%;height:44%;background:linear-gradient(rgba(255,255,255,.62),rgba(255,255,255,0))}
-
-/* ---- stopwatch & timer play button: light, transparent orange glass ---- */
-#swGo,#tmGo{background:linear-gradient(150deg,rgba(255,205,140,.50),rgba(255,160,50,.30) 55%,rgba(255,140,20,.24))!important;border:1px solid rgba(255,230,200,.50)!important;color:#fff;box-shadow:inset 0 1.5px 1px rgba(255,255,255,.7),inset 0 -2px 4px rgba(255,255,255,.15),inset 0 0 18px rgba(255,255,255,.12),0 10px 26px rgba(255,140,20,.22),0 0 22px rgba(255,159,10,.18)!important}
-#swGo::before,#tmGo::before{background:linear-gradient(rgba(255,255,255,.38),rgba(255,255,255,0))}
-body.light #swGo,body.light #tmGo{color:#e68600}
-.phead button{color:#ff9f0a!important}
-
-@keyframes waveOrange{0%{opacity:.9;transform:scale(1);box-shadow:0 0 0 0 rgba(255,159,10,.7),0 0 26px 8px rgba(255,170,40,.75)}100%{opacity:0;transform:scale(2.2);box-shadow:0 0 0 0 rgba(255,159,10,0),0 0 46px 20px rgba(255,170,40,0)}}
-@keyframes waveWhite{0%{opacity:.9;transform:scale(1);box-shadow:0 0 0 0 rgba(255,255,255,.55),0 0 22px 6px rgba(255,255,255,.55)}100%{opacity:0;transform:scale(1.9);box-shadow:0 0 0 0 rgba(255,255,255,0),0 0 40px 16px rgba(255,255,255,0)}}
-@keyframes waveGray{0%{opacity:.9;transform:scale(1);box-shadow:0 0 0 0 rgba(90,100,130,.35),0 0 22px 6px rgba(90,100,130,.35)}100%{opacity:0;transform:scale(1.9);box-shadow:0 0 0 0 rgba(90,100,130,0),0 0 40px 16px rgba(90,100,130,0)}}
-.round::after,.fab::after{content:"";position:absolute;inset:0;border-radius:50%;pointer-events:none;opacity:0}
-.round.main.lit::after,.fab.lit::after{animation:waveOrange .65s cubic-bezier(.2,.7,.3,1) both}
-.round:not(.main).lit::after{animation:waveWhite .6s cubic-bezier(.2,.7,.3,1) both}
-body.light .round:not(.main).lit::after{animation-name:waveGray}
-
+.round:not(.main){background:var(--surf2)!important;border:1px solid var(--line)!important;box-shadow:none!important;-webkit-backdrop-filter:blur(16px);backdrop-filter:blur(16px)}
+body.light .round:not(.main){color:#1c1c1e}
+.round.main,.fab{background:var(--accent)!important;border:0!important;color:#fff;box-shadow:0 8px 22px rgba(255,140,20,.38)!important}
+#swGo,#tmGo{background:rgba(255,159,10,.18)!important;border:1px solid rgba(255,159,10,.45)!important;color:var(--accent)!important;box-shadow:none!important}
+.phead button{color:var(--accent)!important}
 #nav button{transition:background-color .14s ease,opacity .14s ease,transform .1s ease!important}
 #nav button:active{transform:scale(.94)}
 #nav button::after{display:none!important}
@@ -376,7 +332,7 @@ function saveAlarms() { writeJson(AKEY, alarms); }
 function loadGlobal() {
   const g = {
     bg: '#000000', bgLight: '#f2f2f7', theme: 'dark', awake: false, font: 'sf', country: 'auto',
-    alarmTone: 't31', timerTone: 't43', swTone: 'off', customName: ''
+    alarmTone: 't31', timerTone: 't43', swTone: 'off', customName: '', upFilter: 'all'
   };
   const s = readJson(GKEY);
   return s && typeof s === 'object' ? Object.assign(g, s) : g;
@@ -767,7 +723,7 @@ function openToneSheet(kind) {
   if (kind === 'sw') h += sec('', row('off', 'Off'));
   TONE_GROUPS.forEach(function (gn, gi) {
     h += sec(gn, TONES.filter(function (t) { return t.g === gi; }).map(function (t) {
-      return row(t.id, escapeAttr(t.name));
+      return row(t.id, esc(t.name));
     }).join(''));
   });
   h += sec('Custom', row('custom', '<span id="tnName"></span>')) +
@@ -1179,7 +1135,7 @@ function buildWidget(w) {
   el.dataset.type = w.type;
   let inner;
   if (w.type === 'digital') inner = '<div class="time"></div>';
-  else if (isZoneWidget(w)) inner = '<div class="wlabel">' + escapeAttr(placeLabel(w)) +
+  else if (isZoneWidget(w)) inner = '<div class="wlabel">' + esc(placeLabel(w)) +
     '</div><div class="time"></div><div class="wlabel wdate"></div><div class="wlabel wdate woff"></div>';
   else if (w.type === 'analog') inner = analogSvg();
   else if (w.type === 'classic') inner = classicSvg();
@@ -1309,11 +1265,11 @@ function openSettings() {
     '<div class="li"><span class="k">Background</span>' + swatches('bgSw', list, curBg) + '</div>' +
     '<div class="li"><span class="k">Numbers</span>' + seg('fontSeg', [['sf', 'Bold'], ['retro', 'Retro']], digitMode) + '</div>');
   h += sec('Sounds', Object.keys(TONE_KINDS).map(function (k) {
-    return navRow('data-tone="' + k + '"', TONE_KINDS[k].label, escapeAttr(toneName(globalSet[TONE_KINDS[k].key])));
+    return navRow('data-tone="' + k + '"', TONE_KINDS[k].label, esc(toneName(globalSet[TONE_KINDS[k].key])));
   }).join(''));
   h += sec('General',
     toggleRow('awake', 'Keep screen awake', globalSet.awake) +
-    navRow('id="upbtn"', 'Upcoming dates', escapeAttr(countryName(detectCountry()) || 'Auto')) +
+    navRow('id="upbtn"', 'Upcoming dates', esc(countryName(detectCountry()) || 'Auto')) +
     navRow('id="fs"', 'Fullscreen', '') +
     navRow('id="permbtn"', 'Permissions &amp; connection', ''));
   h += '<div class="acts"><button class="bt pri" id="done">Done</button></div>';
@@ -1432,7 +1388,7 @@ function initWorldEdit(w) {
           const sub = [p.admin1, p.country].filter(Boolean).join(', ');
           const b = document.createElement('button');
           b.className = 'li';
-          b.innerHTML = '<span class="k">' + escapeAttr(p.name) + '</span>' + (sub ? '<span class="v">' + escapeAttr(sub) + '</span>' : '');
+          b.innerHTML = '<span class="k">' + esc(p.name) + '</span>' + (sub ? '<span class="v">' + esc(sub) + '</span>' : '');
           b.onclick = function () {
             w.zone = p.timezone;
             w.city = p.name;
@@ -1567,7 +1523,7 @@ function renderAlarms() {
       '<button class="adel" aria-label="Delete">&minus;</button>' +
       '<div class="ainfo">' +
         '<div class="time atime" style="--size:13vw">' + timeHtml(h12 + ':' + m, false) + '<span class="ampm">' + ap + '</span></div>' +
-        '<div class="alabel">' + escapeAttr(a.label || 'Alarm') + (a.daily ? ', Every day' : ', Once') + '</div>' +
+        '<div class="alabel">' + esc(a.label || 'Alarm') + (a.daily ? ', Every day' : ', Once') + '</div>' +
       '</div>' +
       '<button class="tgl' + (a.on ? ' on' : '') + '" aria-label="On or off"><span></span></button>';
 
@@ -1590,7 +1546,7 @@ function openAlarmSheet(a, origin) {
   const h = head(isNew ? 'New alarm' : 'Edit alarm') +
     sec('', '<div class="li cen"><input type="time" id="asTime" class="bigtime" value="' + draft.time + '"></div>') +
     sec('Details',
-      '<div class="li"><span class="k">Label</span><input type="text" id="asLabel" class="inp" placeholder="Alarm" maxlength="30" value="' + escapeAttr(draft.label) + '"></div>' +
+      '<div class="li"><span class="k">Label</span><input type="text" id="asLabel" class="inp" placeholder="Alarm" maxlength="30" value="' + esc(draft.label) + '"></div>' +
       '<div class="li"><span class="k">Repeat</span>' + seg('asRep', [['1', 'Every day'], ['0', 'Once']], draft.daily ? '1' : '0') + '</div>') +
     '<div class="acts"><button class="bt" id="asCancel">Cancel</button>' +
     (isNew ? '' : '<button class="bt dng" id="asDel">Delete</button>') +
@@ -1886,7 +1842,7 @@ function renderPresets() {
     const row = document.createElement('div');
     row.className = 'preset';
     row.innerHTML =
-      '<span class="pn">' + escapeAttr(p.name) + '</span>' +
+      '<span class="pn">' + esc(p.name) + '</span>' +
       '<span class="pd">' + fmtHMS(p.s) + '</span>' +
       '<button class="px" aria-label="Delete">&times;</button>';
     row.onclick = function () { pickPreset(p.s * 1000); };
@@ -1922,25 +1878,24 @@ function openPresetSheet(origin) {
 }
 
 /* ==========================================================================
-   15. UPCOMING  (every country, updates itself)
+   15. UPCOMING  (every country, nothing fixed, updates itself)
    --------------------------------------------------------------------------
    Country : Settings choice, otherwise GPS -> internet (IP) -> time zone -> language
-   Dates   : a) date-holidays library (about 200 countries, saved by the browser
-                after the first load, so it also works offline)
+   Dates   : a) date-holidays library: about 200 countries, public holidays,
+                optional days and observances, calculated for any year.
+                The library file is saved in the browser cache, so it works offline
+                and is refreshed whenever the internet is available.
              b) Nager.Date as backup when the library has no data for a country
-             c) world-wide important days   d) your own dates
-   Optional: put holidays.min.js next to index.html (loaded first); the CDN is the backup.
+             c) your own dates
+   Optional: put holidays.min.js next to index.html (tried first); the CDN is the backup.
    ========================================================================== */
 const LIB_URLS = ['holidays.min.js', 'https://cdn.jsdelivr.net/npm/date-holidays@3/dist/umd.min.js'];
+const LIB_CACHE = 'clock-holidays-lib';
 const REL_RE = /christmas|easter|good friday|epiphany|ascension|pentecost|whit|corpus|assumption|all saints|all souls|immaculate|diwali|deepavali|holi\b|vesak|buddha|navratri|dussehra|durga|janmashtami|ramadan|eid|fitr|adha|ashura|mawlid|passover|hanukkah|yom kippur|rosh hashan|nyepi|waisak|thaipusam|palm sunday|maundy|ramazan|bayram|kurban|raya|nuzul|arafah|shab-e|miladun/i;
-
-// [month, day, name]: important days shown for every country
-const WORLD_DAYS = [
-  [2, 14, "Valentine's Day"], [2, 21, 'International Mother Language Day'], [3, 8, "International Women's Day"],
-  [3, 22, 'World Water Day'], [4, 7, 'World Health Day'], [4, 22, 'Earth Day'], [6, 5, 'World Environment Day'],
-  [9, 21, 'International Day of Peace'], [10, 24, 'United Nations Day'], [11, 20, "World Children's Day"],
-  [12, 10, 'Human Rights Day']
-];
+const UP_LABEL = { h: 'Holiday', i: 'Observance', r: 'Religious' };
+const UP_FILTERS = [['all', 'All'], ['h', 'Holidays'], ['r', 'Religious'], ['i', 'Observances']];
+const UP_MAX = 30;
+const UP_DAYS = 366;
 
 let lastCc = null;
 let countryCache = null;
@@ -1948,6 +1903,9 @@ let zoneMap = null;
 let ipPlace = loadIpPlace();
 let ipBusy = false;
 let libBusy = null;
+let holLoading = false;
+let lastUpSig = '';
+let lastOv = -1;
 const holMemo = {};
 const nagerBusy = {};
 
@@ -2053,14 +2011,36 @@ function syncCountry() {
   renderUpcoming();
 }
 
-/* ---- holidays: library first, Nager.Date as backup ---- */
-function loadScript(url) {
+/* ---- holiday library: network first, browser cache as offline copy ---- */
+function runScript(text) {
   return new Promise(function (res, rej) {
+    const url = URL.createObjectURL(new Blob([text], { type: 'text/javascript' }));
     const s = document.createElement('script');
     s.src = url;
-    s.onload = res;
-    s.onerror = function () { s.remove(); rej(); };
+    s.onload = function () { URL.revokeObjectURL(url); res(); };
+    s.onerror = function () { URL.revokeObjectURL(url); s.remove(); rej(); };
     document.head.appendChild(s);
+  });
+}
+
+function fetchLibText(url) {
+  const open = window.caches ? caches.open(LIB_CACHE).catch(function () { return null; }) : Promise.resolve(null);
+  return open.then(function (store) {
+    function fromCache() {
+      if (!store) return Promise.reject();
+      return store.match(url).then(function (r) {
+        if (!r) throw new Error('miss');
+        return r.text();
+      });
+    }
+    return fetch(url, { cache: 'no-cache' }).then(function (r) {
+      if (!r.ok) throw new Error('http');
+      return r.text();
+    }).then(function (t) {
+      if (t.indexOf('getHolidays') < 0) throw new Error('bad file');
+      if (store) store.put(url, new Response(t)).catch(function () {});
+      return t;
+    }).catch(fromCache);
   });
 }
 
@@ -2068,15 +2048,18 @@ function loadLib() {
   if (window.Holidays) return Promise.resolve(true);
   if (libBusy) return libBusy;
   libBusy = LIB_URLS.reduce(function (p, u) {
-    return p.catch(function () { return loadScript(u); });
+    return p.catch(function () {
+      return fetchLibText(u).then(runScript).then(function () { if (!window.Holidays) throw new Error('no lib'); });
+    });
   }, Promise.reject())
-    .then(function () { return !!window.Holidays; })
+    .then(function () { return true; })
     .catch(function () { return false; })
     .then(function (ok) { libBusy = null; return ok; });
   return libBusy;
 }
 
 // null = library not loaded yet, [] = no data for this country
+// types: public -> holiday, bank/optional/observance -> observance
 function libList(cc, yr) {
   const k = cc + yr;
   if (holMemo[k]) return holMemo[k];
@@ -2100,6 +2083,7 @@ function libList(cc, yr) {
   return out;
 }
 
+/* ---- backup source: Nager.Date, saved for a week ---- */
 function readNager(cc, yr) {
   const o = readJson(HKEY + cc + '_' + yr);
   return o && Array.isArray(o.list) ? o : null;
@@ -2140,6 +2124,7 @@ function holItems(cc, yr) {
 function loadHolidays(cc) {
   if (!cc) return;
   const y = new Date().getFullYear();
+  holLoading = true;
   loadLib().then(function () {
     const jobs = [];
     [y, y + 1].forEach(function (yr) {
@@ -2148,6 +2133,7 @@ function loadHolidays(cc) {
     });
     return Promise.all(jobs);
   }).then(function () {
+    holLoading = false;
     if (cc === detectCountry()) renderUpcoming();
   });
 }
@@ -2159,20 +2145,18 @@ function loadCustom() {
 }
 function saveCustom(list) { writeJson(CUSTOM_KEY, list); }
 
-/* ---- build the list ---- */
+/* ---- build the list: today until one year ahead ---- */
 function getUpcoming(today) {
   const cc = detectCountry();
   const y = today.getFullYear();
   const out = [];
   const seen = {};
-  const days = {};
 
   function add(dt, n, b, t) {
     const diff = Math.round((dt - today) / 86400000);
     const k = dayKey(dt) + n.toLowerCase();
-    if (diff < 0 || seen[k]) return;
+    if (diff < 0 || diff > UP_DAYS || seen[k]) return;
     seen[k] = 1;
-    days[dayKey(dt)] = 1;
     out.push({ h: { n: n, b: b || '', t: t || 'i' }, dt: dt, diff: diff });
   }
 
@@ -2195,44 +2179,72 @@ function getUpcoming(today) {
     }
   });
 
-  // world-wide days: only on dates that have nothing else
-  for (let yr = y; yr <= y + 1; yr++) {
-    WORLD_DAYS.forEach(function (w) {
-      const dt = new Date(yr, w[0] - 1, w[1]);
-      if (!days[dayKey(dt)]) add(dt, w[2], '', 'i');
-    });
-  }
-
   out.sort(function (a, b) { return a.dt - b.dt; });
   return out;
+}
+
+function upEmptyText() {
+  if (holLoading) return 'Loading dates...';
+  if (navigator.onLine === false) return 'No saved dates for this country yet. Connect to the internet once and they will be kept for offline use.';
+  return 'No upcoming dates for this country. You can add your own in Settings, Upcoming dates.';
+}
+
+function drawChips() {
+  const box = $('hFilter');
+  if (!box) return;
+  const cur = globalSet.upFilter || 'all';
+  box.innerHTML = UP_FILTERS.map(function (f) {
+    return '<button class="hchip' + (f[0] === cur ? ' on' : '') + '" data-f="' + f[0] + '">' + f[1] + '</button>';
+  }).join('');
 }
 
 function renderUpcoming() {
   const box = $('hList');
   if (!box) return;
   const MON = ['JAN', 'FEB', 'MAR', 'APR', 'MAY', 'JUN', 'JUL', 'AUG', 'SEP', 'OCT', 'NOV', 'DEC'];
-  const LABEL = { h: 'Holiday', i: 'Important', r: 'Religious' };
   const now = new Date();
   const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
   const cc = detectCountry();
+  const f = globalSet.upFilter || 'all';
 
   const sub = document.querySelector('.hsub');
   if (sub) sub.textContent = cc ? (flagOf(cc) + ' ' + countryName(cc)).trim() : '';
 
-  box.innerHTML = getUpcoming(today).slice(0, 8).map(function (it) {
-    const t = LABEL[it.h.t] ? it.h.t : 'i';
-    const left = it.diff === 0 ? 'Today' : (it.diff === 1 ? 'Tomorrow' : 'in ' + it.diff + ' days');
+  const list = getUpcoming(today).filter(function (it) {
+    return f === 'all' || it.h.t === f;
+  }).slice(0, UP_MAX);
+
+  // draw again only when something really changed (keeps the scroll position)
+  const sig = [dayKey(today), cc, f, holLoading, navigator.onLine !== false,
+    list.map(function (it) { return dayKey(it.dt) + it.h.n + it.h.t; }).join('|')].join('#');
+  if (sig === lastUpSig) return;
+  lastUpSig = sig;
+
+  if (!list.length) {
+    box.innerHTML = '<div class="hempty">' + upEmptyText() + '</div>';
+    return;
+  }
+
+  let html = '';
+  let month = '';
+  list.forEach(function (it) {
+    const mk = it.dt.getFullYear() + '-' + it.dt.getMonth();
+    if (mk !== month) {
+      month = mk;
+      html += '<div class="hgrp">' + it.dt.toLocaleDateString('en-GB', { month: 'long', year: 'numeric' }) + '</div>';
+    }
+    const t = UP_LABEL[it.h.t] ? it.h.t : 'i';
+    const left = it.diff === 0 ? 'Today' : (it.diff === 1 ? 'Tomorrow' : 'In ' + it.diff + ' days');
     const wd = it.dt.toLocaleDateString('en-GB', { weekday: 'short' });
-    return '<div class="hcard t-' + t + '">' +
+    html += '<div class="hcard t-' + t + (it.diff === 0 ? ' today' : '') + '">' +
       '<div class="hd"><span class="hmon">' + MON[it.dt.getMonth()] + '</span>' +
       '<span class="hday">' + it.dt.getDate() + '</span></div>' +
-      '<div class="hmid"><div class="hname">' + escapeAttr(it.h.n) + '</div><div class="hbn">' + escapeAttr(it.h.b) + '</div></div>' +
+      '<div class="hmid"><div class="hname">' + esc(it.h.n) + '</div><div class="hbn">' + esc(it.h.b) + '</div></div>' +
       '<div class="hright"><span class="hleft' + (it.diff <= 7 ? ' soon' : '') + '">' + left + '</span>' +
-      '<span class="hwd">' + wd + ' · ' + LABEL[t] + '</span></div>' +
+      '<span class="hwd">' + wd + ', ' + UP_LABEL[t] + '</span></div>' +
       '</div>';
-  }).join('');
-
-  queueFade();
+  });
+  box.innerHTML = html;
 }
 
 function openUpcomingSettings() {
@@ -2242,15 +2254,15 @@ function openUpcomingSettings() {
   let h = head('Upcoming dates', 'upBack');
   h += sec('Country',
     '<div class="li"><span class="k" style="flex:none">Country</span><select class="r" id="upCc">' +
-    opt('auto', 'Auto (' + escapeAttr(countryName(autoCountry()) || 'unknown') + ')', sel === 'auto') +
-    countryList().map(function (x) { return opt(x.c, escapeAttr(flagOf(x.c) + ' ' + x.n), sel === x.c); }).join('') +
+    opt('auto', 'Auto (' + esc(countryName(autoCountry()) || 'unknown') + ')', sel === 'auto') +
+    countryList().map(function (x) { return opt(x.c, esc(flagOf(x.c) + ' ' + x.n), sel === x.c); }).join('') +
     '</select></div>',
-    'Auto follows the phone. Holidays and important days come from a worldwide library that updates itself. ' +
+    'Auto follows the phone. Dates are calculated for every year by a worldwide library, so nothing is typed in by hand. ' +
     'Moon-based days (Eid, Ramadan...) are calculated, so the real date can differ by a day.');
   h += sec('Add your own date',
     '<div class="li"><span class="k">Date</span><input type="date" class="inp" id="upDate"></div>' +
     '<div class="li"><span class="k">Name</span><input type="text" class="inp" id="upName" placeholder="Birthday" maxlength="40"></div>' +
-    '<div class="li"><span class="k">Type</span>' + seg('upType', [['i', 'Important'], ['h', 'Holiday'], ['r', 'Religious']], 'i') + '</div>' +
+    '<div class="li"><span class="k">Type</span>' + seg('upType', [['i', 'Observance'], ['h', 'Holiday'], ['r', 'Religious']], 'i') + '</div>' +
     '<div class="li"><span class="k">Repeat</span>' + seg('upRep', [['1', 'Every year'], ['0', 'Once']], '1') + '</div>');
   h += '<div class="acts"><button class="bt pri" id="upAdd">Add date</button></div>';
   h += '<div id="upList"></div>';
@@ -2267,8 +2279,8 @@ function openUpcomingSettings() {
     const box = $('upList');
     if (!list.length) { box.innerHTML = ''; return; }
     box.innerHTML = sec('Your dates', list.map(function (c, i) {
-      return '<div class="li"><div class="kk"><div class="k">' + escapeAttr(c.n) + '</div><div class="d">' +
-        escapeAttr(c.d + (c.r ? ' · every year' : '')) + '</div></div>' +
+      return '<div class="li"><div class="kk"><div class="k">' + esc(c.n) + '</div><div class="d">' +
+        esc(c.d + (c.r ? ' · every year' : '')) + '</div></div>' +
         '<button class="mini dng" data-i="' + i + '">Delete</button></div>';
     }).join(''));
     box.querySelectorAll('[data-i]').forEach(function (b) {
@@ -2304,91 +2316,14 @@ function openUpcomingSettings() {
   $('done').onclick = closeSheet;
 }
 
-/* ---- progressive blur and scroll fade ---- */
-function blurLayer(blur, mask) {
-  return '<div class="pbl" style="-webkit-backdrop-filter:blur(' + blur + 'px);backdrop-filter:blur(' + blur +
-    'px);-webkit-mask-image:' + mask + ';mask-image:' + mask + '"></div>';
-}
-
-function buildBlurZones() {
-  const hol = $('holidays');
-  if (!hol || $('pbTop')) return;
-
-  const N = 4;
-  const BLUR = [0.8, 1.6];
-  const L = 112;
-
-  function stop(k, c) {
-    return 'calc(var(--ft,34px) * ' + k + ' + ' + c.toFixed(2) + 'px - var(--sh,0px))';
-  }
-
-  let outT = '', outB = '';
-  for (let i = 0; i < BLUR.length; i++) {
-    const t = (N - i) / N;
-    outT += blurLayer(BLUR[i], 'linear-gradient(to bottom,' +
-      'transparent ' + stop(0, 0) + ',' +
-      'rgba(0,0,0,.12) ' + stop(0.33, -4.62) + ',' +
-      'rgba(0,0,0,.45) ' + stop(0.66, -9.24) + ',' +
-      '#000 ' + stop(1, -14) + ',' +
-      '#000 ' + stop(1, -14 + L * (t - 1 / N)) + ',' +
-      'transparent ' + stop(1, -14 + L * t) + ')');
-
-    const a = ((t - 1 / N) * 100).toFixed(2);
-    const b = (t * 100).toFixed(2);
-    outB += blurLayer(BLUR[i], 'linear-gradient(to top,#000 0%,#000 ' + a + '%,transparent ' + b + '%)');
-  }
-
-  const top = document.createElement('div');
-  top.id = 'pbTop';
-  top.className = 'pb';
-  top.innerHTML = outT;
-  const bot = document.createElement('div');
-  bot.id = 'pbBot';
-  bot.className = 'pb';
-  bot.innerHTML = outB;
-  hol.appendChild(top);
-  hol.appendChild(bot);
-}
-
+// how far the bottom bar covers the list: the list fades out and pads itself by this amount
 function measureUpcoming() {
   const box = $('hList');
   const hol = $('holidays');
-  if (!box || !hol || !box.offsetParent) return;
-
-  const br = box.getBoundingClientRect();
-  const head = document.querySelector('.hhead');
   const nav = $('nav');
-
-  const ft = Math.round(head ? Math.max(head.getBoundingClientRect().bottom - br.top - 4, 20) : 34);
-  const navTop = nav ? nav.getBoundingClientRect().top : window.innerHeight;
-  const fb = Math.round(Math.max(br.bottom - navTop + 8, 0));
-
-  if (ft !== lastFt) { lastFt = ft; hol.style.setProperty('--ft', ft + 'px'); }
-  if (fb !== lastFb) { lastFb = fb; hol.style.setProperty('--fb', fb + 'px'); }
-  cachedFt = ft;
-  applyScrollShift();
-}
-
-function applyScrollShift() {
-  const box = $('hList');
-  const hol = $('holidays');
-  if (!box || !hol) return;
-  const s = clamp01(box.scrollTop / 40);
-  const sh = Math.round((1 - s) * (cachedFt + 98));
-  if (sh !== lastSh) { lastSh = sh; hol.style.setProperty('--sh', sh + 'px'); }
-}
-
-function queueFade() {
-  if (fadeQueued) return;
-  fadeQueued = true;
-  requestAnimationFrame(function () {
-    fadeQueued = false;
-    const now = Date.now();
-    if (now - lastMeasure > 400) {
-      lastMeasure = now;
-      measureUpcoming();
-    }
-  });
+  if (!box || !hol || !box.offsetParent) return;
+  const ov = nav ? Math.max(0, Math.round(box.getBoundingClientRect().bottom - nav.getBoundingClientRect().top)) : 0;
+  if (ov !== lastOv) { lastOv = ov; hol.style.setProperty('--ov', ov + 'px'); }
 }
 
 function initUpcoming() {
@@ -2399,56 +2334,50 @@ function initUpcoming() {
   const hh = document.querySelector('.hhead span');
   if (hh) hh.textContent = 'Upcoming';
 
-  buildBlurZones();
-
   const box = $('hList');
-  if (box) {
-    let lastIdx = 0;
-    box.addEventListener('scroll', function () {
-      applyScrollShift();
-      queueFade();
-      const first = box.querySelector('.hcard');
-      const rowH = first ? first.offsetHeight + 10 : 80;
-      const idx = Math.round(box.scrollTop / rowH);
-      if (idx !== lastIdx) { lastIdx = idx; haptic(7); }
-    }, { passive: true });
-    box.addEventListener('click', function (e) {
-      if (e.target && e.target.closest && e.target.closest('.hcard')) haptic(10);
-    });
+  if (!box) return;
+
+  if (!$('hFilter')) {
+    const bar = document.createElement('div');
+    bar.id = 'hFilter';
+    bar.className = 'hfilter';
+    bar.onclick = function (e) {
+      const b = e.target.closest ? e.target.closest('[data-f]') : null;
+      if (!b) return;
+      globalSet.upFilter = b.dataset.f;
+      saveGlobal();
+      drawChips();
+      renderUpcoming();
+      box.scrollTop = 0;
+      haptic(8);
+    };
+    box.parentNode.insertBefore(bar, box);
   }
+  drawChips();
 
-  window.addEventListener('scroll', queueFade, { passive: true });
-  window.addEventListener('resize', queueFade);
+  let lastIdx = 0;
+  box.addEventListener('scroll', function () {
+    const first = box.querySelector('.hcard');
+    const rowH = first ? first.offsetHeight + 8 : 70;
+    const idx = Math.round(box.scrollTop / rowH);
+    if (idx !== lastIdx) { lastIdx = idx; haptic(7); }
+  }, { passive: true });
 
+  window.addEventListener('resize', measureUpcoming);
   if (window.ResizeObserver) {
     const ro = new ResizeObserver(measureUpcoming);
-    ['holidays', 'nav'].forEach(function (id) {
-      const el = $(id);
-      if (el) ro.observe(el);
-    });
-    const head = document.querySelector('.hhead');
-    if (head) ro.observe(head);
+    [hol, $('nav')].forEach(function (el) { if (el) ro.observe(el); });
   }
 }
 
 /* ==========================================================================
-   16. PRESS FEEDBACK, BOTTOM BAR, SETTINGS BUTTON, PLUS BUTTON
+   16. BOTTOM BAR, SETTINGS BUTTON, PLUS BUTTON
    ========================================================================== */
-function lightUp(el) {
-  el.classList.remove('lit');
-  void el.offsetWidth;
-  el.classList.add('lit');
-  clearTimeout(el._litT);
-  el._litT = setTimeout(function () { el.classList.remove('lit'); }, 700);
-}
-
 function initPressFeedback() {
   document.addEventListener('pointerdown', function (e) {
     const t = (e.target && e.target.closest)
       ? e.target.closest('#swGo,#tmGo,.round,.fab,#nav button') : null;
-    if (!t) return;
-    haptic(t.id === 'swGo' || t.id === 'tmGo' ? 16 : 8);
-    lightUp(t);
+    if (t) haptic(t.id === 'swGo' || t.id === 'tmGo' ? 16 : 8);
   }, true);
 }
 
@@ -2618,7 +2547,10 @@ function onBackOnline() {
 }
 
 function initConnection() {
-  window.addEventListener('offline', function () { toast('You are offline. Everything saved still works.', { ms: 4500 }); });
+  window.addEventListener('offline', function () {
+    toast('You are offline. Everything saved still works.', { ms: 4500 });
+    renderUpcoming();
+  });
   window.addEventListener('online', function () { toast('Back online'); onBackOnline(); });
 }
 
@@ -2848,7 +2780,6 @@ function bindEvents() {
     tick();
     loadHolidays(detectCountry());
     renderUpcoming();
-    queueFade();
   });
   document.addEventListener('click', function () {
     if (globalSet.awake && !wakeLock) setAwake(true);
@@ -2888,7 +2819,6 @@ function initApp() {
   setInterval(function () { if (tm.running) renderTm(); }, 200);
   setInterval(renderUpcoming, 60000);
   setInterval(function () { loadHolidays(detectCountry()); }, 6 * 3600 * 1000);
-  setInterval(queueFade, 500);
   requestAnimationFrame(sweepLoop);
 
   showTab('home');
