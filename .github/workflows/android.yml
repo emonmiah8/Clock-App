@@ -5,6 +5,9 @@ on:
   push:
     branches: [main]
 
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
 jobs:
   build:
     runs-on: ubuntu-latest
@@ -22,6 +25,12 @@ jobs:
 
       - name: Install dependencies
         run: npm ci
+
+      - name: Copy web files to www
+        run: |
+          rm -rf www
+          mkdir www
+          cp -r index.html css js manifest.json digits.ttf icon-192.png icon-512.png www/
 
       - name: Sync Capacitor
         run: npx cap sync android
