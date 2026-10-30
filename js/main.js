@@ -1,11 +1,11 @@
 /* ==========================================================================
    CLOCK APP - main.js
-   1 Config & state        7 Home widgets            13 Timer & presets
-   2 Helpers & icons       8 Sheet system, settings  14 Upcoming
-   3 Injected styles       9 Edit / Add widget       15 Press feedback, nav
-   4 Storage              10 Tabs                    16 Connection, permissions, SW
-   5 Tones & ringing      11 Alarms                  17 Init
-   6 Digits & time HTML   12 Stopwatch
+   1 Config & state        7 Digits & time HTML       13 Stopwatch
+   2 Helpers & icons       8 Home widgets             14 Timer & presets
+   3 Injected styles       9 Settings                 15 Upcoming
+   4 Storage              10 Edit / Add widget        16 Press feedback, nav
+   5 Sheet system & UI    11 Tabs                     17 Connection, permissions, SW
+   6 Tones & ringing      12 Alarms                   18 Init
    ========================================================================== */
 
 /* ==========================================================================
@@ -20,25 +20,23 @@ const PLKEY = 'clockPlace';
 const PLASKED = 'clockPlaceAsked';
 const NOTIF_ASKED = 'clockNotifAsked';
 const CUSTOM_KEY = 'customUpcomingEvents';
-const HKEY = 'clockHol_';
+const HKEY = 'clockNager_';
 const IPKEY = 'clockIpCc';
 const GEO_URL = 'https://geocoding-api.open-meteo.com/v1/search';
 const REVERSE_URL = 'https://api.bigdatacloud.net/data/reverse-geocode-client';
 const HOL_URL = 'https://date.nager.at/api/v3/PublicHolidays/';
-const PACK_URL = 'days/';                      // fallback: days/BD.json, days/IN.json ...
 const PLACE_FRESH_MS = 20 * 60 * 1000;
-const HOL_TTL = 7 * 24 * 3600 * 1000;          // holidays refresh every 7 days
-const RETRY_TTL = 24 * 3600 * 1000;            // no data found: ask again after 1 day
+const HOL_TTL = 7 * 24 * 3600 * 1000;
 
 const RETRO = ['#4aa3d8', '#ef5b55', '#f4f1ea'];
 const COLORS = ['#ffffff', '#4fc3f7', '#81c784', '#ffb74d', '#f06292'];
-const TYPE_NAMES = {
-  digital: 'Digital clock',
-  analog: 'Analog clock',
-  date: 'Date',
-  home: 'My location clock',
-  world: 'World clock (search)',
-  classic: 'Classic clock'
+const TYPES = {
+  digital: { n: 'Digital clock', d: 'Large time, 12 or 24 hour' },
+  analog: { n: 'Analog clock', d: 'Simple hands and ticks' },
+  date: { n: 'Date', d: 'Day, date and month' },
+  home: { n: 'My location clock', d: 'Follows where this phone is' },
+  world: { n: 'World clock', d: 'Search any city or place' },
+  classic: { n: 'Classic clock', d: 'Smooth sweeping second hand' }
 };
 const BGS_DARK = [['#000000', 'Black'], ['#0e1014', 'Charcoal'], ['#0b1426', 'Navy'], ['#1a1410', 'Brown'], ['#0f1a14', 'Forest']];
 const BGS_LIGHT = [['#ffffff', 'White'], ['#f2f2f7', 'Gray'], ['#fbf5ea', 'Cream'], ['#eaf2ff', 'Sky'], ['#eaf6ee', 'Mint']];
@@ -58,6 +56,7 @@ let geoStatus = 'idle';
 let geoBusy = null;
 let searchSeq = 0;
 let zoneIndex = null;
+let editW = null;
 const searchCache = {};
 const searchKeys = [];
 let swReg = null;
@@ -98,6 +97,7 @@ const overlay = document.getElementById('overlay');
 /* ==========================================================================
    2. HELPERS & ICONS
    ========================================================================== */
+function $(id) { return document.getElementById(id); }
 function pad(n) { return String(n).padStart(2, '0'); }
 function dayKey(d) { return d.getFullYear() + '-' + pad(d.getMonth() + 1) + '-' + pad(d.getDate()); }
 function clamp01(x) { return x < 0 ? 0 : (x > 1 ? 1 : x); }
@@ -119,7 +119,7 @@ const ICON = {
 };
 
 function setIcon(id, svg, label) {
-  const el = document.getElementById(id);
+  const el = $(id);
   if (!el) return;
   el.innerHTML = svg;
   if (label) el.setAttribute('aria-label', label);
@@ -198,9 +198,95 @@ body.light #sheet{background:rgba(255,255,255,.72)!important;border-color:rgba(2
 @keyframes popIn{from{opacity:0;transform:scale(.86) translateY(-8px)}to{opacity:1;transform:none}}
 @keyframes popOut{from{opacity:1;transform:none}to{opacity:0;transform:scale(.88) translateY(-6px)}}
 #sheet:not(.open){pointer-events:none}
-#sheet.open{left:auto!important;right:12px!important;bottom:auto!important;top:calc(64px + env(safe-area-inset-top,0px))!important;width:min(90vw,340px)!important;max-height:calc(100vh - 150px);max-height:calc(100dvh - 150px);overflow-y:auto;border-radius:24px!important;animation:popIn .28s cubic-bezier(.22,.8,.25,1) both}
+#sheet.open{left:auto!important;right:12px!important;bottom:auto!important;top:calc(64px + env(safe-area-inset-top,0px))!important;width:min(92vw,360px)!important;max-height:calc(100vh - 150px);max-height:calc(100dvh - 150px);overflow-y:auto;border-radius:26px!important;padding:18px 16px 16px!important;animation:popIn .28s cubic-bezier(.22,.8,.25,1) both;scrollbar-width:none}
+#sheet.open::-webkit-scrollbar{display:none}
 #sheet.open.closing{animation:popOut .16s ease both;pointer-events:none}
-#sheet select{max-width:100%}
+
+/* ---- sheet building blocks ---- */
+#sheet{color-scheme:dark}
+body.light #sheet{color-scheme:light}
+#sheet button{background:none;border:0;color:inherit;font:inherit;padding:0;margin:0;cursor:pointer;-webkit-tap-highlight-color:transparent}
+#sheet .shead{display:flex;align-items:center;gap:10px;min-height:34px;margin:0 0 14px}
+#sheet .stitle{flex:1;font-size:22px;font-weight:800!important;letter-spacing:-.03em}
+#sheet .back{width:34px;height:34px;flex:none;border-radius:50%;display:flex;align-items:center;justify-content:center;padding:0 0 3px!important;font-size:24px;line-height:1;background:rgba(255,255,255,.12)}
+body.light #sheet .back{background:rgba(0,0,0,.07)}
+#sheet .sl{font-size:11px;letter-spacing:.09em;text-transform:uppercase;opacity:.55;margin:18px 8px 7px}
+#sheet .shead+.sl{margin-top:2px}
+#sheet .grp{margin-top:14px;border-radius:16px;overflow:hidden;background:rgba(255,255,255,.08);border:1px solid rgba(255,255,255,.08)}
+body.light #sheet .grp{background:rgba(0,0,0,.045);border-color:rgba(0,0,0,.05)}
+#sheet .sl+.grp,#sheet .shead+.grp,#sheet .pcard+.grp{margin-top:0}
+#sheet .li{display:flex;align-items:center;gap:12px;width:100%;min-height:48px;padding:10px 14px;box-sizing:border-box;text-align:left;font-size:15px}
+#sheet .li+.li{border-top:1px solid rgba(255,255,255,.08)}
+body.light #sheet .li+.li{border-top-color:rgba(0,0,0,.07)}
+#sheet button.li{transition:background .12s ease}
+#sheet button.li:active{background:rgba(255,255,255,.09)}
+body.light #sheet button.li:active{background:rgba(0,0,0,.06)}
+#sheet .k{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+#sheet .kk{flex:1;min-width:0}
+#sheet .kk .k{white-space:normal}
+#sheet .d{font-size:12px;line-height:1.35;margin-top:2px;opacity:.55;white-space:normal}
+#sheet .v{display:flex;align-items:center;gap:6px;min-width:0;max-width:52%;font-size:14px;opacity:.6;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+#sheet .nav::after{content:"\\203A";flex:none;font-size:22px;line-height:1;opacity:.4;margin-left:-4px}
+#sheet .sn{margin:8px 8px 0;font-size:12px;line-height:1.4;opacity:.6}
+#sheet .sn.mid{text-align:center;margin:14px 0 4px}
+#sheet .chk{flex:none;opacity:0;color:#ff9f0a;font-size:17px}
+#sheet .li.sel .chk{opacity:1}
+#sheet .dot{display:inline-block;flex:none;width:8px;height:8px;border-radius:50%;background:#8e8e93}
+#sheet .dot.ok{background:#30d158}
+#sheet .dot.bad{background:#ff453a}
+
+#sheet input[type=text],#sheet input[type=date],#sheet input[type=time],#sheet select{box-sizing:border-box;min-width:0;padding:0;border:0;outline:0;background:transparent;color:inherit;font-size:15px;-webkit-appearance:none;appearance:none}
+#sheet .inp{flex:1;text-align:right}
+#sheet select.r{flex:1;max-width:64%;margin-left:auto;text-align:right;text-align-last:right;opacity:.85}
+#sheet select option{color:#111;background:#fff}
+#sheet input::placeholder{color:inherit;opacity:.4}
+#sheet .bigtime{width:100%;padding:6px 0;text-align:center;font-size:46px;letter-spacing:-.02em}
+#sheet .li.cen{justify-content:center}
+
+#sheet .seg{display:flex;gap:2px;padding:3px;border-radius:11px;background:rgba(255,255,255,.10);min-width:150px}
+body.light #sheet .seg{background:rgba(0,0,0,.07)}
+#sheet .seg button{flex:1;padding:7px 10px;border-radius:9px;font-size:13px;opacity:.7;white-space:nowrap;transition:background .2s ease,opacity .2s ease}
+#sheet .seg button.on{opacity:1;background:rgba(255,255,255,.24);box-shadow:0 1px 3px rgba(0,0,0,.25)}
+body.light #sheet .seg button.on{background:#fff;box-shadow:0 1px 3px rgba(0,0,0,.15)}
+
+#sheet .sx{position:relative;flex:none;width:50px;height:30px;border-radius:15px;background:rgba(255,255,255,.2);transition:background .2s ease}
+body.light #sheet .sx{background:rgba(0,0,0,.18)}
+#sheet .sx::after{content:"";position:absolute;top:2px;left:2px;width:26px;height:26px;border-radius:50%;background:#fff;box-shadow:0 2px 4px rgba(0,0,0,.3);transition:transform .22s cubic-bezier(.3,1.4,.5,1)}
+#sheet .sx.on{background:#ff9f0a}
+#sheet .sx.on::after{transform:translateX(20px)}
+
+#sheet .sws{display:flex;flex-wrap:wrap;justify-content:flex-end;gap:9px}
+#sheet .sw{width:27px;height:27px;border-radius:50%;border:2px solid rgba(255,255,255,.28);transition:transform .15s ease}
+body.light #sheet .sw{border-color:rgba(0,0,0,.18)}
+#sheet .sw:active{transform:scale(.88)}
+#sheet .sw.on{outline:2px solid #ff9f0a;outline-offset:2px}
+
+#sheet input[type=range]{-webkit-appearance:none;appearance:none;flex:1;height:4px;margin:0;border-radius:2px;background:rgba(255,255,255,.25);outline:0}
+body.light #sheet input[type=range]{background:rgba(0,0,0,.18)}
+#sheet input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:24px;height:24px;border-radius:50%;background:#fff;box-shadow:0 2px 6px rgba(0,0,0,.4)}
+#sheet input[type=range]::-moz-range-thumb{width:24px;height:24px;border:0;border-radius:50%;background:#fff;box-shadow:0 2px 6px rgba(0,0,0,.4)}
+
+#sheet .pcard{padding:14px 16px;margin-top:0;border-radius:16px;background:linear-gradient(150deg,rgba(255,159,10,.24),rgba(255,159,10,.06));border:1px solid rgba(255,159,10,.30)}
+#sheet .pcn{font-size:21px;font-weight:800!important;letter-spacing:-.02em;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+#sheet .pcs{margin-top:3px;font-size:12.5px;opacity:.7}
+
+#sheet .acts{display:flex;gap:10px;margin-top:16px}
+#sheet .acts+.acts{margin-top:10px}
+#sheet .bt{flex:1;padding:13px 10px;border-radius:14px;font-size:15px;text-align:center;background:rgba(255,255,255,.12);transition:transform .12s ease,background .2s ease}
+body.light #sheet .bt{background:rgba(0,0,0,.06)}
+#sheet .bt:active{transform:scale(.96)}
+#sheet .bt.pri,body.light #sheet .bt.pri{color:#fff;background:linear-gradient(150deg,#ffb54d,#ff8a00);box-shadow:0 6px 16px rgba(255,140,20,.35)}
+#sheet .bt.dng{color:#ff453a}
+#sheet .mini{flex:none;padding:6px 13px;border-radius:999px;font-size:13px;white-space:nowrap;color:#ff9f0a;background:rgba(255,159,10,.18)}
+#sheet .mini.dng{color:#ff453a;background:rgba(255,69,58,.16)}
+
+#sheet .trip{display:flex;gap:8px;padding:12px}
+#sheet .trip>div{flex:1;text-align:center}
+#sheet .trip select{width:100%;padding:8px 0;border-radius:10px;font-size:24px;text-align:center;text-align-last:center;background:rgba(255,255,255,.10)}
+body.light #sheet .trip select{background:rgba(0,0,0,.06)}
+#sheet .trip i{display:block;margin-top:5px;font-style:normal;font-size:10.5px;letter-spacing:.08em;text-transform:uppercase;opacity:.55}
+#sheet .tonebox{max-height:52vh;overflow-y:auto;margin:0 -6px;padding:0 6px;scrollbar-width:none}
+#sheet .tonebox::-webkit-scrollbar{display:none}
 
 #cog{width:46px;height:46px;padding:0!important;opacity:1!important;display:flex!important;align-items:center;justify-content:center;font-size:0}
 .dots{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:3px;pointer-events:none;transition:transform .38s cubic-bezier(.3,1.5,.5,1)}
@@ -215,21 +301,10 @@ body.light #sheet{background:rgba(255,255,255,.72)!important;border-color:rgba(2
 #toast.show{opacity:1;transform:translate(-50%,0);pointer-events:auto}
 #toast .tact{background:none;border:0;color:#ff9f0a;padding:0;font-size:14px;white-space:nowrap}
 body.light #toast{background:rgba(255,255,255,.85);color:#1c1c1e;border-color:rgba(255,255,255,.9);box-shadow:0 10px 30px rgba(0,0,0,.15)}
-.pstate{opacity:.85;margin-right:auto}
-.phint{font-size:12px;opacity:.7;line-height:1.35;margin:-2px 0 8px}
 
 .wdate{margin-top:6px;opacity:.8}
 .woff{margin-top:2px!important;opacity:.6}
 .clsvg{width:calc(var(--size)*3.5);height:calc(var(--size)*3.5);filter:drop-shadow(0 8px 18px rgba(0,0,0,.35))}
-
-/* ---- tone picker ---- */
-.tonebox{max-height:50vh;overflow-y:auto;margin:0 -4px 10px;padding:0 4px}
-.tgrp{font-size:11px;letter-spacing:.08em;text-transform:uppercase;opacity:.6;margin:12px 4px 6px}
-.trow{display:flex;align-items:center;justify-content:space-between;gap:10px;width:100%;padding:11px 14px;margin-bottom:6px;border-radius:14px;border:1px solid rgba(255,255,255,.12);background:rgba(255,255,255,.07);color:inherit;font-size:15px;text-align:left}
-body.light .trow{background:rgba(0,0,0,.05);border-color:rgba(0,0,0,.08)}
-.trow .chk{opacity:0;color:#ff9f0a;font-size:16px}
-.trow.sel{border-color:#ff9f0a}
-.trow.sel .chk{opacity:1}
 
 #swHand line{stroke:#ff9f0a!important}
 #swHand circle:first-of-type{fill:#ff9f0a!important}
@@ -279,44 +354,38 @@ body.light .round:not(.main).lit::after{animation-name:waveGray}
 /* ==========================================================================
    4. STORAGE
    ========================================================================== */
+function readJson(key) {
+  try { return JSON.parse(localStorage.getItem(key)); } catch (e) { return null; }
+}
+function writeJson(key, v) { try { localStorage.setItem(key, JSON.stringify(v)); } catch (e) {} }
+
 function defaultWidgets() { return [newWidget('digital'), newWidget('date')]; }
 
 function loadWidgets() {
-  try {
-    const a = JSON.parse(localStorage.getItem(KEY));
-    if (Array.isArray(a)) return a;
-  } catch (e) {}
-  return defaultWidgets();
+  const a = readJson(KEY);
+  return Array.isArray(a) ? a : defaultWidgets();
 }
-function saveWidgets() { try { localStorage.setItem(KEY, JSON.stringify(widgets)); } catch (e) {} }
+function saveWidgets() { writeJson(KEY, widgets); }
 
 function loadAlarms() {
-  try {
-    const a = JSON.parse(localStorage.getItem(AKEY));
-    if (Array.isArray(a)) return a;
-  } catch (e) {}
-  return [];
+  const a = readJson(AKEY);
+  return Array.isArray(a) ? a : [];
 }
-function saveAlarms() { try { localStorage.setItem(AKEY, JSON.stringify(alarms)); } catch (e) {} }
+function saveAlarms() { writeJson(AKEY, alarms); }
 
 function loadGlobal() {
-  let g = {
+  const g = {
     bg: '#000000', bgLight: '#f2f2f7', theme: 'dark', awake: false, font: 'sf', country: 'auto',
     alarmTone: 't31', timerTone: 't43', swTone: 'off', customName: ''
   };
-  try {
-    const s = localStorage.getItem(GKEY);
-    if (s) g = Object.assign(g, JSON.parse(s));
-  } catch (e) {}
-  return g;
+  const s = readJson(GKEY);
+  return s && typeof s === 'object' ? Object.assign(g, s) : g;
 }
-function saveGlobal() { try { localStorage.setItem(GKEY, JSON.stringify(globalSet)); } catch (e) {} }
+function saveGlobal() { writeJson(GKEY, globalSet); }
 
 function loadPresets() {
-  try {
-    const p = JSON.parse(localStorage.getItem(PKEY));
-    if (Array.isArray(p)) return p;
-  } catch (e) {}
+  const p = readJson(PKEY);
+  if (Array.isArray(p)) return p;
   return [
     { id: 'p1', name: 'Brush teeth', s: 120 },
     { id: 'p2', name: 'Face mask', s: 900 },
@@ -324,18 +393,15 @@ function loadPresets() {
     { id: 'p4', name: 'Nap', s: 1800 }
   ];
 }
-function savePresets() { try { localStorage.setItem(PKEY, JSON.stringify(presets)); } catch (e) {} }
+function savePresets() { writeJson(PKEY, presets); }
 
 function loadMyPlace() {
-  try {
-    const p = JSON.parse(localStorage.getItem(PLKEY));
-    if (p && typeof p.name === 'string') return p;
-  } catch (e) {}
-  return { name: '', tz: '', cc: '', ts: 0 };
+  const p = readJson(PLKEY);
+  return p && typeof p.name === 'string' ? p : { name: '', tz: '', cc: '', ts: 0 };
 }
-function saveMyPlace() { try { localStorage.setItem(PLKEY, JSON.stringify(myPlace)); } catch (e) {} }
+function saveMyPlace() { writeJson(PLKEY, myPlace); }
 
-function saveTm() { try { localStorage.setItem(TKEY, JSON.stringify(tm)); } catch (e) {} }
+function saveTm() { writeJson(TKEY, tm); }
 
 /* ---- IndexedDB: keeps the custom tone file ---- */
 function idbRun(mode, fn) {
@@ -356,7 +422,106 @@ function idbSet(k, v) { return idbRun('readwrite', function (s) { return s.put(v
 function idbDel(k) { return idbRun('readwrite', function (s) { return s.delete(k); }); }
 
 /* ==========================================================================
-   5. TONES & RINGING
+   5. SHEET SYSTEM & UI BLOCKS
+   --------------------------------------------------------------------------
+   Every sheet is the same pop-in card. Small helpers build the grouped,
+   iOS-style layout: head() sec() seg() swatches() pick()
+   ========================================================================== */
+function openSheet(html, kind, origin) {
+  clearTimeout(closeTimer);
+  const wasOpen = sheet.classList.contains('open') && !sheet.classList.contains('closing');
+  sheet.classList.remove('closing');
+  sheet.dataset.kind = kind || '';
+  sheet.innerHTML = html;
+  sheet.scrollTop = 0;
+  if (!wasOpen) {
+    sheet.classList.remove('open');
+    void sheet.offsetWidth;
+  }
+  sheet.classList.add('open');
+  overlay.classList.add('open');
+
+  if (!wasOpen) {
+    if (origin) {
+      const r = sheet.getBoundingClientRect();
+      const ox = Math.max(0, Math.min(r.width, origin.x - r.left));
+      const oy = Math.max(0, Math.min(r.height, origin.y - r.top));
+      sheet.style.transformOrigin = ox + 'px ' + oy + 'px';
+    } else {
+      sheet.style.transformOrigin = '100% 0';
+    }
+  }
+}
+
+function closeSheet() {
+  stopPreview();
+  editW = null;
+  overlay.classList.remove('open');
+  if (!sheet.classList.contains('open') || sheet.classList.contains('closing')) return;
+  sheet.classList.add('closing');
+  clearTimeout(closeTimer);
+  closeTimer = setTimeout(function () { sheet.classList.remove('open', 'closing'); }, 170);
+}
+
+function head(title, backId) {
+  return '<div class="shead">' +
+    (backId ? '<button class="back" id="' + backId + '" aria-label="Back">&#8249;</button>' : '') +
+    '<div class="stitle">' + title + '</div></div>';
+}
+
+function sec(label, inner, note) {
+  return (label ? '<div class="sl">' + label + '</div>' : '') +
+    '<div class="grp">' + inner + '</div>' +
+    (note ? '<div class="sn">' + note + '</div>' : '');
+}
+
+function seg(id, opts, cur) {
+  return '<div class="seg" id="' + id + '">' + opts.map(function (o) {
+    return '<button data-v="' + o[0] + '"' + (String(o[0]) === String(cur) ? ' class="on"' : '') + '>' + o[1] + '</button>';
+  }).join('') + '</div>';
+}
+
+function swatches(id, list, cur) {
+  return '<div class="sws" id="' + id + '">' + list.map(function (b) {
+    const on = String(b[0]).toLowerCase() === String(cur).toLowerCase();
+    return '<button class="sw' + (on ? ' on' : '') + '" data-v="' + b[0] + '" title="' + b[1] +
+      '" aria-label="' + b[1] + '" style="background:' + b[0] + '"></button>';
+  }).join('') + '</div>';
+}
+
+function toggleRow(id, label, on) {
+  return '<button class="li" id="' + id + '"><span class="k">' + label + '</span><span class="sx' + (on ? ' on' : '') + '"></span></button>';
+}
+
+function navRow(attrs, label, value) {
+  return '<button class="li nav" ' + attrs + '><span class="k">' + label + '</span>' +
+    (value ? '<span class="v">' + value + '</span>' : '') + '</button>';
+}
+
+// segmented control or swatch row: marks the tapped button and reports its value
+function pick(id, fn) {
+  const box = $(id);
+  if (!box) return;
+  box.onclick = function (e) {
+    const b = e.target.closest ? e.target.closest('[data-v]') : null;
+    if (!b) return;
+    box.querySelectorAll('[data-v]').forEach(function (x) { x.classList.toggle('on', x === b); });
+    fn(b.dataset.v);
+  };
+}
+
+function bindToggle(id, on, fn) {
+  const row = $(id);
+  if (!row) return;
+  row.onclick = function () {
+    on = !on;
+    row.querySelector('.sx').classList.toggle('on', on);
+    fn(on);
+  };
+}
+
+/* ==========================================================================
+   6. TONES & RINGING
    --------------------------------------------------------------------------
    50 built-in tones (made by the browser, so they work offline)
    + one custom tone from your own audio file.
@@ -430,9 +595,9 @@ const TONES = TONE_DEFS.map(function (d, i) {
 });
 
 const TONE_KINDS = {
-  alarm: { key: 'alarmTone', title: 'Alarm tone' },
-  timer: { key: 'timerTone', title: 'Timer tone' },
-  sw: { key: 'swTone', title: 'Stopwatch tone' }
+  alarm: { key: 'alarmTone', label: 'Alarm', title: 'Alarm tone' },
+  timer: { key: 'timerTone', label: 'Timer', title: 'Timer tone' },
+  sw: { key: 'swTone', label: 'Stopwatch lap', title: 'Stopwatch tone' }
 };
 
 let toneMaster = null;
@@ -568,10 +733,10 @@ function stopPreview() { if (!ringOn) stopTone(); }
 function startRing(title, snoozeFn, toneId) {
   stopRing();
   ringOn = true;
-  document.getElementById('ringTitle').textContent = title;
-  document.getElementById('ringSnooze').style.display = snoozeFn ? 'inline-block' : 'none';
+  $('ringTitle').textContent = title;
+  $('ringSnooze').style.display = snoozeFn ? 'inline-block' : 'none';
   ringSnoozeFn = snoozeFn;
-  document.getElementById('ring').classList.add('open');
+  $('ring').classList.add('open');
   if (document.hidden) notify(title, 'Tap to open the clock', 'clock-ring');
 
   const ok = playTone(toneId || TONES[0].id, true);
@@ -587,39 +752,36 @@ function stopRing() {
   closeNotif('clock-ring');
   if (ringTimer) { clearInterval(ringTimer); ringTimer = null; }
   stopTone();
-  document.getElementById('ring').classList.remove('open');
+  $('ring').classList.remove('open');
 }
 
 /* ---- tone picker sheet ---- */
 function openToneSheet(kind) {
   const info = TONE_KINDS[kind];
   const key = info.key;
+  const row = function (id, name) {
+    return '<button class="li" data-id="' + id + '"><span class="k">' + name + '</span><span class="chk">&#10003;</span></button>';
+  };
 
-  let h = '<div class="title">' + info.title + '</div><div class="tonebox">';
-  if (kind === 'sw') {
-    h += '<button class="trow" data-id="off"><span>Off</span><span class="chk">&#10003;</span></button>';
-  }
+  let h = head(info.title, 'tnBack') + '<div class="tonebox">';
+  if (kind === 'sw') h += sec('', row('off', 'Off'));
   TONE_GROUPS.forEach(function (gn, gi) {
-    h += '<div class="tgrp">' + gn + '</div>';
-    TONES.forEach(function (t) {
-      if (t.g !== gi) return;
-      h += '<button class="trow" data-id="' + t.id + '"><span>' + escapeAttr(t.name) + '</span><span class="chk">&#10003;</span></button>';
-    });
+    h += sec(gn, TONES.filter(function (t) { return t.g === gi; }).map(function (t) {
+      return row(t.id, escapeAttr(t.name));
+    }).join(''));
   });
-  h += '<div class="tgrp">Custom</div>' +
-    '<button class="trow" data-id="custom"><span id="tnName"></span><span class="chk">&#10003;</span></button>' +
-    '<div class="row"><button class="btn" id="tnPick">Choose audio file</button><button class="btn danger" id="tnDel">Remove</button></div>' +
-    '<input type="file" id="tnFile" accept="audio/*" style="display:none">' +
-    '</div>' +
-    '<div class="row"><button class="btn" id="tnBack">Back</button><button class="btn" id="done">Done</button></div>';
+  h += sec('Custom', row('custom', '<span id="tnName"></span>')) +
+    '<div class="acts"><button class="bt" id="tnPick">Choose audio file</button><button class="bt dng" id="tnDel">Remove</button></div>' +
+    '<input type="file" id="tnFile" accept="audio/*" style="display:none"></div>' +
+    '<div class="acts"><button class="bt pri" id="done">Done</button></div>';
   openSheet(h, 'settings');
 
   function draw() {
     const cur = globalSet[key];
     const has = !!globalSet.customName;
-    document.getElementById('tnName').textContent = has ? globalSet.customName : 'No file chosen';
-    document.getElementById('tnDel').style.display = has ? '' : 'none';
-    sheet.querySelectorAll('.trow').forEach(function (r) {
+    $('tnName').textContent = has ? globalSet.customName : 'No file chosen';
+    $('tnDel').style.display = has ? '' : 'none';
+    sheet.querySelectorAll('.li[data-id]').forEach(function (r) {
       r.classList.toggle('sel', r.dataset.id === cur);
     });
   }
@@ -633,18 +795,18 @@ function openToneSheet(kind) {
     else if (!ringOn) playTone(id, false);
   }
 
-  function pick() { unlockAudio(); document.getElementById('tnFile').click(); }
+  function chooseFile() { unlockAudio(); $('tnFile').click(); }
 
-  sheet.querySelectorAll('.trow').forEach(function (r) {
+  sheet.querySelectorAll('.li[data-id]').forEach(function (r) {
     r.onclick = function () {
-      if (r.dataset.id === 'custom' && !globalSet.customName) { pick(); return; }
+      if (r.dataset.id === 'custom' && !globalSet.customName) { chooseFile(); return; }
       choose(r.dataset.id);
     };
   });
 
-  document.getElementById('tnPick').onclick = pick;
+  $('tnPick').onclick = chooseFile;
 
-  document.getElementById('tnFile').onchange = function (e) {
+  $('tnFile').onchange = function (e) {
     const f = e.target.files && e.target.files[0];
     if (!f) return;
     if (f.size > 8 * 1024 * 1024) { toast('File is too big (max 8 MB)'); return; }
@@ -658,7 +820,7 @@ function openToneSheet(kind) {
     }).catch(function () { toast('This file cannot be played'); });
   };
 
-  document.getElementById('tnDel').onclick = function () {
+  $('tnDel').onclick = function () {
     idbDel('custom').catch(function () {});
     customBuf = null;
     globalSet.customName = '';
@@ -670,12 +832,12 @@ function openToneSheet(kind) {
     draw();
   };
 
-  document.getElementById('tnBack').onclick = openSettings;
-  document.getElementById('done').onclick = closeSheet;
+  $('tnBack').onclick = openSettings;
+  $('done').onclick = closeSheet;
 }
 
 /* ==========================================================================
-   6. DIGITS & TIME HTML
+   7. DIGITS & TIME HTML
    ========================================================================== */
 const PATHS = {
   '0': 'M10 30 A20 20 0 0 1 50 30 V70 A20 20 0 0 1 10 70 Z',
@@ -745,7 +907,7 @@ function applyDigitMode() {
 }
 
 /* ==========================================================================
-   7. HOME WIDGETS
+   8. HOME WIDGETS
    ========================================================================== */
 function newWidget(type) {
   const base = {
@@ -867,24 +1029,16 @@ function updateLabels() {
 }
 
 /* ---- location: where is the phone? ---- */
+const GEO_NOTES = {
+  locating: 'locating...',
+  denied: 'location is blocked',
+  insecure: 'location needs HTTPS',
+  unsupported: 'location not supported'
+};
+
 function setGeo(st) {
   geoStatus = st;
-  const el = document.getElementById('wsstat');
-  if (el && el.dataset.auto === '1') el.textContent = autoStatusText();
-}
-
-function geoNote() {
-  switch (geoStatus) {
-    case 'locating': return ' ...';
-    case 'denied': return ' (location is blocked, using the phone clock)';
-    case 'insecure': return ' (location needs HTTPS, using the phone clock)';
-    case 'unsupported': return ' (location not supported, using the phone clock)';
-    default: return '';
-  }
-}
-
-function autoStatusText() {
-  return '\uD83D\uDCCD My location: ' + myPlaceName() + ' \u00B7 ' + deviceZone() + geoNote();
+  if (editW && $('wsName')) fillPlace(editW);
 }
 
 function refreshMyPlace(force) {
@@ -1104,7 +1258,7 @@ function sweepLoop() {
 }
 
 function renderAll() {
-  const stage = document.getElementById('stage');
+  const stage = $('stage');
   stage.innerHTML = '';
   if (!widgets.length) {
     stage.innerHTML = '<div class="empty">Tap + to add a widget</div>';
@@ -1118,7 +1272,7 @@ function renderAll() {
 }
 
 /* ==========================================================================
-   8. SHEET SYSTEM (pop-in), THEME & SETTINGS
+   9. SETTINGS
    ========================================================================== */
 function applyTheme() {
   const light = globalSet.theme === 'light';
@@ -1144,145 +1298,96 @@ async function setAwake(on) {
   } catch (e) {}
 }
 
-// every sheet is the same pop-in card. origin = click point {x,y}; default is the top-right corner
-function openSheet(html, kind, origin) {
-  clearTimeout(closeTimer);
-  const wasOpen = sheet.classList.contains('open') && !sheet.classList.contains('closing');
-  sheet.classList.remove('closing');
-  sheet.dataset.kind = kind || '';
-  sheet.innerHTML = html;
-  sheet.scrollTop = 0;
-  if (!wasOpen) {
-    sheet.classList.remove('open');
-    void sheet.offsetWidth;
-  }
-  sheet.classList.add('open');
-  overlay.classList.add('open');
-
-  if (!wasOpen) {
-    if (origin) {
-      const r = sheet.getBoundingClientRect();
-      const ox = Math.max(0, Math.min(r.width, origin.x - r.left));
-      const oy = Math.max(0, Math.min(r.height, origin.y - r.top));
-      sheet.style.transformOrigin = ox + 'px ' + oy + 'px';
-    } else {
-      sheet.style.transformOrigin = '100% 0';
-    }
-  }
-}
-
-function closeSheet() {
-  stopPreview();
-  overlay.classList.remove('open');
-  if (!sheet.classList.contains('open') || sheet.classList.contains('closing')) return;
-  sheet.classList.add('closing');
-  clearTimeout(closeTimer);
-  closeTimer = setTimeout(function () { sheet.classList.remove('open', 'closing'); }, 170);
-}
-
 function openSettings() {
   const light = globalSet.theme === 'light';
   const list = light ? BGS_LIGHT : BGS_DARK;
+  const curBg = light ? globalSet.bgLight : globalSet.bg;
 
-  let h = '<div class="title">Settings</div>';
-  h += '<div class="row"><button class="btn" id="themebtn"></button></div>';
-  h += '<div class="row"><div class="label">Background</div>' +
-    list.map(function (b) {
-      return '<button class="swatch" data-bg="' + b[0] + '" title="' + b[1] +
-        '" style="background:' + b[0] + ';border-color:#888"></button>';
-    }).join('') + '</div>';
-  h += '<div class="row"><button class="btn" id="fontbtn"></button></div>';
-  h += '<div class="row"><button class="btn" id="awake"></button></div>';
-  Object.keys(TONE_KINDS).forEach(function (k) {
-    h += '<div class="row"><button class="btn" data-tone="' + k + '"></button></div>';
-  });
-  h += '<div class="row"><button class="btn" id="upbtn">Upcoming dates: ' + escapeAttr(countryName(detectCountry()) || 'Auto') + '</button></div>';
-  h += '<div class="row"><button class="btn" id="fs">Toggle fullscreen</button></div>';
-  h += '<div class="row"><button class="btn" id="permbtn">Permissions &amp; connection</button></div>';
-  h += '<div class="row"><button class="btn" id="done">Done</button></div>';
+  let h = head('Settings');
+  h += sec('Appearance',
+    '<div class="li"><span class="k">Theme</span>' + seg('themeSeg', [['dark', 'Dark'], ['light', 'Light']], globalSet.theme) + '</div>' +
+    '<div class="li"><span class="k">Background</span>' + swatches('bgSw', list, curBg) + '</div>' +
+    '<div class="li"><span class="k">Numbers</span>' + seg('fontSeg', [['sf', 'Bold'], ['retro', 'Retro']], digitMode) + '</div>');
+  h += sec('Sounds', Object.keys(TONE_KINDS).map(function (k) {
+    return navRow('data-tone="' + k + '"', TONE_KINDS[k].label, escapeAttr(toneName(globalSet[TONE_KINDS[k].key])));
+  }).join(''));
+  h += sec('General',
+    toggleRow('awake', 'Keep screen awake', globalSet.awake) +
+    navRow('id="upbtn"', 'Upcoming dates', escapeAttr(countryName(detectCountry()) || 'Auto')) +
+    navRow('id="fs"', 'Fullscreen', '') +
+    navRow('id="permbtn"', 'Permissions &amp; connection', ''));
+  h += '<div class="acts"><button class="bt pri" id="done">Done</button></div>';
   openSheet(h, 'settings');
 
-  function labels() {
-    document.getElementById('themebtn').textContent = globalSet.theme === 'light' ? 'Theme: Light' : 'Theme: Dark';
-    document.getElementById('awake').textContent = globalSet.awake ? 'Keep screen awake: ON' : 'Keep screen awake: OFF';
-    document.getElementById('fontbtn').textContent = digitMode === 'sf' ? 'Numbers: Bold style' : 'Numbers: Retro lines';
-    sheet.querySelectorAll('[data-tone]').forEach(function (b) {
-      const info = TONE_KINDS[b.dataset.tone];
-      b.textContent = info.title + ': ' + toneName(globalSet[info.key]);
-    });
-  }
-  labels();
+  pick('themeSeg', function (v) {
+    globalSet.theme = v;
+    saveGlobal(); applyTheme(); renderAll();
+    openSettings();
+  });
+
+  pick('bgSw', function (v) {
+    if (globalSet.theme === 'light') globalSet.bgLight = v;
+    else globalSet.bg = v;
+    saveGlobal(); applyTheme();
+  });
+
+  pick('fontSeg', function (v) {
+    digitMode = v;
+    globalSet.font = v;
+    saveGlobal(); applyDigitMode();
+  });
+
+  bindToggle('awake', globalSet.awake, function (on) {
+    globalSet.awake = on;
+    saveGlobal(); setAwake(on);
+  });
 
   sheet.querySelectorAll('[data-tone]').forEach(function (b) {
     b.onclick = function () { openToneSheet(b.dataset.tone); };
   });
-  document.getElementById('permbtn').onclick = openPermissions;
-  document.getElementById('upbtn').onclick = openUpcomingSettings;
-
-  document.getElementById('themebtn').onclick = function () {
-    globalSet.theme = globalSet.theme === 'light' ? 'dark' : 'light';
-    saveGlobal(); applyTheme(); renderAll();
-    openSettings();
-  };
-
-  sheet.querySelectorAll('[data-bg]').forEach(function (b) {
-    b.onclick = function () {
-      if (globalSet.theme === 'light') globalSet.bgLight = b.dataset.bg;
-      else globalSet.bg = b.dataset.bg;
-      saveGlobal(); applyTheme();
-    };
-  });
-
-  document.getElementById('fontbtn').onclick = function () {
-    digitMode = digitMode === 'sf' ? 'retro' : 'sf';
-    globalSet.font = digitMode;
-    saveGlobal(); applyDigitMode(); labels();
-  };
-
-  document.getElementById('awake').onclick = function () {
-    globalSet.awake = !globalSet.awake;
-    saveGlobal(); setAwake(globalSet.awake); labels();
-  };
-
-  document.getElementById('fs').onclick = function () {
+  $('upbtn').onclick = openUpcomingSettings;
+  $('permbtn').onclick = openPermissions;
+  $('fs').onclick = function () {
     if (document.fullscreenElement) document.exitFullscreen();
     else if (document.documentElement.requestFullscreen) document.documentElement.requestFullscreen().catch(function () {});
   };
-
-  document.getElementById('done').onclick = closeSheet;
+  $('done').onclick = closeSheet;
 }
 
 /* ==========================================================================
-   9. EDIT / ADD WIDGET SHEETS
+   10. EDIT / ADD WIDGET SHEETS
    ========================================================================== */
-function worldEditHtml(w) {
-  let h = '<div class="row"><div class="label" id="wsstat"></div></div>';
+// big card: place name, time zone, GMT offset
+function fillPlace(w) {
+  const n = $('wsName');
+  const s = $('wsSub');
+  if (!n || !s) return;
+  const zone = zoneOf(w);
+  n.textContent = placeLabel(w) || 'Choose a place';
+  s.textContent = [zone, offsetText(w, zone, new Date()), w.type === 'home' ? GEO_NOTES[geoStatus] : '']
+    .filter(Boolean).join(' · ');
+}
+
+function placeHtml(w) {
+  let h = '<div class="sl">Location</div><div class="pcard"><div class="pcn" id="wsName"></div><div class="pcs" id="wsSub"></div></div>';
   if (w.type === 'world') {
-    h += '<div class="row"><input type="text" id="wsq" placeholder="Search city or place" maxlength="60" autocomplete="off"></div>' +
+    h += sec('Search', '<div class="li"><span class="k" style="flex:none">&#128269;</span>' +
+      '<input type="text" class="inp" id="wsq" style="text-align:left" placeholder="City or place" maxlength="60" autocomplete="off"></div>') +
       '<div id="wsres"></div>';
   } else {
-    h += '<div class="phint">Shows the place where this phone is. The time changes by itself when the time zone changes.</div>' +
-      '<div class="row"><button class="btn" id="wsloc">&#128205; Refresh location</button></div>';
+    h += '<div class="sn">Shows where this phone is. The time follows the phone time zone by itself.</div>' +
+      '<div class="acts"><button class="bt" id="wsloc">&#128205; Refresh location</button></div>';
   }
   return h;
 }
 
 function initWorldEdit(w) {
-  const stat = document.getElementById('wsstat');
-  const home = w.type === 'home';
-  let timer = null;
+  fillPlace(w);
 
-  function showStatus() {
-    if (!stat) return;
-    stat.dataset.auto = home ? '1' : '0';
-    stat.textContent = home ? autoStatusText() : '\uD83C\uDF0D ' + placeLabel(w) + ' \u00B7 ' + zoneOf(w);
-  }
-  showStatus();
-
-  if (home) {
-    document.getElementById('wsloc').onclick = function () {
+  if (w.type === 'home') {
+    $('wsloc').onclick = function () {
       refreshMyPlace(true).then(function (st) {
-        showStatus();
+        fillPlace(w);
         if (st === 'denied') toast('Location is blocked. Allow it in the site settings of your browser.', { ms: 5000 });
         else if (st === 'insecure') toast('Location needs HTTPS.', { ms: 4000 });
         else if (st === 'timeout' || st === 'unavailable') toast('Could not get your location. Using the phone clock.');
@@ -1292,17 +1397,21 @@ function initWorldEdit(w) {
     return;
   }
 
-  const q = document.getElementById('wsq');
-  const res = document.getElementById('wsres');
+  const q = $('wsq');
+  const res = $('wsres');
+  let timer = null;
 
   function msg(t, retry) {
-    res.innerHTML = '<div class="label">' + t + '</div>';
+    res.innerHTML = '<div class="sn mid">' + t + '</div>';
     if (retry) {
       const b = document.createElement('button');
-      b.className = 'btn';
+      b.className = 'bt';
       b.textContent = 'Retry';
       b.onclick = function () { q.oninput(); };
-      res.appendChild(b);
+      const box = document.createElement('div');
+      box.className = 'acts';
+      box.appendChild(b);
+      res.appendChild(box);
     }
   }
 
@@ -1316,27 +1425,24 @@ function initWorldEdit(w) {
       searchPlaces(v).then(function (r) {
         if (my !== searchSeq) return;
         if (!r.list.length) { msg('No place found'); return; }
-        res.innerHTML = '';
-        if (r.local) {
-          const n = document.createElement('div');
-          n.className = 'label';
-          n.textContent = 'No internet: showing the offline time zone list';
-          res.appendChild(n);
-        }
+        res.innerHTML = r.local ? '<div class="sn">No internet: showing the offline time zone list</div>' : '';
+        const grp = document.createElement('div');
+        grp.className = 'grp';
         r.list.forEach(function (p) {
           const sub = [p.admin1, p.country].filter(Boolean).join(', ');
           const b = document.createElement('button');
-          b.className = 'btn block';
-          b.textContent = p.name + (sub ? ' \u00B7 ' + sub : '');
+          b.className = 'li';
+          b.innerHTML = '<span class="k">' + escapeAttr(p.name) + '</span>' + (sub ? '<span class="v">' + escapeAttr(sub) + '</span>' : '');
           b.onclick = function () {
             w.zone = p.timezone;
             w.city = p.name;
-            saveWidgets(); renderAll(); showStatus();
+            saveWidgets(); renderAll(); fillPlace(w);
             res.innerHTML = '';
             q.value = '';
           };
-          res.appendChild(b);
+          grp.appendChild(b);
         });
+        res.appendChild(grp);
       }).catch(function (err) {
         if (err && err.name === 'AbortError') return;
         if (my !== searchSeq) return;
@@ -1349,65 +1455,57 @@ function initWorldEdit(w) {
 function openEdit(id, origin) {
   const w = widgets.find(function (x) { return x.id === id; });
   if (!w) return;
+  editW = w;
+  const zone = isZoneWidget(w);
 
-  let h = '<div class="title">' + TYPE_NAMES[w.type] + '</div>';
-  h += '<div class="row"><div class="label">Color</div>' +
-    COLORS.map(function (c) { return '<button class="swatch" data-c="' + c + '" style="background:' + c + '"></button>'; }).join('') + '</div>';
-  h += '<div class="row"><div class="label">Size</div><input type="range" id="sz" min="6" max="26" step="1" value="' + w.size + '"></div>';
+  let h = head(TYPES[w.type].n);
+  if (zone) h += placeHtml(w);
 
-  if (isZoneWidget(w)) h += worldEditHtml(w);
-  if (w.type === 'digital' || isZoneWidget(w)) {
-    h += '<div class="row"><button class="btn" id="fmt"></button><button class="btn" id="rt"></button></div>';
+  h += sec('Appearance',
+    '<div class="li"><span class="k">Color</span>' + swatches('clr', COLORS.map(function (c) { return [c, c]; }), w.color) + '</div>' +
+    '<div class="li"><span class="k">Size</span><input type="range" id="sz" min="6" max="26" step="1" value="' + w.size + '"></div>');
+
+  if (w.type === 'digital' || zone) {
+    h += sec('Time',
+      '<div class="li"><span class="k">Format</span>' + seg('fmtSeg', [['24', '24-hour'], ['12', '12-hour']], w.hour12 ? '12' : '24') + '</div>' +
+      toggleRow('rt', 'Retro colors', w.retro));
   }
-  h += '<div class="row"><button class="btn" id="up">&#8593; Move up</button><button class="btn" id="down">&#8595; Move down</button></div>';
-  h += '<div class="row"><button class="btn danger" id="del">Delete</button><button class="btn" id="done">Done</button></div>';
+
+  h += '<div class="acts"><button class="bt" id="up">&#8593; Move up</button><button class="bt" id="down">&#8595; Move down</button></div>';
+  h += '<div class="acts"><button class="bt dng" id="del">Delete</button><button class="bt pri" id="done">Done</button></div>';
   openSheet(h, 'edit', origin);
+  editW = w;
 
-  function labels() {
-    const f = document.getElementById('fmt');
-    const r = document.getElementById('rt');
-    if (f) f.textContent = w.hour12 ? '12-hour' : '24-hour';
-    if (r) r.textContent = w.retro ? 'Retro colors: ON' : 'Retro colors: OFF';
-  }
-  labels();
+  pick('clr', function (v) { w.color = v; saveWidgets(); applyStyle(w); });
+  $('sz').oninput = function (e) { w.size = Number(e.target.value); saveWidgets(); applyStyle(w); };
 
-  sheet.querySelectorAll('.swatch').forEach(function (b) {
-    b.onclick = function () { w.color = b.dataset.c; saveWidgets(); applyStyle(w); };
-  });
+  if (zone) initWorldEdit(w);
 
-  document.getElementById('sz').oninput = function (e) {
-    w.size = Number(e.target.value); saveWidgets(); applyStyle(w);
-  };
+  if ($('fmtSeg')) pick('fmtSeg', function (v) { w.hour12 = v === '12'; saveWidgets(); renderAll(); });
+  if ($('rt')) bindToggle('rt', !!w.retro, function (on) { w.retro = on; saveWidgets(); renderAll(); });
 
-  if (isZoneWidget(w)) initWorldEdit(w);
-
-  const fmt = document.getElementById('fmt');
-  if (fmt) fmt.onclick = function () { w.hour12 = !w.hour12; saveWidgets(); renderAll(); labels(); };
-
-  const rt = document.getElementById('rt');
-  if (rt) rt.onclick = function () { w.retro = !w.retro; saveWidgets(); renderAll(); labels(); };
-
-  document.getElementById('up').onclick = function () {
+  $('up').onclick = function () {
     const i = widgets.indexOf(w);
     if (i > 0) { widgets.splice(i, 1); widgets.splice(i - 1, 0, w); saveWidgets(); renderAll(); }
   };
-  document.getElementById('down').onclick = function () {
+  $('down').onclick = function () {
     const i = widgets.indexOf(w);
     if (i < widgets.length - 1) { widgets.splice(i, 1); widgets.splice(i + 1, 0, w); saveWidgets(); renderAll(); }
   };
-  document.getElementById('del').onclick = function () {
+  $('del').onclick = function () {
     widgets = widgets.filter(function (x) { return x !== w; });
     saveWidgets(); closeSheet(); renderAll();
   };
-  document.getElementById('done').onclick = closeSheet;
+  $('done').onclick = closeSheet;
 }
 
 function openAddWidget() {
-  let h = '<div class="title">Add widget</div>';
-  Object.keys(TYPE_NAMES).forEach(function (t) {
-    h += '<button class="btn block" data-t="' + t + '">' + TYPE_NAMES[t] + '</button>';
-  });
-  h += '<div class="row"><button class="btn danger" id="reset">Reset all</button><button class="btn" id="done">Close</button></div>';
+  let h = head('Add widget');
+  h += sec('', Object.keys(TYPES).map(function (t) {
+    return '<button class="li nav" data-t="' + t + '"><div class="kk"><div class="k">' + TYPES[t].n +
+      '</div><div class="d">' + TYPES[t].d + '</div></div></button>';
+  }).join(''));
+  h += '<div class="acts"><button class="bt dng" id="reset">Reset all</button><button class="bt pri" id="done">Close</button></div>';
   openSheet(h, 'add');
 
   sheet.querySelectorAll('[data-t]').forEach(function (b) {
@@ -1417,24 +1515,24 @@ function openAddWidget() {
       window.scrollTo(0, document.body.scrollHeight);
     };
   });
-  document.getElementById('reset').onclick = function () {
+  $('reset').onclick = function () {
     if (confirm('Reset all widgets to default?')) {
       widgets = defaultWidgets();
       saveWidgets(); closeSheet(); renderAll();
     }
   };
-  document.getElementById('done').onclick = closeSheet;
+  $('done').onclick = closeSheet;
 }
 
 /* ==========================================================================
-   10. TABS
+   11. TABS
    ========================================================================== */
 function showTab(name) {
   TABS.forEach(function (t) {
-    document.getElementById('v-' + t).classList.toggle('active', t === name);
+    $('v-' + t).classList.toggle('active', t === name);
     document.querySelector('#nav [data-tab="' + t + '"]').classList.toggle('active', t === name);
   });
-  document.getElementById('add').style.display = name === 'home' ? 'block' : 'none';
+  $('add').style.display = name === 'home' ? 'block' : 'none';
   window.scrollTo(0, 0);
   closeSheet();
   if (name === 'timer') setTimeout(syncWheels, 50);
@@ -1445,12 +1543,12 @@ function showTab(name) {
 }
 
 /* ==========================================================================
-   11. ALARMS
+   12. ALARMS
    ========================================================================== */
 function snoozeFive() { snoozeAt = Date.now() + 5 * 60 * 1000; }
 
 function renderAlarms() {
-  const box = document.getElementById('alarmList');
+  const box = $('alarmList');
   if (!box) return;
   if (!alarms.length) {
     box.innerHTML = '<div class="empty">No alarms yet. Tap + to add one.</div>';
@@ -1489,24 +1587,22 @@ function openAlarmSheet(a, origin) {
     ? { time: a.time, label: a.label || '', daily: a.daily }
     : { time: '07:00', label: '', daily: true };
 
-  const h = '<div class="title">' + (isNew ? 'Add alarm' : 'Edit alarm') + '</div>' +
-    '<div class="row"><input type="time" id="asTime" class="bigin" value="' + draft.time + '"></div>' +
-    '<div class="row"><input type="text" id="asLabel" placeholder="Label (optional)" maxlength="30" value="' + escapeAttr(draft.label) + '"></div>' +
-    '<div class="row"><button class="btn" id="asRepeat"></button></div>' +
-    '<div class="row"><button class="btn" id="asSave">Save</button>' +
-    (isNew ? '' : '<button class="btn danger" id="asDel">Delete</button>') +
-    '<button class="btn" id="asCancel">Cancel</button></div>';
+  const h = head(isNew ? 'New alarm' : 'Edit alarm') +
+    sec('', '<div class="li cen"><input type="time" id="asTime" class="bigtime" value="' + draft.time + '"></div>') +
+    sec('Details',
+      '<div class="li"><span class="k">Label</span><input type="text" id="asLabel" class="inp" placeholder="Alarm" maxlength="30" value="' + escapeAttr(draft.label) + '"></div>' +
+      '<div class="li"><span class="k">Repeat</span>' + seg('asRep', [['1', 'Every day'], ['0', 'Once']], draft.daily ? '1' : '0') + '</div>') +
+    '<div class="acts"><button class="bt" id="asCancel">Cancel</button>' +
+    (isNew ? '' : '<button class="bt dng" id="asDel">Delete</button>') +
+    '<button class="bt pri" id="asSave">Save</button></div>';
   openSheet(h, 'alarm', origin);
 
-  const repBtn = document.getElementById('asRepeat');
-  function lab() { repBtn.textContent = draft.daily ? 'Repeat: Every day' : 'Repeat: Once'; }
-  lab();
-  repBtn.onclick = function () { draft.daily = !draft.daily; lab(); };
+  pick('asRep', function (v) { draft.daily = v === '1'; });
 
-  document.getElementById('asSave').onclick = function () {
-    const t = document.getElementById('asTime').value;
+  $('asSave').onclick = function () {
+    const t = $('asTime').value;
     if (!t) return;
-    const lbl = document.getElementById('asLabel').value.trim();
+    const lbl = $('asLabel').value.trim();
     const now = new Date();
     const tp = t.split(':');
     const lateBy = now.getHours() * 60 + now.getMinutes() - (Number(tp[0]) * 60 + Number(tp[1]));
@@ -1521,12 +1617,12 @@ function openAlarmSheet(a, origin) {
     maybeAskNotifications();
   };
 
-  const del = document.getElementById('asDel');
+  const del = $('asDel');
   if (del) del.onclick = function () {
     alarms = alarms.filter(function (x) { return x !== a; });
     saveAlarms(); renderAlarms(); closeSheet();
   };
-  document.getElementById('asCancel').onclick = closeSheet;
+  $('asCancel').onclick = closeSheet;
 }
 
 function checkAlarms() {
@@ -1550,7 +1646,7 @@ function checkAlarms() {
 }
 
 /* ==========================================================================
-   12. STOPWATCH
+   13. STOPWATCH
    ========================================================================== */
 function swMs() { return sw.elapsed + (sw.running ? Date.now() - sw.start : 0); }
 
@@ -1564,8 +1660,8 @@ function fmtMs(ms) {
 }
 
 function buildDial() {
-  const g = document.getElementById('dialTicks');
-  const sg = document.getElementById('subTicks');
+  const g = $('dialTicks');
+  const sg = $('subTicks');
   if (!g || !sg) return;
 
   let s = '';
@@ -1603,7 +1699,7 @@ function csHtml(cs) {
 }
 
 function setGoIcon(id, running) {
-  const go = document.getElementById(id);
+  const go = $(id);
   if (!go) return;
   const k = running ? 'pause' : 'play';
   if (go.getAttribute('data-k') !== k) {
@@ -1618,25 +1714,25 @@ function renderSw() {
   const f = fmtMs(ms);
   if (f.main !== lastSwMain) {
     lastSwMain = f.main;
-    const main = document.getElementById('swMain');
+    const main = $('swMain');
     if (main) main.innerHTML = timeHtml(f.main, false);
   }
   if (f.cs !== lastSwCs) {
     lastSwCs = f.cs;
-    const cs = document.getElementById('swCs');
+    const cs = $('swCs');
     if (cs) cs.innerHTML = csHtml(f.cs);
   }
 
   setGoIcon('swGo', sw.running);
 
-  const h1 = document.getElementById('swHand');
+  const h1 = $('swHand');
   if (h1) h1.setAttribute('transform', 'rotate(' + ((ms % 60000) / 60000 * 360).toFixed(2) + ' 150 150)');
-  const h2 = document.getElementById('swHand2');
+  const h2 = $('swHand2');
   if (h2) h2.setAttribute('transform', 'rotate(' + (((ms / 60000) % 30) / 30 * 360).toFixed(2) + ' 150 208)');
 }
 
 function renderLaps() {
-  const box = document.getElementById('laps');
+  const box = $('laps');
   if (!box) return;
   box.innerHTML = '';
   for (let i = sw.laps.length - 1; i >= 0; i--) {
@@ -1651,7 +1747,7 @@ function renderLaps() {
 }
 
 /* ==========================================================================
-   13. TIMER & PRESETS
+   14. TIMER & PRESETS
    ========================================================================== */
 function tmLeft() { return tm.running ? Math.max(0, tm.endAt - Date.now()) : tm.remaining; }
 
@@ -1666,7 +1762,7 @@ function fmtHMS(s) {
 }
 
 function wheelIndex(id) {
-  const el = document.getElementById(id);
+  const el = $(id);
   return el ? Math.round(el.scrollTop / ITEM_H) : 0;
 }
 
@@ -1676,7 +1772,7 @@ function wheelMs() {
 
 function markSelected() {
   ['pH', 'pM', 'pS'].forEach(function (id) {
-    const el = document.getElementById(id);
+    const el = $(id);
     if (!el || !el.children.length) return;
     const idx = Math.max(0, Math.min(el.children.length - 1, Math.round(el.scrollTop / ITEM_H)));
     if (idx !== selIdx[id]) {
@@ -1703,7 +1799,7 @@ function onWheelScroll() {
 
 function buildWheels() {
   [['pH', 24], ['pM', 60], ['pS', 60]].forEach(function (c) {
-    const el = document.getElementById(c[0]);
+    const el = $(c[0]);
     if (!el) return;
     let html = '';
     for (let i = 0; i < c[1]; i++) html += '<div class="pi">' + pad(i) + '</div>';
@@ -1713,7 +1809,7 @@ function buildWheels() {
 }
 
 function setWheel(id, i) {
-  const el = document.getElementById(id);
+  const el = $(id);
   if (el) el.scrollTop = i * ITEM_H;
 }
 
@@ -1728,9 +1824,9 @@ function syncWheels() {
 function renderTm() {
   const ms = tmLeft();
   const inRun = tm.running || tm.remaining !== tm.total;
-  const pk = document.getElementById('tmPicker');
-  const rn = document.getElementById('tmRun');
-  const rs = document.getElementById('tmReset');
+  const pk = $('tmPicker');
+  const rn = $('tmRun');
+  const rs = $('tmReset');
   if (pk) pk.style.display = inRun ? 'none' : 'flex';
   if (rn) rn.style.display = inRun ? 'flex' : 'none';
   if (rs) rs.style.display = inRun ? 'flex' : 'none';
@@ -1741,7 +1837,7 @@ function renderTm() {
     const str = fmtTimer(ms);
     if (str !== lastTm) {
       lastTm = str;
-      const t = document.getElementById('tmTime');
+      const t = $('tmTime');
       if (t) t.innerHTML = timeHtml(str, false);
     }
   }
@@ -1783,7 +1879,7 @@ function pickPreset(ms) {
 }
 
 function renderPresets() {
-  const box = document.getElementById('presetList');
+  const box = $('presetList');
   if (!box) return;
   box.innerHTML = '';
   presets.forEach(function (p) {
@@ -1804,70 +1900,58 @@ function renderPresets() {
 }
 
 function openPresetSheet(origin) {
-  function opts(n) {
+  function col(id, n, label, sel) {
     let o = '';
-    for (let i = 0; i < n; i++) o += '<option value="' + i + '">' + pad(i) + '</option>';
-    return o;
+    for (let i = 0; i < n; i++) o += '<option value="' + i + '"' + (i === sel ? ' selected' : '') + '>' + pad(i) + '</option>';
+    return '<div><select id="' + id + '">' + o + '</select><i>' + label + '</i></div>';
   }
-  const h = '<div class="title">Add timer</div>' +
-    '<div class="row"><input type="text" id="ptName" placeholder="Name (for example Tea)" maxlength="24"></div>' +
-    '<div class="row"><div class="label">Hours, minutes, seconds</div>' +
-    '<select id="ptH">' + opts(24) + '</select> <select id="ptM">' + opts(60) + '</select> <select id="ptS">' + opts(60) + '</select></div>' +
-    '<div class="row"><button class="btn" id="ptSave">Save</button><button class="btn" id="ptCancel">Cancel</button></div>';
+  const h = head('New timer') +
+    sec('', '<div class="li"><span class="k">Name</span><input type="text" id="ptName" class="inp" placeholder="For example Tea" maxlength="24"></div>') +
+    sec('Duration', '<div class="trip">' + col('ptH', 24, 'hours', 0) + col('ptM', 60, 'minutes', 5) + col('ptS', 60, 'seconds', 0) + '</div>') +
+    '<div class="acts"><button class="bt" id="ptCancel">Cancel</button><button class="bt pri" id="ptSave">Save</button></div>';
   openSheet(h, 'preset', origin);
-  document.getElementById('ptM').value = '5';
 
-  document.getElementById('ptSave').onclick = function () {
-    const s = Number(document.getElementById('ptH').value) * 3600 +
-      Number(document.getElementById('ptM').value) * 60 +
-      Number(document.getElementById('ptS').value);
+  $('ptSave').onclick = function () {
+    const s = Number($('ptH').value) * 3600 + Number($('ptM').value) * 60 + Number($('ptS').value);
     if (s <= 0) return;
-    const name = document.getElementById('ptName').value.trim() || 'Timer';
+    const name = $('ptName').value.trim() || 'Timer';
     presets.push({ id: 'p' + Date.now(), name: name, s: s });
     savePresets(); renderPresets(); closeSheet();
   };
-  document.getElementById('ptCancel').onclick = closeSheet;
+  $('ptCancel').onclick = closeSheet;
 }
 
 /* ==========================================================================
-   14. UPCOMING  (all countries, updates itself over the internet)
+   15. UPCOMING  (every country, updates itself)
    --------------------------------------------------------------------------
-   Country : your choice in Settings, otherwise GPS -> internet (IP) -> time zone -> language
-   Dates   : a) holidays of the country: Nager.Date, else your pack file days/XX.json
-                (saved on the phone, refreshed every 7 days, works offline)
-             b) Islamic calendar events worked out by the browser
-             c) your own dates
+   Country : Settings choice, otherwise GPS -> internet (IP) -> time zone -> language
+   Dates   : a) date-holidays library (about 200 countries, saved by the browser
+                after the first load, so it also works offline)
+             b) Nager.Date as backup when the library has no data for a country
+             c) world-wide important days   d) your own dates
+   Optional: put holidays.min.js next to index.html (loaded first); the CDN is the backup.
    ========================================================================== */
-const MUSLIM = new Set(('BD PK IN SA AE EG QA KW OM BH JO LB IQ IR AF UZ TJ KG AZ TR ID MY BN MV MA DZ TN LY YE SY PS SD SN NG LK').split(' '));
-const MOON_LATE = new Set(['BD', 'IN', 'PK']);
-const ARABIC = new Set(('SA AE EG QA KW OM BH JO LB IQ MA DZ TN LY YE SY PS SD').split(' '));
-const HIJRI_SCAN_DAYS = 420;
+const LIB_URLS = ['holidays.min.js', 'https://cdn.jsdelivr.net/npm/date-holidays@3/dist/umd.min.js'];
+const REL_RE = /christmas|easter|good friday|epiphany|ascension|pentecost|whit|corpus|assumption|all saints|all souls|immaculate|diwali|deepavali|holi\b|vesak|buddha|navratri|dussehra|durga|janmashtami|ramadan|eid|fitr|adha|ashura|mawlid|passover|hanukkah|yom kippur|rosh hashan|nyepi|waisak|thaipusam|palm sunday|maundy|ramazan|bayram|kurban|raya|nuzul|arafah|shab-e|miladun/i;
 
-// [Hijri month, Hijri day, English, Bangla, Arabic, type]
-const HIJRI = [
-  [1, 1, 'Islamic New Year', 'হিজরি নববর্ষ', 'رأس السنة الهجرية', 'r'],
-  [1, 10, 'Ashura', 'আশুরা', 'عاشوراء', 'r'],
-  [3, 12, 'Eid-e-Miladunnabi', 'ঈদে মিলাদুন্নবী', 'المولد النبوي', 'r'],
-  [7, 27, 'Shab-e-Meraj', 'শবে মেরাজ', 'الإسراء والمعراج', 'r'],
-  [8, 15, 'Shab-e-Barat', 'শবে বরাত', 'ليلة النصف من شعبان', 'r'],
-  [9, 1, 'Ramadan begins', 'রমজান শুরু', 'بداية رمضان', 'r'],
-  [9, 27, 'Shab-e-Qadr', 'শবে কদর', 'ليلة القدر', 'r'],
-  [10, 1, 'Eid-ul-Fitr', 'ঈদুল ফিতর', 'عيد الفطر', 'h'],
-  [12, 9, 'Day of Arafah', 'আরাফার দিন', 'يوم عرفة', 'r'],
-  [12, 10, 'Eid-ul-Adha', 'ঈদুল আযহা', 'عيد الأضحى', 'h']
+// [month, day, name]: important days shown for every country
+const WORLD_DAYS = [
+  [2, 14, "Valentine's Day"], [2, 21, 'International Mother Language Day'], [3, 8, "International Women's Day"],
+  [3, 22, 'World Water Day'], [4, 7, 'World Health Day'], [4, 22, 'Earth Day'], [6, 5, 'World Environment Day'],
+  [9, 21, 'International Day of Peace'], [10, 24, 'United Nations Day'], [11, 20, "World Children's Day"],
+  [12, 10, 'Human Rights Day']
 ];
-const ISL_RE = /eid|id al|id-|fitr|adha|ramadan|ramazan|arafah|arafat|ashura|mawlid|maulid|barat|qadr|mi.?raj|isra|islamic new|hijri|muharram|bayram|kurban|idul|lebaran|nuzul|raya/i;
-const REL_RE = /christmas|easter|good friday|epiphany|ascension|pentecost|whit|corpus|assumption|all saints|all souls|immaculate|diwali|deepavali|holi\b|vesak|buddha|navratri|dussehra|durga|janmashtami|ramadan|eid|fitr|adha|ashura|mawlid|passover|hanukkah|yom kippur|rosh hashan|nyepi|waisak|thaipusam|boxing|palm sunday|maundy/i;
 
-let hijriCache = { key: '', list: [] };
 let lastCc = null;
 let countryCache = null;
 let zoneMap = null;
 let ipPlace = loadIpPlace();
 let ipBusy = false;
-const holBusy = {};
+let libBusy = null;
+const holMemo = {};
+const nagerBusy = {};
 
-/* ---- all countries: the list is made by the browser, no fixed table ---- */
+/* ---- all countries: the list is made by the browser ---- */
 function countryList() {
   if (countryCache) return countryCache;
   const skip = { ZZ: 1, XA: 1, XB: 1, QO: 1, EU: 1, UN: 1, EZ: 1 };
@@ -1902,11 +1986,8 @@ function flagOf(cc) {
 
 /* ---- which country? GPS -> internet (IP) -> time zone -> language ---- */
 function loadIpPlace() {
-  try {
-    const p = JSON.parse(localStorage.getItem(IPKEY));
-    if (p && typeof p.cc === 'string') return p;
-  } catch (e) {}
-  return { cc: '', tz: '', ts: 0 };
+  const p = readJson(IPKEY);
+  return p && typeof p.cc === 'string' ? p : { cc: '', tz: '', ts: 0 };
 }
 
 function zoneCountry(z) {
@@ -1939,8 +2020,7 @@ function autoCountry() {
 
 function detectCountry() {
   const o = globalSet.country;
-  if (o && o !== 'auto') return o;
-  return autoCountry();
+  return (o && o !== 'auto') ? o : autoCountry();
 }
 
 // country from the internet connection (works without the GPS permission)
@@ -1955,7 +2035,7 @@ function ensureIpCountry() {
       const cc = d && d.countryCode ? String(d.countryCode).toUpperCase() : '';
       if (!cc) return;
       ipPlace = { cc: cc, tz: deviceZone(), ts: Date.now() };
-      try { localStorage.setItem(IPKEY, JSON.stringify(ipPlace)); } catch (e) {}
+      writeJson(IPKEY, ipPlace);
     })
     .catch(function () {})
     .then(function () {
@@ -1969,203 +2049,166 @@ function syncCountry() {
   ensureIpCountry();
   if (cc === lastCc) return;
   lastCc = cc;
-  hijriCache.key = '';
   loadHolidays(cc);
   renderUpcoming();
 }
 
-/* ---- holidays: Nager.Date -> your pack file (days/XX.json) -> saved on the phone ---- */
-function readHol(cc, y) {
-  try {
-    const o = JSON.parse(localStorage.getItem(HKEY + cc + '_' + y));
-    if (o && Array.isArray(o.list)) return o;
-  } catch (e) {}
-  return null;
-}
-
-function saveHol(cc, y, list) {
-  try {
-    localStorage.setItem(HKEY + cc + '_' + y, JSON.stringify({ ts: Date.now(), ttl: list.length ? HOL_TTL : RETRY_TTL, list: list }));
-  } catch (e) {}
-}
-
-function holExpired(c) { return !c || Date.now() - c.ts > (c.ttl || HOL_TTL); }
-
-function isTemp(e) { return !!e && (e.kind === 'offline' || e.kind === 'timeout' || (e.kind === 'http' && e.status >= 500)); }
-
-// pack file: [{"m":3,"d":26,"n":"Independence Day","l":"...","t":"h"}]  (every year)
-//            [{"date":"2027-03-30","n":"Eid-ul-Fitr","t":"h"}]          (one date)
-function expandPack(data, yr) {
-  const arr = Array.isArray(data) ? data : ((data && data.items) || []);
-  const out = [];
-  arr.forEach(function (x) {
-    if (!x || !x.n) return;
-    let d = '';
-    if (x.date) {
-      if (String(x.date).slice(0, 4) !== String(yr)) return;
-      d = String(x.date);
-    } else if (x.m && x.d) {
-      d = yr + '-' + pad(x.m) + '-' + pad(x.d);
-    } else return;
-    out.push({ d: d, n: x.n, l: x.l || '', c: x.t || 'i', t: [] });
+/* ---- holidays: library first, Nager.Date as backup ---- */
+function loadScript(url) {
+  return new Promise(function (res, rej) {
+    const s = document.createElement('script');
+    s.src = url;
+    s.onload = res;
+    s.onerror = function () { s.remove(); rej(); };
+    document.head.appendChild(s);
   });
+}
+
+function loadLib() {
+  if (window.Holidays) return Promise.resolve(true);
+  if (libBusy) return libBusy;
+  libBusy = LIB_URLS.reduce(function (p, u) {
+    return p.catch(function () { return loadScript(u); });
+  }, Promise.reject())
+    .then(function () { return !!window.Holidays; })
+    .catch(function () { return false; })
+    .then(function (ok) { libBusy = null; return ok; });
+  return libBusy;
+}
+
+// null = library not loaded yet, [] = no data for this country
+function libList(cc, yr) {
+  const k = cc + yr;
+  if (holMemo[k]) return holMemo[k];
+  if (!window.Holidays) return null;
+  const out = [];
+  try {
+    const en = new window.Holidays(cc);
+    en.setLanguages('en');
+    const names = {};
+    en.getHolidays(yr).forEach(function (x) { names[x.date.slice(0, 10) + x.rule] = x.name; });
+
+    new window.Holidays(cc).getHolidays(yr).forEach(function (x) {
+      const t = x.type === 'public' ? 'h' : ((x.type === 'bank' || x.type === 'optional' || x.type === 'observance') ? 'i' : '');
+      if (!t) return;
+      const d = x.date.slice(0, 10);
+      const n = names[d + x.rule] || x.name;
+      out.push({ d: d, n: n, l: x.name !== n ? x.name : '', c: t });
+    });
+  } catch (e) {}
+  holMemo[k] = out;
   return out;
 }
 
-function fetchHol(cc, yr) {
+function readNager(cc, yr) {
+  const o = readJson(HKEY + cc + '_' + yr);
+  return o && Array.isArray(o.list) ? o : null;
+}
+
+function fetchNager(cc, yr) {
+  const k = cc + yr;
+  const c = readNager(cc, yr);
+  if (nagerBusy[k] || (c && Date.now() - c.ts < HOL_TTL)) return Promise.resolve();
+  nagerBusy[k] = 1;
   return fetchJson(HOL_URL + yr + '/' + cc, { timeout: 10000, retries: 1 })
     .then(function (d) {
-      return Array.isArray(d) ? d.map(function (x) {
-        return { d: x.date, n: x.name || '', l: x.localName || '', t: x.types || [] };
-      }) : [];
+      writeJson(HKEY + cc + '_' + yr, {
+        ts: Date.now(),
+        list: Array.isArray(d) ? d.map(function (x) {
+          return {
+            d: x.date, n: x.name || '',
+            l: x.localName && x.localName !== x.name ? x.localName : '',
+            c: (x.types || []).indexOf('Public') > -1 ? 'h' : 'i'
+          };
+        }) : []
+      });
     })
     .catch(function (e) {
-      if (isTemp(e)) throw e;
-      return [];
+      // the country is not covered: remember it for a week; other errors: try again later
+      if (e && e.kind === 'http' && e.status < 500) writeJson(HKEY + cc + '_' + yr, { ts: Date.now(), list: [] });
     })
-    .then(function (list) {
-      if (list.length) return list;
-      return fetchJson(PACK_URL + cc + '.json', { timeout: 8000, retries: 0 })
-        .then(function (d) { return expandPack(d, yr); })
-        .catch(function (e) {
-          if (isTemp(e)) throw e;
-          return [];
-        });
-    });
+    .then(function () { delete nagerBusy[k]; });
+}
+
+function holItems(cc, yr) {
+  const l = libList(cc, yr);
+  if (l && l.length) return l;
+  const c = readNager(cc, yr);
+  return c ? c.list : [];
 }
 
 function loadHolidays(cc) {
-  if (!cc || navigator.onLine === false) return;
+  if (!cc) return;
   const y = new Date().getFullYear();
-  [y, y + 1].forEach(function (yr) {
-    const c = readHol(cc, yr);
-    if (!holExpired(c)) return;
-    const k = cc + yr;
-    if (holBusy[k]) return;
-    holBusy[k] = 1;
-    fetchHol(cc, yr)
-      .then(function (list) {
-        if (!list.length && c && c.list.length) { saveHol(cc, yr, c.list); return; }   // keep the old copy
-        saveHol(cc, yr, list);
-      })
-      .catch(function () {})                                                        // temporary problem: try again later
-      .then(function () {
-        delete holBusy[k];
-        if (cc === detectCountry()) renderUpcoming();
-      });
+  loadLib().then(function () {
+    const jobs = [];
+    [y, y + 1].forEach(function (yr) {
+      const l = libList(cc, yr);
+      if (!(l && l.length) && navigator.onLine !== false) jobs.push(fetchNager(cc, yr));
+    });
+    return Promise.all(jobs);
+  }).then(function () {
+    if (cc === detectCountry()) renderUpcoming();
   });
-}
-
-/* ---- Islamic calendar events (worked out by the browser, moves every year) ---- */
-function islamicFormatter() {
-  const cals = ['islamic-umalqura', 'islamic-civil', 'islamic'];
-  for (let i = 0; i < cals.length; i++) {
-    try {
-      const f = new Intl.DateTimeFormat('en', { calendar: cals[i], day: 'numeric', month: 'numeric' });
-      if (String(f.resolvedOptions().calendar).indexOf('islamic') === 0) return f;
-    } catch (e) {}
-  }
-  return null;
-}
-
-function hijriUpcoming(today, cc) {
-  const key = dayKey(today) + cc;
-  if (hijriCache.key === key) return hijriCache.list;
-
-  const list = [];
-  const fmt = MUSLIM.has(cc) ? islamicFormatter() : null;
-  if (fmt) {
-    const off = MOON_LATE.has(cc) ? 1 : 0;
-    for (let i = -off; i <= HIJRI_SCAN_DAYS; i++) {
-      const g = new Date(today.getFullYear(), today.getMonth(), today.getDate() + i);
-      let mo = 0, da = 0;
-      fmt.formatToParts(g).forEach(function (p) {
-        if (p.type === 'month') mo = parseInt(p.value, 10);
-        else if (p.type === 'day') da = parseInt(p.value, 10);
-      });
-      for (let k = 0; k < HIJRI.length; k++) {
-        if (HIJRI[k][0] === mo && HIJRI[k][1] === da) {
-          list.push({ dt: new Date(g.getFullYear(), g.getMonth(), g.getDate() + off), ev: HIJRI[k] });
-        }
-      }
-    }
-  }
-  hijriCache = { key: key, list: list };
-  return list;
 }
 
 /* ---- your own dates ---- */
 function loadCustom() {
-  try {
-    const c = JSON.parse(localStorage.getItem(CUSTOM_KEY));
-    if (Array.isArray(c)) return c;
-  } catch (e) {}
-  return [];
+  const c = readJson(CUSTOM_KEY);
+  return Array.isArray(c) ? c : [];
 }
-function saveCustom(list) { try { localStorage.setItem(CUSTOM_KEY, JSON.stringify(list)); } catch (e) {} }
+function saveCustom(list) { writeJson(CUSTOM_KEY, list); }
 
 /* ---- build the list ---- */
 function getUpcoming(today) {
   const cc = detectCountry();
   const y = today.getFullYear();
   const out = [];
-  const taken = {};
+  const seen = {};
+  const days = {};
 
-  function push(dt, n, b, t, approx) {
+  function add(dt, n, b, t) {
     const diff = Math.round((dt - today) / 86400000);
-    if (diff < 0) return;
-    out.push({ h: { n: n, b: b || '', t: t || 'i', approx: !!approx }, dt: dt, diff: diff });
-  }
-  function addFixed(dt, n, b, t) {
-    const k = dayKey(dt);
-    if (taken[k]) return;
-    taken[k] = 1;
-    push(dt, n, b, t, false);
+    const k = dayKey(dt) + n.toLowerCase();
+    if (diff < 0 || seen[k]) return;
+    seen[k] = 1;
+    days[dayKey(dt)] = 1;
+    out.push({ h: { n: n, b: b || '', t: t || 'i' }, dt: dt, diff: diff });
   }
 
-  // a) holidays of the country (internet copy saved on the phone)
   if (cc) {
     for (let yr = y; yr <= y + 1; yr++) {
-      const c = readHol(cc, yr);
-      if (!c) continue;
-      c.list.forEach(function (x) {
+      holItems(cc, yr).forEach(function (x) {
         const p = String(x.d).split('-');
-        if (p.length !== 3) return;
-        let t = x.c;
-        if (!t) {
-          t = (x.t || []).indexOf('Public') > -1 ? 'h' : 'i';
-          if (REL_RE.test(x.n)) t = 'r';
-        }
-        addFixed(new Date(+p[0], +p[1] - 1, +p[2]), x.n, (x.l && x.l !== x.n) ? x.l : '', t);
+        if (p.length === 3) add(new Date(+p[0], +p[1] - 1, +p[2]), x.n, x.l, REL_RE.test(x.n) ? 'r' : x.c);
       });
     }
   }
 
-  // b) Islamic calendar events (skipped when the holiday list already has the same one)
-  hijriUpcoming(today, cc).forEach(function (x) {
-    const dup = out.some(function (o) { return Math.abs(o.dt - x.dt) <= 2 * 86400000 && ISL_RE.test(o.h.n); });
-    if (dup) return;
-    const local = cc === 'BD' ? x.ev[3] : (ARABIC.has(cc) ? x.ev[4] : '');
-    push(x.dt, x.ev[2], local, x.ev[5], true);
-  });
-
-  // c) your own dates
   loadCustom().forEach(function (c) {
     const p = String(c.d).split('-');
     if (p.length !== 3 || !c.n) return;
     if (c.r) {
-      for (let yr = y; yr <= y + 1; yr++) push(new Date(yr, +p[1] - 1, +p[2]), c.n, c.b, c.t, false);
+      for (let yr = y; yr <= y + 1; yr++) add(new Date(yr, +p[1] - 1, +p[2]), c.n, c.b, c.t);
     } else {
-      push(new Date(+p[0], +p[1] - 1, +p[2]), c.n, c.b, c.t, false);
+      add(new Date(+p[0], +p[1] - 1, +p[2]), c.n, c.b, c.t);
     }
   });
+
+  // world-wide days: only on dates that have nothing else
+  for (let yr = y; yr <= y + 1; yr++) {
+    WORLD_DAYS.forEach(function (w) {
+      const dt = new Date(yr, w[0] - 1, w[1]);
+      if (!days[dayKey(dt)]) add(dt, w[2], '', 'i');
+    });
+  }
 
   out.sort(function (a, b) { return a.dt - b.dt; });
   return out;
 }
 
 function renderUpcoming() {
-  const box = document.getElementById('hList');
+  const box = $('hList');
   if (!box) return;
   const MON = ['JAN', 'FEB', 'MAR', 'APR', 'MAY', 'JUN', 'JUL', 'AUG', 'SEP', 'OCT', 'NOV', 'DEC'];
   const LABEL = { h: 'Holiday', i: 'Important', r: 'Religious' };
@@ -2176,20 +2219,13 @@ function renderUpcoming() {
   const sub = document.querySelector('.hsub');
   if (sub) sub.textContent = cc ? (flagOf(cc) + ' ' + countryName(cc)).trim() : '';
 
-  const items = getUpcoming(today).slice(0, 7);
-
-  if (!items.length) {
-    box.innerHTML = '<div class="hcard"><div class="hmid"><div class="hname">No upcoming dates</div></div></div>';
-    return;
-  }
-
-  box.innerHTML = items.map(function (it) {
+  box.innerHTML = getUpcoming(today).slice(0, 8).map(function (it) {
     const t = LABEL[it.h.t] ? it.h.t : 'i';
     const left = it.diff === 0 ? 'Today' : (it.diff === 1 ? 'Tomorrow' : 'in ' + it.diff + ' days');
     const wd = it.dt.toLocaleDateString('en-GB', { weekday: 'short' });
     return '<div class="hcard t-' + t + '">' +
       '<div class="hd"><span class="hmon">' + MON[it.dt.getMonth()] + '</span>' +
-      '<span class="hday">' + (it.h.approx ? '~' : '') + it.dt.getDate() + '</span></div>' +
+      '<span class="hday">' + it.dt.getDate() + '</span></div>' +
       '<div class="hmid"><div class="hname">' + escapeAttr(it.h.n) + '</div><div class="hbn">' + escapeAttr(it.h.b) + '</div></div>' +
       '<div class="hright"><span class="hleft' + (it.diff <= 7 ? ' soon' : '') + '">' + left + '</span>' +
       '<span class="hwd">' + wd + ' · ' + LABEL[t] + '</span></div>' +
@@ -2201,70 +2237,71 @@ function renderUpcoming() {
 
 function openUpcomingSettings() {
   const sel = globalSet.country || 'auto';
-  const names = countryList();
+  const opt = function (v, t, s) { return '<option value="' + v + '"' + (s ? ' selected' : '') + '>' + t + '</option>'; };
 
-  let h = '<div class="title">Upcoming dates</div>';
-  h += '<div class="row"><div class="label">Country</div><select id="upCc">' +
-    '<option value="auto">Auto (' + escapeAttr(countryName(autoCountry()) || 'unknown') + ')</option>' +
-    names.map(function (x) {
-      return '<option value="' + x.c + '"' + (sel === x.c ? ' selected' : '') + '>' + escapeAttr(flagOf(x.c) + ' ' + x.n) + '</option>';
-    }).join('') + '</select></div>';
-  h += '<div class="phint">Auto follows the phone. Holidays update themselves from the internet and are saved on the phone, so they also show offline. ' +
-    'Moon-based days (Eid, Ramadan...) are worked out by the phone; the real date can differ by a day.</div>';
-  h += '<div class="row"><div class="label">Add my own date</div></div>';
-  h += '<div class="row"><input type="date" id="upDate"></div>';
-  h += '<div class="row"><input type="text" id="upName" placeholder="Name" maxlength="40"></div>';
-  h += '<div class="row"><select id="upType"><option value="i">Important</option><option value="h">Holiday</option><option value="r">Religious</option></select> ' +
-    '<select id="upRep"><option value="1">Every year</option><option value="0">One time</option></select></div>';
-  h += '<div class="row"><button class="btn" id="upAdd">Add</button></div>';
+  let h = head('Upcoming dates', 'upBack');
+  h += sec('Country',
+    '<div class="li"><span class="k" style="flex:none">Country</span><select class="r" id="upCc">' +
+    opt('auto', 'Auto (' + escapeAttr(countryName(autoCountry()) || 'unknown') + ')', sel === 'auto') +
+    countryList().map(function (x) { return opt(x.c, escapeAttr(flagOf(x.c) + ' ' + x.n), sel === x.c); }).join('') +
+    '</select></div>',
+    'Auto follows the phone. Holidays and important days come from a worldwide library that updates itself. ' +
+    'Moon-based days (Eid, Ramadan...) are calculated, so the real date can differ by a day.');
+  h += sec('Add your own date',
+    '<div class="li"><span class="k">Date</span><input type="date" class="inp" id="upDate"></div>' +
+    '<div class="li"><span class="k">Name</span><input type="text" class="inp" id="upName" placeholder="Birthday" maxlength="40"></div>' +
+    '<div class="li"><span class="k">Type</span>' + seg('upType', [['i', 'Important'], ['h', 'Holiday'], ['r', 'Religious']], 'i') + '</div>' +
+    '<div class="li"><span class="k">Repeat</span>' + seg('upRep', [['1', 'Every year'], ['0', 'Once']], '1') + '</div>');
+  h += '<div class="acts"><button class="bt pri" id="upAdd">Add date</button></div>';
   h += '<div id="upList"></div>';
-  h += '<div class="row"><button class="btn" id="upBack">Back</button><button class="btn" id="done">Done</button></div>';
+  h += '<div class="acts"><button class="bt" id="done">Done</button></div>';
   openSheet(h, 'settings');
+
+  let type = 'i';
+  let rep = '1';
+  pick('upType', function (v) { type = v; });
+  pick('upRep', function (v) { rep = v; });
 
   function drawCustom() {
     const list = loadCustom();
-    const box = document.getElementById('upList');
-    box.innerHTML = '';
-    list.forEach(function (c, i) {
-      const row = document.createElement('div');
-      row.className = 'row';
-      row.innerHTML = '<div class="label">' + escapeAttr(c.d + ' · ' + c.n + (c.r ? ' (yearly)' : '')) + '</div>' +
-        '<button class="btn danger" data-i="' + i + '">Delete</button>';
-      row.querySelector('button').onclick = function () {
+    const box = $('upList');
+    if (!list.length) { box.innerHTML = ''; return; }
+    box.innerHTML = sec('Your dates', list.map(function (c, i) {
+      return '<div class="li"><div class="kk"><div class="k">' + escapeAttr(c.n) + '</div><div class="d">' +
+        escapeAttr(c.d + (c.r ? ' · every year' : '')) + '</div></div>' +
+        '<button class="mini dng" data-i="' + i + '">Delete</button></div>';
+    }).join(''));
+    box.querySelectorAll('[data-i]').forEach(function (b) {
+      b.onclick = function () {
         const l = loadCustom();
-        l.splice(i, 1);
+        l.splice(Number(b.dataset.i), 1);
         saveCustom(l);
         drawCustom(); renderUpcoming();
       };
-      box.appendChild(row);
     });
   }
   drawCustom();
 
-  document.getElementById('upCc').onchange = function (e) {
+  $('upCc').onchange = function (e) {
     globalSet.country = e.target.value;
     saveGlobal();
     lastCc = null;
     syncCountry();
   };
 
-  document.getElementById('upAdd').onclick = function () {
-    const d = document.getElementById('upDate').value;
-    const n = document.getElementById('upName').value.trim();
+  $('upAdd').onclick = function () {
+    const d = $('upDate').value;
+    const n = $('upName').value.trim();
     if (!d || !n) { toast('Choose a date and write a name'); return; }
     const l = loadCustom();
-    l.push({
-      d: d, n: n, b: '',
-      t: document.getElementById('upType').value,
-      r: document.getElementById('upRep').value === '1' ? 1 : 0
-    });
+    l.push({ d: d, n: n, b: '', t: type, r: rep === '1' ? 1 : 0 });
     saveCustom(l);
-    document.getElementById('upName').value = '';
+    $('upName').value = '';
     drawCustom(); renderUpcoming();
   };
 
-  document.getElementById('upBack').onclick = openSettings;
-  document.getElementById('done').onclick = closeSheet;
+  $('upBack').onclick = openSettings;
+  $('done').onclick = closeSheet;
 }
 
 /* ---- progressive blur and scroll fade ---- */
@@ -2274,8 +2311,8 @@ function blurLayer(blur, mask) {
 }
 
 function buildBlurZones() {
-  const hol = document.getElementById('holidays');
-  if (!hol || document.getElementById('pbTop')) return;
+  const hol = $('holidays');
+  if (!hol || $('pbTop')) return;
 
   const N = 4;
   const BLUR = [0.8, 1.6];
@@ -2314,13 +2351,13 @@ function buildBlurZones() {
 }
 
 function measureUpcoming() {
-  const box = document.getElementById('hList');
-  const hol = document.getElementById('holidays');
+  const box = $('hList');
+  const hol = $('holidays');
   if (!box || !hol || !box.offsetParent) return;
 
   const br = box.getBoundingClientRect();
   const head = document.querySelector('.hhead');
-  const nav = document.getElementById('nav');
+  const nav = $('nav');
 
   const ft = Math.round(head ? Math.max(head.getBoundingClientRect().bottom - br.top - 4, 20) : 34);
   const navTop = nav ? nav.getBoundingClientRect().top : window.innerHeight;
@@ -2333,8 +2370,8 @@ function measureUpcoming() {
 }
 
 function applyScrollShift() {
-  const box = document.getElementById('hList');
-  const hol = document.getElementById('holidays');
+  const box = $('hList');
+  const hol = $('holidays');
   if (!box || !hol) return;
   const s = clamp01(box.scrollTop / 40);
   const sh = Math.round((1 - s) * (cachedFt + 98));
@@ -2355,8 +2392,8 @@ function queueFade() {
 }
 
 function initUpcoming() {
-  const home = document.getElementById('v-home');
-  const hol = document.getElementById('holidays');
+  const home = $('v-home');
+  const hol = $('holidays');
   if (home && hol) home.appendChild(hol);
 
   const hh = document.querySelector('.hhead span');
@@ -2364,7 +2401,7 @@ function initUpcoming() {
 
   buildBlurZones();
 
-  const box = document.getElementById('hList');
+  const box = $('hList');
   if (box) {
     let lastIdx = 0;
     box.addEventListener('scroll', function () {
@@ -2386,7 +2423,7 @@ function initUpcoming() {
   if (window.ResizeObserver) {
     const ro = new ResizeObserver(measureUpcoming);
     ['holidays', 'nav'].forEach(function (id) {
-      const el = document.getElementById(id);
+      const el = $(id);
       if (el) ro.observe(el);
     });
     const head = document.querySelector('.hhead');
@@ -2395,7 +2432,7 @@ function initUpcoming() {
 }
 
 /* ==========================================================================
-   15. PRESS FEEDBACK, BOTTOM BAR, SETTINGS BUTTON, PLUS BUTTON
+   16. PRESS FEEDBACK, BOTTOM BAR, SETTINGS BUTTON, PLUS BUTTON
    ========================================================================== */
 function lightUp(el) {
   el.classList.remove('lit');
@@ -2416,7 +2453,7 @@ function initPressFeedback() {
 }
 
 function initNav() {
-  const nav = document.getElementById('nav');
+  const nav = $('nav');
   if (!nav) return;
   let downAt = 0;
 
@@ -2442,7 +2479,7 @@ function initNav() {
 function setPenOut(on) {
   if (on === penOut) return;
   penOut = on;
-  const c = document.getElementById('cog');
+  const c = $('cog');
   if (c) c.classList.toggle('out', on);
   haptic(on ? 8 : 10);
 }
@@ -2450,13 +2487,13 @@ function setPenOut(on) {
 function setPlusOut(on) {
   if (on === plusOut) return;
   plusOut = on;
-  const a = document.getElementById('add');
+  const a = $('add');
   if (a) a.classList.toggle('out', on);
   haptic(on ? 8 : 10);
 }
 
 function initSettingsButton() {
-  const cog = document.getElementById('cog');
+  const cog = $('cog');
   if (!cog) return;
   cog.innerHTML = '<span class="dots"><i></i><i></i><i></i></span>';
   cog.setAttribute('aria-label', 'Settings');
@@ -2468,11 +2505,11 @@ function initSettingsButton() {
   ['pointerup', 'pointercancel', 'pointerleave'].forEach(function (ev) {
     cog.addEventListener(ev, function () { cog.classList.remove('press'); });
   });
-  cog.onclick = function () { openSettings(); };
+  cog.onclick = openSettings;
 }
 
 function initAddButton() {
-  const add = document.getElementById('add');
+  const add = $('add');
   if (!add) return;
   if (!add.querySelector('.plusi')) {
     add.innerHTML = '<span class="plusi">' + (add.innerHTML.trim() || '+') + '</span>';
@@ -2498,16 +2535,16 @@ function initIcons() {
 }
 
 /* ==========================================================================
-   16. CONNECTION, PERMISSIONS & SERVICE WORKER
+   17. CONNECTION, PERMISSIONS & SERVICE WORKER
    ========================================================================== */
 function hideToast() {
-  const el = document.getElementById('toast');
+  const el = $('toast');
   if (el) el.classList.remove('show');
 }
 
 function toast(text, opt) {
   opt = opt || {};
-  let el = document.getElementById('toast');
+  let el = $('toast');
   if (!el) {
     el = document.createElement('div');
     el.id = 'toast';
@@ -2576,7 +2613,7 @@ function onBackOnline() {
   if (hasHome()) refreshMyPlace(false);
   syncCountry();
   loadHolidays(detectCountry());
-  const q = document.getElementById('wsq');
+  const q = $('wsq');
   if (q && q.value.trim().length >= 2 && q.oninput) q.oninput();
 }
 
@@ -2654,35 +2691,44 @@ function permLabel(st) {
     unsupported: 'Not supported', insecure: 'Needs HTTPS' }[st] || st;
 }
 
+function stateHtml(cls, text) { return '<span class="dot ' + cls + '"></span>' + text; }
+
 function openPermissions() {
   Promise.all([geoPermState(), notifState(), storageState()]).then(function (r) {
     const rows = [
-      ['geo', 'Location', 'Shows the time and date of the place where you are, and picks the country for Upcoming dates.', r[0]],
+      ['geo', 'Location', 'Shows the time of the place where you are and picks the country for Upcoming dates.', r[0]],
       ['notif', 'Notifications', 'Alerts for alarms and timers while the app is in the background.', r[1]],
       ['store', 'Keep my data', 'Stops the browser from deleting your alarms and settings.', r[2]]
     ];
+    const online = navigator.onLine !== false;
 
-    let h = '<div class="title">Permissions &amp; connection</div>';
-    h += '<div class="row"><div class="label">Internet</div><div class="pstate" id="pnet">' +
-      (navigator.onLine === false ? 'Offline' : 'Online') + '</div><button class="btn" id="ptest">Test</button></div>';
-    rows.forEach(function (x) {
+    let h = head('Permissions', 'pback');
+    h += sec('Connection',
+      '<div class="li"><span class="k">Internet</span><span class="v" id="pnet">' +
+      stateHtml(online ? 'ok' : 'bad', online ? 'Online' : 'Offline') + '</span>' +
+      '<button class="mini" id="ptest">Test</button></div>');
+    h += sec('App access', rows.map(function (x) {
       const st = x[3];
-      h += '<div class="row"><div class="label">' + x[1] + '</div><div class="pstate">' + permLabel(st) + '</div>' +
-        ((st === 'prompt' || st === 'unknown') ? '<button class="btn" data-p="' + x[0] + '">Allow</button>' : '') + '</div>';
-      h += '<div class="phint">' + (st === 'denied'
-        ? 'Blocked. Allow it in the site settings of your browser, then open this page again.' : x[2]) + '</div>';
-    });
-    h += '<div class="row"><div class="label">Keep screen awake</div><div class="pstate">' +
-      (('wakeLock' in navigator) ? 'Supported' : 'Not supported') + '</div></div>';
-    h += '<div class="row"><button class="btn" id="pback">Back</button><button class="btn" id="done">Done</button></div>';
+      const cls = st === 'granted' ? 'ok' : (st === 'denied' ? 'bad' : '');
+      const note = st === 'denied' ? 'Blocked. Allow it in the site settings of your browser, then open this page again.' : x[2];
+      return '<div class="li"><div class="kk"><div class="k">' + x[1] + '</div><div class="d">' + note + '</div></div>' +
+        ((st === 'prompt' || st === 'unknown')
+          ? '<button class="mini" data-p="' + x[0] + '">Allow</button>'
+          : '<span class="v">' + stateHtml(cls, permLabel(st)) + '</span>') + '</div>';
+    }).join('') +
+      '<div class="li"><span class="k">Keep screen awake</span><span class="v">' +
+      (('wakeLock' in navigator) ? 'Supported' : 'Not supported') + '</span></div>');
+    h += '<div class="acts"><button class="bt pri" id="done">Done</button></div>';
     openSheet(h, 'settings');
 
-    document.getElementById('ptest').onclick = function () {
-      const el = document.getElementById('pnet');
+    $('ptest').onclick = function () {
+      const el = $('pnet');
       el.textContent = 'Checking...';
       fetchJson(GEO_URL + '?name=London&count=1&format=json', { retries: 0, timeout: 6000 })
-        .then(function () { el.textContent = 'Online, connected'; })
-        .catch(function (e) { el.textContent = e && e.kind === 'offline' ? 'Offline' : 'No connection to the internet'; });
+        .then(function () { el.innerHTML = stateHtml('ok', 'Connected'); })
+        .catch(function (e) {
+          el.innerHTML = stateHtml('bad', e && e.kind === 'offline' ? 'Offline' : 'No connection');
+        });
     };
 
     sheet.querySelectorAll('[data-p]').forEach(function (b) {
@@ -2692,8 +2738,8 @@ function openPermissions() {
         Promise.resolve(job).then(openPermissions);
       };
     });
-    document.getElementById('pback').onclick = openSettings;
-    document.getElementById('done').onclick = closeSheet;
+    $('pback').onclick = openSettings;
+    $('done').onclick = closeSheet;
   });
 }
 
@@ -2745,46 +2791,46 @@ function registerSW() {
 }
 
 /* ==========================================================================
-   17. INIT
+   18. INIT
    ========================================================================== */
 function bindEvents() {
   overlay.onclick = closeSheet;
 
-  document.getElementById('ringStop').onclick = stopRing;
-  document.getElementById('ringSnooze').onclick = function () {
+  $('ringStop').onclick = stopRing;
+  $('ringSnooze').onclick = function () {
     const f = ringSnoozeFn;
     stopRing();
     if (f) f();
   };
 
-  document.getElementById('add').onclick = openAddWidget;
+  $('add').onclick = openAddWidget;
 
-  document.getElementById('aPlus').onclick = function (e) { openAlarmSheet(null, pt(e)); };
-  document.getElementById('aEdit').onclick = function () {
+  $('aPlus').onclick = function (e) { openAlarmSheet(null, pt(e)); };
+  $('aEdit').onclick = function () {
     alarmEditMode = !alarmEditMode;
     this.textContent = alarmEditMode ? 'Done' : 'Edit';
     renderAlarms();
   };
 
-  document.getElementById('swGo').onclick = function () {
+  $('swGo').onclick = function () {
     if (sw.running) { sw.elapsed += Date.now() - sw.start; sw.running = false; }
     else { sw.start = Date.now(); sw.running = true; }
     renderSw();
   };
-  document.getElementById('swLap').onclick = function () {
+  $('swLap').onclick = function () {
     if (swMs() <= 0) return;
     sw.laps.push(swMs());
     renderLaps();
     if (globalSet.swTone !== 'off' && !ringOn) playTone(globalSet.swTone, false);
   };
-  document.getElementById('swReset').onclick = function () {
+  $('swReset').onclick = function () {
     sw = { running: false, start: 0, elapsed: 0, laps: [] };
     renderSw(); renderLaps();
   };
 
-  document.getElementById('pAdd').onclick = function (e) { openPresetSheet(pt(e)); };
-  document.getElementById('tmGo').onclick = timerGo;
-  document.getElementById('tmReset').onclick = function () {
+  $('pAdd').onclick = function (e) { openPresetSheet(pt(e)); };
+  $('tmGo').onclick = timerGo;
+  $('tmReset').onclick = function () {
     tm.running = false;
     tm.remaining = tm.total;
     saveTm(); renderTm();
