@@ -20,11 +20,12 @@ const PLKEY = 'clockPlace';
 const PLASKED = 'clockPlaceAsked';
 const NOTIF_ASKED = 'clockNotifAsked';
 const CUSTOM_KEY = 'customUpcomingEvents';
-const HKEY = 'clockNager_';
+const HKEY = 'clockHol2_';
 const IPKEY = 'clockIpCc';
 const GEO_URL = 'https://geocoding-api.open-meteo.com/v1/search';
 const REVERSE_URL = 'https://api.bigdatacloud.net/data/reverse-geocode-client';
 const HOL_URL = 'https://date.nager.at/api/v3/PublicHolidays/';
+const HOLAPI_URL = 'https://holidaycalendar.pages.dev/api/v1/holidays';
 const PLACE_FRESH_MS = 20 * 60 * 1000;
 const HOL_TTL = 7 * 24 * 3600 * 1000;
 
@@ -176,6 +177,7 @@ body .time .txt{font-size:min(calc(var(--size)*1),20vw);letter-spacing:0;line-he
 .hleft.soon{color:var(--accent)}
 .hwd{margin:0;font-size:11.5px;opacity:.55}
 .hempty{padding:36px 24px;text-align:center;font-size:14px;line-height:1.5;opacity:.55}
+.hdiag{margin-top:10px;font-size:11px;opacity:.7;word-break:break-word}
 
 /* ---- sheets: one pop-in card ---- */
 #overlay.open{background:rgba(0,0,0,.28)!important;-webkit-backdrop-filter:blur(10px);backdrop-filter:blur(10px)}
@@ -1885,11 +1887,12 @@ function openPresetSheet(origin) {
                 optional days and observances, calculated for any year.
                 The library file is saved in the browser cache, so it works offline
                 and is refreshed whenever the internet is available.
-             b) Nager.Date as backup when the library has no data for a country
-             c) your own dates
+             b) free holiday APIs as backup when the library has no data for a country
+             c) holidaycalendar API (199 countries) next, then Nager.Date
+             d) your own dates
    Optional: put holidays.min.js next to index.html (tried first); the CDN is the backup.
    ========================================================================== */
-const LIB_URLS = ['holidays.min.js', 'https://cdn.jsdelivr.net/npm/date-holidays@3/dist/umd.min.js'];
+const LIB_URLS = ['holidays.min.js', 'https://cdn.jsdelivr.net/npm/date-holidays@3/dist/umd.min.js', 'https://unpkg.com/date-holidays@3/dist/umd.min.js'];
 const LIB_CACHE = 'clock-holidays-lib';
 const REL_RE = /christmas|easter|good friday|epiphany|ascension|pentecost|whit|corpus|assumption|all saints|all souls|immaculate|diwali|deepavali|holi\b|vesak|buddha|navratri|dussehra|durga|janmashtami|ramadan|eid|fitr|adha|ashura|mawlid|passover|hanukkah|yom kippur|rosh hashan|nyepi|waisak|thaipusam|palm sunday|maundy|ramazan|bayram|kurban|raya|nuzul|arafah|shab-e|miladun/i;
 const UP_LABEL = { h: 'Holiday', i: 'Observance', r: 'Religious' };
@@ -1907,7 +1910,8 @@ let holLoading = false;
 let lastUpSig = '';
 let lastOv = -1;
 const holMemo = {};
-const nagerBusy = {};
+const extraBusy = {};
+const holDiag = { lib: 'not started', extra: '-' };
 
 /* ---- all countries: the list is made by the browser ---- */
 function countryList() {
@@ -2052,21 +2056,24 @@ function loadCachedLib(url) {
   });
 }
 
+function holCls() {
+  const H = window.Holidays;
+  return typeof H === 'function' ? H : (H && typeof H.default === 'function' ? H.default : null);
+}
+
 function loadLib() {
-  if (window.Holidays) return Promise.resolve(true);
+  if (holCls()) return Promise.resolve(true);
   if (libBusy) return libBusy;
+  function check() { if (!holCls()) throw new Error('library missing'); }
   libBusy = LIB_URLS.reduce(function (p, u) {
     return p.catch(function () {
-      return loadScript(u).then(function () {
-        if (!window.Holidays) throw new Error('no lib');
-        saveLibCopy(u);
-      }).catch(function () {
-        return loadCachedLib(u).then(function () { if (!window.Holidays) throw new Error('no lib'); });
+      return loadScript(u).then(check).then(function () { saveLibCopy(u); }).catch(function () {
+        return loadCachedLib(u).then(check);
       });
     });
   }, Promise.reject(new Error('start')))
-    .then(function () { return true; })
-    .catch(function () { return false; })
+    .then(function () { holDiag.lib = 'ok'; return true; })
+    .catch(function () { holDiag.lib = 'could not load (blocked or offline)'; return false; })
     .then(function (ok) { libBusy = null; return ok; });
   return libBusy;
 }
@@ -2076,61 +2083,75 @@ function loadLib() {
 function libList(cc, yr) {
   const k = cc + yr;
   if (holMemo[k]) return holMemo[k];
-  if (!window.Holidays) return null;
+  const H = holCls();
+  if (!H) return null;
   const out = [];
   try {
-    const en = new window.Holidays(cc);
+    const en = new H(cc);
     en.setLanguages('en');
     const names = {};
     en.getHolidays(yr).forEach(function (x) { names[x.date.slice(0, 10) + x.rule] = x.name; });
 
-    new window.Holidays(cc).getHolidays(yr).forEach(function (x) {
+    new H(cc).getHolidays(yr).forEach(function (x) {
       const t = x.type === 'public' ? 'h' : ((x.type === 'bank' || x.type === 'optional' || x.type === 'observance') ? 'i' : '');
       if (!t) return;
       const d = x.date.slice(0, 10);
       const n = names[d + x.rule] || x.name;
       out.push({ d: d, n: n, l: x.name !== n ? x.name : '', c: t });
     });
-  } catch (e) {}
+  } catch (e) { holDiag.lib = 'error: ' + (e && e.message); }
   holMemo[k] = out;
   return out;
 }
 
-/* ---- backup source: Nager.Date, saved for a week ---- */
-function readNager(cc, yr) {
+/* ---- backup sources: free holiday APIs, saved for a week ---- */
+function readExtra(cc, yr) {
   const o = readJson(HKEY + cc + '_' + yr);
   return o && Array.isArray(o.list) ? o : null;
 }
 
-function fetchNager(cc, yr) {
+function fetchExtra(cc, yr) {
   const k = cc + yr;
-  const c = readNager(cc, yr);
-  if (nagerBusy[k] || (c && Date.now() - c.ts < HOL_TTL)) return Promise.resolve();
-  nagerBusy[k] = 1;
-  return fetchJson(HOL_URL + yr + '/' + cc, { timeout: 10000, retries: 1 })
+  const c = readExtra(cc, yr);
+  if (extraBusy[k] || (c && Date.now() - c.ts < HOL_TTL)) return Promise.resolve();
+  extraBusy[k] = 1;
+
+  function save(list) { writeJson(HKEY + cc + '_' + yr, { ts: Date.now(), list: list }); }
+
+  return fetchJson(HOLAPI_URL + '?country=' + cc + '&year=' + yr, { timeout: 10000, retries: 1 })
     .then(function (d) {
-      writeJson(HKEY + cc + '_' + yr, {
-        ts: Date.now(),
-        list: Array.isArray(d) ? d.map(function (x) {
+      const list = d && Array.isArray(d.holidays) ? d.holidays.map(function (x) {
+        return { d: x.date, n: x.name || '', l: '', c: x.type === 'public' ? 'h' : 'i' };
+      }) : [];
+      if (!list.length) throw netError('empty');
+      save(list);
+      holDiag.extra = 'holidaycalendar ok';
+    })
+    .catch(function () {
+      return fetchJson(HOL_URL + yr + '/' + cc, { timeout: 10000, retries: 1 }).then(function (d) {
+        const list = Array.isArray(d) ? d.map(function (x) {
           return {
             d: x.date, n: x.name || '',
             l: x.localName && x.localName !== x.name ? x.localName : '',
             c: (x.types || []).indexOf('Public') > -1 ? 'h' : 'i'
           };
-        }) : []
+        }) : [];
+        save(list);
+        holDiag.extra = 'nager ok';
       });
     })
     .catch(function (e) {
-      // the country is not covered: remember it for a week; other errors: try again later
-      if (e && e.kind === 'http' && e.status < 500) writeJson(HKEY + cc + '_' + yr, { ts: Date.now(), list: [] });
+      // a country that no service covers is remembered for a week; network errors are retried later
+      holDiag.extra = 'none (' + ((e && e.kind) || 'error') + ')';
+      if (e && e.kind === 'http' && e.status < 500) save([]);
     })
-    .then(function () { delete nagerBusy[k]; });
+    .then(function () { delete extraBusy[k]; });
 }
 
 function holItems(cc, yr) {
   const l = libList(cc, yr);
   if (l && l.length) return l;
-  const c = readNager(cc, yr);
+  const c = readExtra(cc, yr);
   return c ? c.list : [];
 }
 
@@ -2142,7 +2163,7 @@ function loadHolidays(cc) {
     const jobs = [];
     [y, y + 1].forEach(function (yr) {
       const l = libList(cc, yr);
-      if (!(l && l.length) && navigator.onLine !== false) jobs.push(fetchNager(cc, yr));
+      if (!(l && l.length) && navigator.onLine !== false) jobs.push(fetchExtra(cc, yr));
     });
     return Promise.all(jobs);
   }).then(function () {
@@ -2198,8 +2219,9 @@ function getUpcoming(today) {
 
 function upEmptyText() {
   if (holLoading) return 'Loading dates...';
-  if (navigator.onLine === false) return 'No saved dates for this country yet. Connect to the internet once and they will be kept for offline use.';
-  return 'No upcoming dates for this country. You can add your own in Settings, Upcoming dates.';
+  const diag = '<div class="hdiag">Library: ' + esc(holDiag.lib) + '<br>Backup: ' + esc(holDiag.extra) + '</div>';
+  if (navigator.onLine === false) return 'No saved dates for this country yet. Connect to the internet once and they will be kept for offline use.' + diag;
+  return 'No upcoming dates for this country. You can add your own in Settings, Upcoming dates.' + diag;
 }
 
 function drawChips() {
@@ -2228,7 +2250,7 @@ function renderUpcoming() {
   }).slice(0, UP_MAX);
 
   // draw again only when something really changed (keeps the scroll position)
-  const sig = [dayKey(today), cc, f, holLoading, navigator.onLine !== false,
+  const sig = [dayKey(today), cc, f, holLoading, navigator.onLine !== false, holDiag.lib, holDiag.extra,
     list.map(function (it) { return dayKey(it.dt) + it.h.n + it.h.t; }).join('|')].join('#');
   if (sig === lastUpSig) return;
   lastUpSig = sig;
