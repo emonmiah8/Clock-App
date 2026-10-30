@@ -132,23 +132,23 @@ function injectStyles() {
     const l = document.createElement('link');
     l.rel = 'stylesheet';
     l.setAttribute('data-clock-font', '1');
-    l.href = 'https://fonts.googleapis.com/css2?family=Inter:wght@500;600;700&display=swap';
+    l.href = 'https://fonts.googleapis.com/css2?family=Poppins:wght@600;700;800&display=swap';
     document.head.appendChild(l);
   }
 
   const css = `
 @font-face{font-family:"ClockNum";src:url("digits.ttf") format("truetype");font-weight:100 900;font-style:normal;font-display:swap;unicode-range:U+0030-0039}
-:root{--sf:"ClockNum","Inter",system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;--accent:#ff9f0a;--danger:#ff453a;--ok:#30d158;--surf:rgba(255,255,255,.06);--surf2:rgba(255,255,255,.11);--line:rgba(255,255,255,.10);--pop:rgba(28,30,36,.78)}
+:root{--sf:"ClockNum","Poppins",system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;--accent:#ff9f0a;--danger:#ff453a;--ok:#30d158;--surf:rgba(255,255,255,.06);--surf2:rgba(255,255,255,.11);--line:rgba(255,255,255,.10);--pop:rgba(28,30,36,.78)}
 body.light{--surf:rgba(0,0,0,.04);--surf2:rgba(0,0,0,.07);--line:rgba(0,0,0,.09);--pop:rgba(255,255,255,.82)}
 html,body,button,input,select,textarea,svg text,.time .txt,.hcard,.preset,.btn{font-family:var(--sf)!important}
-body{font-weight:500;letter-spacing:-.005em;-webkit-font-smoothing:antialiased}
-.time,.time .txt,#swMain,#swCs,#tmTime,.pi{font-weight:700}
-.atitle,.title,.hname{font-weight:700;letter-spacing:-.02em}
+*{font-weight:800!important}
+body{letter-spacing:-.01em;-webkit-font-smoothing:antialiased}
+.atitle,.title,.hname{letter-spacing:-.03em}
 body .time .txt{font-size:min(calc(var(--size)*1),20vw);letter-spacing:0;line-height:1}
 #stage{padding:64px 12px 12px!important;margin:0 auto!important}
 
 /* ---- Upcoming ---- */
-#holidays{position:relative!important;flex:1 1 auto!important;display:flex!important;flex-direction:column;min-height:320px;padding:0!important;animation:none!important;--mask:linear-gradient(to bottom,transparent 0,#000 10px,#000 calc(100% - var(--ov,0px) - 36px),transparent calc(100% - var(--ov,0px) + 2px))}
+#holidays{position:relative!important;flex:1 1 auto!important;display:flex!important;flex-direction:column;min-height:320px;padding:0!important;animation:none!important}
 .hhead{position:static!important;display:flex!important;justify-content:space-between;align-items:baseline;gap:10px;padding:14px 20px 8px!important;white-space:nowrap;pointer-events:auto;font-size:19px;font-weight:700;letter-spacing:-.02em}
 .hhead::before{display:none!important}
 .hsub{font-size:13px;font-weight:600;letter-spacing:0;opacity:.7;overflow:hidden;text-overflow:ellipsis}
@@ -156,7 +156,7 @@ body .time .txt{font-size:min(calc(var(--size)*1),20vw);letter-spacing:0;line-he
 .hfilter::-webkit-scrollbar{display:none}
 .hchip{flex:none;padding:6px 14px;border-radius:999px;font-size:13px;font-weight:600;color:inherit;background:var(--surf);border:1px solid var(--line);cursor:pointer;-webkit-tap-highlight-color:transparent;transition:background .15s ease,color .15s ease,border-color .15s ease}
 .hchip.on{background:var(--accent);border-color:var(--accent);color:#1a1100}
-#hList{flex:1 1 0!important;display:flex!important;flex-direction:column!important;gap:8px!important;min-height:220px;max-height:none!important;overflow-y:auto!important;overflow-x:hidden!important;padding:6px 16px calc(var(--ov,0px) + 28px)!important;scroll-snap-type:none!important;overscroll-behavior:contain;touch-action:pan-y;scrollbar-width:none;-webkit-mask-image:var(--mask);mask-image:var(--mask)}
+#hList{flex:1 1 0!important;display:flex!important;flex-direction:column!important;gap:8px!important;min-height:220px;max-height:none!important;overflow-y:auto!important;overflow-x:hidden!important;padding:6px 16px calc(var(--ov,0px) + 28px)!important;scroll-snap-type:none!important;overscroll-behavior:contain;touch-action:pan-y;scrollbar-width:none}
 #hList::-webkit-scrollbar{display:none}
 .hgrp{flex:none;padding:12px 4px 2px;font-size:13px;font-weight:600;opacity:.55}
 .hgrp:first-child{padding-top:2px}
@@ -2012,35 +2012,43 @@ function syncCountry() {
 }
 
 /* ---- holiday library: network first, browser cache as offline copy ---- */
-function runScript(text) {
+function loadScript(url) {
   return new Promise(function (res, rej) {
-    const url = URL.createObjectURL(new Blob([text], { type: 'text/javascript' }));
     const s = document.createElement('script');
     s.src = url;
-    s.onload = function () { URL.revokeObjectURL(url); res(); };
-    s.onerror = function () { URL.revokeObjectURL(url); s.remove(); rej(); };
+    s.onload = res;
+    s.onerror = function () { s.remove(); rej(new Error('script')); };
     document.head.appendChild(s);
   });
 }
 
-function fetchLibText(url) {
-  const open = window.caches ? caches.open(LIB_CACHE).catch(function () { return null; }) : Promise.resolve(null);
-  return open.then(function (store) {
-    function fromCache() {
-      if (!store) return Promise.reject();
-      return store.match(url).then(function (r) {
-        if (!r) throw new Error('miss');
-        return r.text();
+// offline copy: saved once in the browser cache, used only when the normal load fails
+function saveLibCopy(url) {
+  if (!window.caches || navigator.onLine === false) return;
+  caches.open(LIB_CACHE).then(function (c) {
+    return c.match(url).then(function (hit) {
+      if (hit) return;
+      return fetch(url).then(function (r) { return r.ok ? r.text() : ''; }).then(function (t) {
+        if (t.indexOf('getHolidays') > -1) return c.put(url, new Response(t));
       });
-    }
-    return fetch(url, { cache: 'no-cache' }).then(function (r) {
-      if (!r.ok) throw new Error('http');
-      return r.text();
-    }).then(function (t) {
-      if (t.indexOf('getHolidays') < 0) throw new Error('bad file');
-      if (store) store.put(url, new Response(t)).catch(function () {});
-      return t;
-    }).catch(fromCache);
+    });
+  }).catch(function () {});
+}
+
+function loadCachedLib(url) {
+  if (!window.caches) return Promise.reject(new Error('no cache'));
+  return caches.match(url, { cacheName: LIB_CACHE }).then(function (r) {
+    if (!r) throw new Error('miss');
+    return r.text();
+  }).then(function (t) {
+    return new Promise(function (res, rej) {
+      const u = URL.createObjectURL(new Blob([t], { type: 'text/javascript' }));
+      const s = document.createElement('script');
+      s.src = u;
+      s.onload = function () { URL.revokeObjectURL(u); res(); };
+      s.onerror = function () { URL.revokeObjectURL(u); s.remove(); rej(new Error('script')); };
+      document.head.appendChild(s);
+    });
   });
 }
 
@@ -2049,9 +2057,14 @@ function loadLib() {
   if (libBusy) return libBusy;
   libBusy = LIB_URLS.reduce(function (p, u) {
     return p.catch(function () {
-      return fetchLibText(u).then(runScript).then(function () { if (!window.Holidays) throw new Error('no lib'); });
+      return loadScript(u).then(function () {
+        if (!window.Holidays) throw new Error('no lib');
+        saveLibCopy(u);
+      }).catch(function () {
+        return loadCachedLib(u).then(function () { if (!window.Holidays) throw new Error('no lib'); });
+      });
     });
-  }, Promise.reject())
+  }, Promise.reject(new Error('start')))
     .then(function () { return true; })
     .catch(function () { return false; })
     .then(function (ok) { libBusy = null; return ok; });
@@ -2316,13 +2329,13 @@ function openUpcomingSettings() {
   $('done').onclick = closeSheet;
 }
 
-// how far the bottom bar covers the list: the list fades out and pads itself by this amount
+// the list leaves room for the bottom bar, so the last card is never hidden
 function measureUpcoming() {
   const box = $('hList');
   const hol = $('holidays');
   const nav = $('nav');
   if (!box || !hol || !box.offsetParent) return;
-  const ov = nav ? Math.max(0, Math.round(box.getBoundingClientRect().bottom - nav.getBoundingClientRect().top)) : 0;
+  const ov = nav ? Math.round(nav.getBoundingClientRect().height) : 0;
   if (ov !== lastOv) { lastOv = ov; hol.style.setProperty('--ov', ov + 'px'); }
 }
 
