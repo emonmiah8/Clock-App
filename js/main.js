@@ -1,7 +1,7 @@
 /* ==========================================================================
    CLOCK APP - main.js
    1 Config & state        7 Home widgets            13 Timer & presets
-   2 Helpers & icons       8 Sheet system, settings  14 Upcoming (dynamic)
+   2 Helpers & icons       8 Sheet system, settings  14 Upcoming
    3 Injected styles       9 Edit / Add widget       15 Press feedback, nav
    4 Storage              10 Tabs                    16 Connection, permissions, SW
    5 Tones & ringing      11 Alarms                  17 Init
@@ -27,7 +27,7 @@ const REVERSE_URL = 'https://api.bigdatacloud.net/data/reverse-geocode-client';
 const HOL_URL = 'https://date.nager.at/api/v3/PublicHolidays/';
 const PACK_URL = 'days/';                      // fallback: days/BD.json, days/IN.json ...
 const PLACE_FRESH_MS = 20 * 60 * 1000;
-const HOL_TTL = 7 * 24 * 3600 * 1000;          // holidays refresh by themselves every 7 days
+const HOL_TTL = 7 * 24 * 3600 * 1000;          // holidays refresh every 7 days
 const RETRY_TTL = 24 * 3600 * 1000;            // no data found: ask again after 1 day
 
 const RETRO = ['#4aa3d8', '#ef5b55', '#f4f1ea'];
@@ -110,7 +110,6 @@ function pt(e) {
   return { x: e.clientX, y: e.clientY };
 }
 
-// iOS (SF Symbols) style icons: change them here only
 const ICON = {
   play: '<svg viewBox="0 0 24 24"><path d="M8 5.6v12.8l10.6-6.4z" fill="currentColor" stroke="currentColor" stroke-width="2.6" stroke-linejoin="round"/></svg>',
   pause: '<svg viewBox="0 0 24 24" fill="currentColor"><rect x="5.6" y="4.4" width="4.6" height="15.2" rx="1.6"/><rect x="13.8" y="4.4" width="4.6" height="15.2" rx="1.6"/></svg>',
@@ -251,6 +250,11 @@ body.light .round:not(.main){background:linear-gradient(150deg,rgba(255,255,255,
 body.light .round:not(.main) svg{filter:drop-shadow(0 1px 1px rgba(255,255,255,.7))}
 .round.main,.fab{background:linear-gradient(150deg,rgba(255,200,120,.96),rgba(255,150,30,.82) 55%,rgba(236,112,0,.74))!important;border:1px solid rgba(255,236,205,.65)!important;color:#fff;box-shadow:inset 0 2px 1.5px rgba(255,255,255,.9),inset 0 -3px 5px rgba(255,255,255,.22),inset 0 0 22px rgba(255,255,255,.2),inset -8px -10px 20px rgba(170,70,0,.38),0 14px 34px rgba(255,140,20,.45),0 0 30px rgba(255,159,10,.35)!important}
 .round.main::before,.fab::before{top:4%;height:44%;background:linear-gradient(rgba(255,255,255,.62),rgba(255,255,255,0))}
+
+/* ---- stopwatch & timer play button: light, transparent orange glass ---- */
+#swGo,#tmGo{background:linear-gradient(150deg,rgba(255,205,140,.50),rgba(255,160,50,.30) 55%,rgba(255,140,20,.24))!important;border:1px solid rgba(255,230,200,.50)!important;color:#fff;box-shadow:inset 0 1.5px 1px rgba(255,255,255,.7),inset 0 -2px 4px rgba(255,255,255,.15),inset 0 0 18px rgba(255,255,255,.12),0 10px 26px rgba(255,140,20,.22),0 0 22px rgba(255,159,10,.18)!important}
+#swGo::before,#tmGo::before{background:linear-gradient(rgba(255,255,255,.38),rgba(255,255,255,0))}
+body.light #swGo,body.light #tmGo{color:#e68600}
 .phead button{color:#ff9f0a!important}
 
 @keyframes waveOrange{0%{opacity:.9;transform:scale(1);box-shadow:0 0 0 0 rgba(255,159,10,.7),0 0 26px 8px rgba(255,170,40,.75)}100%{opacity:0;transform:scale(2.2);box-shadow:0 0 0 0 rgba(255,159,10,0),0 0 46px 20px rgba(255,170,40,0)}}
@@ -279,19 +283,8 @@ function defaultWidgets() { return [newWidget('digital'), newWidget('date')]; }
 
 function loadWidgets() {
   try {
-    const s = localStorage.getItem(KEY);
-    if (s) {
-      const a = JSON.parse(s);
-      if (Array.isArray(a)) {
-        a.forEach(function (w) {
-          if (w.type === 'world' && w.auto) {
-            w.type = 'home';
-            delete w.zone; delete w.city; delete w.auto;
-          }
-        });
-        return a;
-      }
-    }
+    const a = JSON.parse(localStorage.getItem(KEY));
+    if (Array.isArray(a)) return a;
   } catch (e) {}
   return defaultWidgets();
 }
@@ -309,7 +302,7 @@ function saveAlarms() { try { localStorage.setItem(AKEY, JSON.stringify(alarms))
 function loadGlobal() {
   let g = {
     bg: '#000000', bgLight: '#f2f2f7', theme: 'dark', awake: false, font: 'sf', country: 'auto',
-    alarmTone: 'i1', timerTone: 'i2', customName: ''
+    alarmTone: 't31', timerTone: 't43', swTone: 'off', customName: ''
   };
   try {
     const s = localStorage.getItem(GKEY);
@@ -345,76 +338,102 @@ function saveMyPlace() { try { localStorage.setItem(PLKEY, JSON.stringify(myPlac
 function saveTm() { try { localStorage.setItem(TKEY, JSON.stringify(tm)); } catch (e) {} }
 
 /* ---- IndexedDB: keeps the custom tone file ---- */
-function idb() {
+function idbRun(mode, fn) {
   return new Promise(function (res, rej) {
     const r = indexedDB.open('clockTones', 1);
     r.onupgradeneeded = function () { r.result.createObjectStore('t'); };
-    r.onsuccess = function () { res(r.result); };
     r.onerror = function () { rej(r.error); };
-  });
-}
-function idbGet(k) {
-  return idb().then(function (db) {
-    return new Promise(function (res, rej) {
-      const q = db.transaction('t').objectStore('t').get(k);
-      q.onsuccess = function () { res(q.result || null); };
-      q.onerror = function () { rej(q.error); };
-    });
-  });
-}
-function idbSet(k, v) {
-  return idb().then(function (db) {
-    return new Promise(function (res, rej) {
-      const tx = db.transaction('t', 'readwrite');
-      tx.objectStore('t').put(v, k);
-      tx.oncomplete = function () { res(); };
+    r.onsuccess = function () {
+      const tx = r.result.transaction('t', mode);
+      const req = fn(tx.objectStore('t'));
+      tx.oncomplete = function () { res(req ? req.result : undefined); };
       tx.onerror = function () { rej(tx.error); };
-    });
+    };
   });
 }
-function idbDel(k) {
-  return idb().then(function (db) {
-    return new Promise(function (res, rej) {
-      const tx = db.transaction('t', 'readwrite');
-      tx.objectStore('t').delete(k);
-      tx.oncomplete = function () { res(); };
-      tx.onerror = function () { rej(tx.error); };
-    });
-  });
-}
+function idbGet(k) { return idbRun('readonly', function (s) { return s.get(k); }).then(function (v) { return v || null; }); }
+function idbSet(k, v) { return idbRun('readwrite', function (s) { return s.put(v, k); }); }
+function idbDel(k) { return idbRun('readwrite', function (s) { return s.delete(k); }); }
 
 /* ==========================================================================
    5. TONES & RINGING
    --------------------------------------------------------------------------
-   20 built-in tones (iPhone, Samsung and Pixel style, made by the browser,
-   so they work offline) + one custom tone from your own audio file.
-   n = notes [midi, start s, length s]   w = wave   ov = [overtone ratio, gain]
+   50 built-in tones (made by the browser, so they work offline)
+   + one custom tone from your own audio file.
+   S(notes, step, length) builds a note list: [midi, start s, length s]
+   w = wave   ov = [overtone ratio, gain]   env = 'soft'   g0 = loudness
    ========================================================================== */
-const TONE_GROUPS = ['iPhone style', 'Samsung style', 'Pixel style'];
-const TONES = [
-  { id: 'i1', g: 0, name: 'Marimba', w: 'sine', ov: [4, 0.3], len: 1.6, n: [[76, 0, .3], [79, .12, .3], [83, .24, .3], [79, .36, .3], [76, .48, .3], [79, .6, .3], [83, .72, .3], [88, .84, .5]] },
-  { id: 'i2', g: 0, name: 'Radar', w: 'sine', env: 'soft', len: 1.5, n: [[84, 0, .22], [88, .26, .22], [84, .52, .22], [88, .78, .22], [91, 1.04, .3]] },
-  { id: 'i3', g: 0, name: 'Chimes', w: 'sine', ov: [2.76, .4], len: 2.2, n: [[88, 0, .9], [84, .35, .9], [91, .7, 1.2]] },
-  { id: 'i4', g: 0, name: 'Bells', w: 'sine', ov: [2.4, .35], len: 2.2, n: [[79, 0, 1], [79, .5, 1], [79, 1, 1.2]] },
-  { id: 'i5', g: 0, name: 'Beacon', w: 'sine', env: 'soft', len: 2.2, n: [[72, 0, .6], [79, .5, .6], [84, 1, .8]] },
-  { id: 'i6', g: 0, name: 'Ripples', w: 'sine', ov: [3, .25], len: 1.6, n: [[84, 0, .5], [88, .15, .5], [84, .3, .5], [91, .45, .5], [88, .6, .7]] },
-  { id: 'i7', g: 0, name: 'Slow Rise', w: 'sine', env: 'soft', len: 2.6, n: [[67, 0, .5], [72, .5, .5], [76, 1, .5], [79, 1.5, .8]] },
+function S(m, step, dur) {
+  return m.map(function (x, i) { return [x, +(i * step).toFixed(2), dur]; });
+}
 
-  { id: 's1', g: 1, name: 'Over the Horizon', w: 'sine', ov: [2, .3], len: 2.8, n: [[72, 0, .35], [76, .3, .35], [79, .6, .35], [84, .9, .6], [79, 1.5, .35], [76, 1.8, .6]] },
-  { id: 's2', g: 1, name: 'Morning Flower', w: 'sine', ov: [2, .25], len: 2.5, n: [[76, 0, .3], [79, .25, .3], [83, .5, .3], [84, .75, .6], [83, 1.3, .3], [79, 1.55, .6]] },
-  { id: 's3', g: 1, name: 'Basic Bell', w: 'sine', ov: [2.76, .4], len: 1.8, n: [[88, 0, .6], [88, .45, .6], [88, .9, .6]] },
-  { id: 's4', g: 1, name: 'Galaxy Bells', w: 'sine', ov: [2.4, .35], len: 2, n: [[84, 0, .8], [91, .2, .8], [88, .4, .8], [96, .6, 1]] },
-  { id: 's5', g: 1, name: 'Sunny Day', w: 'triangle', len: 1.6, n: [[72, 0, .2], [76, .2, .2], [79, .4, .2], [84, .6, .2], [79, .8, .2], [84, 1, .4]] },
-  { id: 's6', g: 1, name: 'Cosmic', w: 'sine', env: 'soft', ov: [1.5, .3], len: 2.4, n: [[67, 0, 1], [74, .4, 1], [79, .8, 1.2]] },
-  { id: 's7', g: 1, name: 'Wake Up', w: 'square', g0: .12, len: 1.4, n: [[79, 0, .15], [79, .25, .15], [79, .5, .15], [84, .75, .3]] },
-
-  { id: 'p1', g: 2, name: 'Argon', w: 'triangle', len: 1.3, n: [[74, 0, .2], [81, .15, .2], [86, .3, .4]] },
-  { id: 'p2', g: 2, name: 'Neon', w: 'sine', len: 1, n: [[84, 0, .12], [84, .2, .12], [91, .4, .25]] },
-  { id: 'p3', g: 2, name: 'Helium', w: 'sine', env: 'soft', len: 1.8, n: [[86, 0, .4], [91, .3, .4], [95, .6, .6]] },
-  { id: 'p4', g: 2, name: 'Krypton', w: 'sine', ov: [3, .2], len: 1.6, n: [[69, 0, .3], [76, .2, .3], [81, .4, .3], [88, .6, .5]] },
-  { id: 'p5', g: 2, name: 'Oxygen', w: 'sine', env: 'soft', len: 2.4, n: [[72, 0, .8], [79, .6, .8], [76, 1.2, 1]] },
-  { id: 'p6', g: 2, name: 'Xenon', w: 'triangle', len: 1, n: [[88, 0, .1], [91, .12, .1], [88, .24, .1], [95, .36, .3]] }
+const TONE_GROUPS = ['Classic bells', 'Soft & calm', 'Bright morning', 'Melody', 'Digital'];
+const TONE_DEFS = [
+  // ---- Classic bells (1-10)
+  { name: 'Church Bell', ov: [2.4, .35], n: S([67, 67, 67], .9, 1.2) },
+  { name: 'Temple Bell', ov: [2.76, .4], n: S([72, 79], .7, 1.2) },
+  { name: 'Wind Chimes', ov: [2.76, .4], n: S([88, 84, 91, 86, 93], .28, .9) },
+  { name: 'Crystal Bell', ov: [3, .25], n: S([91, 95, 98, 95], .2, .6) },
+  { name: 'Grandfather Clock', ov: [2, .3], n: S([64, 60, 62, 55], .6, .8) },
+  { name: 'Doorbell', ov: [2.4, .3], n: S([76, 72], .6, .9) },
+  { name: 'Glass Bells', ov: [4, .2], n: S([84, 88, 91, 96], .18, .6) },
+  { name: 'Carillon', ov: [2.76, .35], n: S([72, 76, 79, 84, 79, 76, 72], .22, .5) },
+  { name: 'Tower Bell', ov: [2, .4], n: S([55, 55, 55, 55], .9, 1.2) },
+  { name: 'Silver Bells', ov: [3, .3], n: S([88, 88, 91, 88, 95], .22, .5) },
+  // ---- Soft & calm (11-20)
+  { name: 'Morning Dew', env: 'soft', n: S([72, 76, 79, 84], .5, .6) },
+  { name: 'Slow Rise', env: 'soft', n: S([67, 72, 76, 79], .5, .7) },
+  { name: 'Calm Waves', env: 'soft', n: S([69, 72, 76, 72], .6, .7) },
+  { name: 'Gentle Light', env: 'soft', ov: [2, .2], n: S([76, 79, 83], .5, .8) },
+  { name: 'Lullaby', env: 'soft', n: S([72, 76, 72, 67, 72], .5, .6) },
+  { name: 'Cloud Drift', env: 'soft', n: S([79, 76, 72], .6, .8) },
+  { name: 'Still Water', env: 'soft', n: S([64, 71, 76], .7, .9) },
+  { name: 'Moon Glow', env: 'soft', ov: [1.5, .3], n: S([67, 74, 79], .7, 1) },
+  { name: 'Soft Piano', ov: [2, .2], n: S([72, 76, 79, 76], .4, .5) },
+  { name: 'Dawn Breeze', env: 'soft', n: S([84, 81, 79, 76], .5, .6) },
+  // ---- Bright morning (21-30)
+  { name: 'Sunrise', w: 'triangle', n: S([72, 76, 79, 84], .2, .25) },
+  { name: 'Good Morning', ov: [2, .3], n: S([76, 79, 83, 84], .25, .35) },
+  { name: 'Sunny Day', w: 'triangle', n: S([72, 76, 79, 84, 79, 84], .2, .2) },
+  { name: 'Fresh Start', ov: [3, .25], n: S([79, 83, 86, 91], .15, .3) },
+  { name: 'Birdsong', n: S([91, 95, 93, 98, 95], .12, .12) },
+  { name: 'Happy Ding', ov: [2.76, .3], n: S([88, 91, 95], .2, .4) },
+  { name: 'Spring', w: 'triangle', n: S([74, 78, 81, 86], .18, .25) },
+  { name: 'Daybreak', ov: [2, .3], n: S([67, 72, 76, 79, 84], .22, .35) },
+  { name: 'Golden Hour', w: 'triangle', n: S([69, 73, 76, 81, 76], .25, .3) },
+  { name: 'Cheerful', w: 'triangle', n: S([79, 84, 79, 84, 88], .15, .2) },
+  // ---- Melody (31-40)
+  { name: 'Marimba', ov: [4, .3], n: S([76, 79, 83, 79, 76, 79, 83, 88], .12, .3) },
+  { name: 'Waltz', ov: [2, .2], n: S([72, 76, 79, 84], .45, .4) },
+  { name: 'Music Box', ov: [3, .3], n: S([84, 88, 91, 88, 84, 79, 84], .2, .35) },
+  { name: 'Harp', ov: [2, .25], n: S([60, 64, 67, 72, 76, 79, 84], .1, .5) },
+  { name: 'Ode', ov: [2, .2], n: S([76, 76, 77, 79, 79, 77, 76, 74], .3, .25) },
+  { name: 'Little Box', ov: [3, .25], n: S([79, 76, 72, 79, 76, 72], .3, .35) },
+  { name: 'Rising Scale', w: 'triangle', n: S([60, 62, 64, 65, 67, 69, 71, 72], .12, .2) },
+  { name: 'Echo', ov: [2, .3], n: S([84, 84, 79, 79, 84], .3, .3) },
+  { name: 'Fanfare', w: 'triangle', n: S([72, 72, 72, 79], .2, .25) },
+  { name: 'Canon', ov: [2, .2], n: S([74, 69, 71, 66, 67, 62, 67, 69], .3, .35) },
+  // ---- Digital (41-50)
+  { name: 'Beep', w: 'square', g0: .1, n: S([81, 81, 81], .25, .12) },
+  { name: 'Pulse', w: 'square', g0: .1, n: S([76, 76], .2, .1) },
+  { name: 'Radar', env: 'soft', n: S([84, 88, 84, 88, 91], .26, .22) },
+  { name: 'Sonar', n: S([79, 79], 1, .4) },
+  { name: 'Alert', w: 'square', g0: .1, n: S([84, 79, 84, 79], .2, .15) },
+  { name: 'Sweep', w: 'triangle', n: S([72, 76, 79, 84, 88, 91], .1, .15) },
+  { name: 'Ping', ov: [2, .3], n: S([91, 91], .35, .15) },
+  { name: 'Chirp', w: 'triangle', n: S([88, 95, 88, 95], .12, .1) },
+  { name: 'Laser', w: 'triangle', n: S([96, 91, 86, 81, 76], .08, .1) },
+  { name: 'Tick Tock', w: 'square', g0: .08, n: S([84, 79, 84, 79], .4, .06) }
 ];
+const TONES = TONE_DEFS.map(function (d, i) {
+  return Object.assign({ id: 't' + (i + 1), g: Math.floor(i / 10) }, d);
+});
+
+const TONE_KINDS = {
+  alarm: { key: 'alarmTone', title: 'Alarm tone' },
+  timer: { key: 'timerTone', title: 'Timer tone' },
+  sw: { key: 'swTone', title: 'Stopwatch tone' }
+};
 
 let toneMaster = null;
 let toneSrc = null;
@@ -427,6 +446,7 @@ function toneById(id) {
 }
 
 function toneName(id) {
+  if (id === 'off') return 'Off';
   if (id === 'custom') return globalSet.customName || 'Custom tone';
   return toneById(id).name;
 }
@@ -498,8 +518,7 @@ function voice(out, t0, midi, d, tone) {
 function getCustomBuffer() {
   if (customBuf) return Promise.resolve(customBuf);
   return idbGet('custom').then(function (data) {
-    if (!data) return null;
-    return actx.decodeAudioData(data.slice(0));
+    return data ? actx.decodeAudioData(data.slice(0)) : null;
   }).then(function (b) {
     customBuf = b || null;
     return customBuf;
@@ -519,7 +538,7 @@ function playTone(id, loop) {
   if (id === 'custom') {
     getCustomBuffer().then(function (buf) {
       if (toneMaster !== master) return;
-      if (!buf) { playTone('i1', loop); return; }
+      if (!buf) { playTone(TONES[0].id, loop); return; }
       const s = actx.createBufferSource();
       s.buffer = buf;
       s.loop = !!loop;
@@ -531,13 +550,16 @@ function playTone(id, loop) {
   }
 
   const t = toneById(id);
+  let end = 0;
+  t.n.forEach(function (x) { end = Math.max(end, x[1] + x[2]); });
+
   function cycle() {
     if (toneMaster !== master) return;
     const t0 = actx.currentTime + 0.02;
     t.n.forEach(function (x) { voice(master, t0 + x[1], x[0], x[2], t); });
   }
   cycle();
-  if (loop) toneTimer = setInterval(cycle, (t.len + 0.4) * 1000);
+  if (loop) toneTimer = setInterval(cycle, (end + 0.7) * 1000);
   return true;
 }
 
@@ -552,7 +574,7 @@ function startRing(title, snoozeFn, toneId) {
   document.getElementById('ring').classList.add('open');
   if (document.hidden) notify(title, 'Tap to open the clock', 'clock-ring');
 
-  const ok = playTone(toneId || 'i1', true);
+  const ok = playTone(toneId || TONES[0].id, true);
   haptic(300);
   ringTimer = setInterval(function () {
     if (!ok) beep();
@@ -570,9 +592,13 @@ function stopRing() {
 
 /* ---- tone picker sheet ---- */
 function openToneSheet(kind) {
-  const key = kind === 'alarm' ? 'alarmTone' : 'timerTone';
+  const info = TONE_KINDS[kind];
+  const key = info.key;
 
-  let h = '<div class="title">' + (kind === 'alarm' ? 'Alarm tone' : 'Timer tone') + '</div><div class="tonebox">';
+  let h = '<div class="title">' + info.title + '</div><div class="tonebox">';
+  if (kind === 'sw') {
+    h += '<button class="trow" data-id="off"><span>Off</span><span class="chk">&#10003;</span></button>';
+  }
   TONE_GROUPS.forEach(function (gn, gi) {
     h += '<div class="tgrp">' + gn + '</div>';
     TONES.forEach(function (t) {
@@ -603,7 +629,8 @@ function openToneSheet(kind) {
     globalSet[key] = id;
     saveGlobal();
     draw();
-    if (!ringOn) playTone(id, false);
+    if (id === 'off') stopPreview();
+    else if (!ringOn) playTone(id, false);
   }
 
   function pick() { unlockAudio(); document.getElementById('tnFile').click(); }
@@ -635,8 +662,9 @@ function openToneSheet(kind) {
     idbDel('custom').catch(function () {});
     customBuf = null;
     globalSet.customName = '';
-    if (globalSet.alarmTone === 'custom') globalSet.alarmTone = 'i1';
-    if (globalSet.timerTone === 'custom') globalSet.timerTone = 'i2';
+    if (globalSet.alarmTone === 'custom') globalSet.alarmTone = 't31';
+    if (globalSet.timerTone === 'custom') globalSet.timerTone = 't43';
+    if (globalSet.swTone === 'custom') globalSet.swTone = 'off';
     saveGlobal();
     stopPreview();
     draw();
@@ -1165,8 +1193,9 @@ function openSettings() {
     }).join('') + '</div>';
   h += '<div class="row"><button class="btn" id="fontbtn"></button></div>';
   h += '<div class="row"><button class="btn" id="awake"></button></div>';
-  h += '<div class="row"><button class="btn" id="tnAlarm"></button></div>';
-  h += '<div class="row"><button class="btn" id="tnTimer"></button></div>';
+  Object.keys(TONE_KINDS).forEach(function (k) {
+    h += '<div class="row"><button class="btn" data-tone="' + k + '"></button></div>';
+  });
   h += '<div class="row"><button class="btn" id="upbtn">Upcoming dates: ' + escapeAttr(countryName(detectCountry()) || 'Auto') + '</button></div>';
   h += '<div class="row"><button class="btn" id="fs">Toggle fullscreen</button></div>';
   h += '<div class="row"><button class="btn" id="permbtn">Permissions &amp; connection</button></div>';
@@ -1177,15 +1206,18 @@ function openSettings() {
     document.getElementById('themebtn').textContent = globalSet.theme === 'light' ? 'Theme: Light' : 'Theme: Dark';
     document.getElementById('awake').textContent = globalSet.awake ? 'Keep screen awake: ON' : 'Keep screen awake: OFF';
     document.getElementById('fontbtn').textContent = digitMode === 'sf' ? 'Numbers: Bold style' : 'Numbers: Retro lines';
-    document.getElementById('tnAlarm').textContent = 'Alarm tone: ' + toneName(globalSet.alarmTone);
-    document.getElementById('tnTimer').textContent = 'Timer tone: ' + toneName(globalSet.timerTone);
+    sheet.querySelectorAll('[data-tone]').forEach(function (b) {
+      const info = TONE_KINDS[b.dataset.tone];
+      b.textContent = info.title + ': ' + toneName(globalSet[info.key]);
+    });
   }
   labels();
 
+  sheet.querySelectorAll('[data-tone]').forEach(function (b) {
+    b.onclick = function () { openToneSheet(b.dataset.tone); };
+  });
   document.getElementById('permbtn').onclick = openPermissions;
   document.getElementById('upbtn').onclick = openUpcomingSettings;
-  document.getElementById('tnAlarm').onclick = function () { openToneSheet('alarm'); };
-  document.getElementById('tnTimer').onclick = function () { openToneSheet('timer'); };
 
   document.getElementById('themebtn').onclick = function () {
     globalSet.theme = globalSet.theme === 'light' ? 'dark' : 'light';
@@ -1798,7 +1830,7 @@ function openPresetSheet(origin) {
 }
 
 /* ==========================================================================
-   14. UPCOMING  (dynamic: all countries, updates itself over the internet)
+   14. UPCOMING  (all countries, updates itself over the internet)
    --------------------------------------------------------------------------
    Country : your choice in Settings, otherwise GPS -> internet (IP) -> time zone -> language
    Dates   : a) holidays of the country: Nager.Date, else your pack file days/XX.json
@@ -2002,12 +2034,12 @@ function fetchHol(cc, yr) {
     });
 }
 
-function loadHolidays(cc, force) {
+function loadHolidays(cc) {
   if (!cc || navigator.onLine === false) return;
   const y = new Date().getFullYear();
   [y, y + 1].forEach(function (yr) {
     const c = readHol(cc, yr);
-    if (!force && !holExpired(c)) return;
+    if (!holExpired(c)) return;
     const k = cc + yr;
     if (holBusy[k]) return;
     holBusy[k] = 1;
@@ -2686,28 +2718,23 @@ function initWorldHome() {
 }
 
 /* ---- service worker: offline support, notifications, silent update ---- */
-// a new version takes over by itself, no "new version" message
-function offerUpdate(worker) {
-  worker.postMessage('SKIP_WAITING');
-}
-
 function registerSW() {
   if (!('serviceWorker' in navigator)) return;
 
+  // a new version takes over by itself; reload only when nothing is running
   navigator.serviceWorker.addEventListener('controllerchange', function () {
-    // reload only when nothing is running, so an alarm, timer or stopwatch is never interrupted
     if (!ringOn && !tm.running && !sw.running) location.reload();
   });
 
   navigator.serviceWorker.register('sw.js')
     .then(function (reg) {
       swReg = reg;
-      if (reg.waiting && navigator.serviceWorker.controller) offerUpdate(reg.waiting);
+      if (reg.waiting && navigator.serviceWorker.controller) reg.waiting.postMessage('SKIP_WAITING');
       reg.addEventListener('updatefound', function () {
         const nw = reg.installing;
         if (!nw) return;
         nw.addEventListener('statechange', function () {
-          if (nw.state === 'installed' && navigator.serviceWorker.controller) offerUpdate(nw);
+          if (nw.state === 'installed' && navigator.serviceWorker.controller) nw.postMessage('SKIP_WAITING');
         });
       });
       setInterval(function () { reg.update().catch(function () {}); }, 60 * 60 * 1000);
@@ -2730,7 +2757,7 @@ function bindEvents() {
     if (f) f();
   };
 
-  document.getElementById('add').onclick = function () { openAddWidget(); };
+  document.getElementById('add').onclick = openAddWidget;
 
   document.getElementById('aPlus').onclick = function (e) { openAlarmSheet(null, pt(e)); };
   document.getElementById('aEdit').onclick = function () {
@@ -2745,7 +2772,10 @@ function bindEvents() {
     renderSw();
   };
   document.getElementById('swLap').onclick = function () {
-    if (swMs() > 0) { sw.laps.push(swMs()); renderLaps(); }
+    if (swMs() <= 0) return;
+    sw.laps.push(swMs());
+    renderLaps();
+    if (globalSet.swTone !== 'off' && !ringOn) playTone(globalSet.swTone, false);
   };
   document.getElementById('swReset').onclick = function () {
     sw = { running: false, start: 0, elapsed: 0, laps: [] };
