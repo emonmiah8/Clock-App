@@ -5,7 +5,7 @@
    3 Injected styles       9 Settings                 15 Upcoming (full calendar)
    4 Storage              10 Edit / Add widget        16 Bottom bar & button effects
    5 Sheet system & UI    11 Tabs                     17 Connection, permissions, SW
-   6 Tones & ringing      12 Alarms                   18 Init
+   6 Tones & ringing      12 Alarms & quick alarms    18 Init
    ========================================================================== */
 
 /* ==========================================================================
@@ -13,6 +13,7 @@
    ========================================================================== */
 const KEY = 'clockWidgets';
 const AKEY = 'clockAlarms';
+const QKEY = 'clockQuick';
 const TKEY = 'clockTimer';
 const GKEY = 'clockGlobal';
 const PKEY = 'clockPresets';
@@ -41,14 +42,17 @@ const TYPES = {
 const BGS_DARK = [['#000000', 'Black'], ['#0e1014', 'Charcoal'], ['#0b1426', 'Navy'], ['#1a1410', 'Brown'], ['#0f1a14', 'Forest']];
 const BGS_LIGHT = [['#ffffff', 'White'], ['#f2f2f7', 'Gray'], ['#fbf5ea', 'Cream'], ['#eaf2ff', 'Sky'], ['#eaf6ee', 'Mint']];
 const TABS = ['home', 'alarm', 'stopwatch', 'timer'];
-const ITEM_H = 60;
+const ITEM_H = 60;   // timer wheel row height
+const AW_H = 46;     // alarm wheel row height
+const DAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+const ALL_DAYS = [0, 1, 2, 3, 4, 5, 6];
 
 let widgets = loadWidgets();
 let alarms = loadAlarms();
+let quick = loadQuick();
 let presets = loadPresets();
 let globalSet = loadGlobal();
 let digitMode = globalSet.font === 'retro' ? 'retro' : 'sf';
-let alarmEditMode = false;
 let myPlace = loadMyPlace();
 let lastDeviceZone = deviceZone();
 let geoAbort = null;
@@ -83,8 +87,7 @@ let ringSnoozeFn = null;
 let ringOn = false;
 let snoozeAt = 0;
 let wakeLock = null;
-let penOut = false;
-let plusOut = false;
+const popOut = { cog: false, add: false };
 
 const sheet = document.getElementById('sheet');
 const overlay = document.getElementById('overlay');
@@ -198,11 +201,37 @@ ${typeCss}
 .hright{flex:none;display:flex;flex-direction:column;align-items:flex-end;gap:3px;text-align:right}
 .hright .hleft{margin:0;font-size:13px}
 .hleft.soon{color:var(--accent)}
+.hleft.ok{color:var(--ok)}
 .hwd{margin:0;display:flex;align-items:center;gap:5px;font-size:11.5px;opacity:.7}
 .hwd::before{content:"";width:7px;height:7px;border-radius:50%;background:var(--tc)}
 .hempty{padding:36px 24px;text-align:center;font-size:14px;line-height:1.5;opacity:.55}
 .hmore{flex:none;align-self:center;margin-top:6px;padding:10px 22px;border-radius:999px;font-size:14px;color:var(--accent);background:rgba(255,159,10,.14);border:1px solid rgba(255,159,10,.32);cursor:pointer;-webkit-tap-highlight-color:transparent}
 .hmore:active{transform:scale(.96)}
+
+/* ---- Alarms: quick alarm cards (same look as Upcoming) ---- */
+#alarmList:empty{display:none}
+#quickBox{padding:6px 0 150px}
+.qhead{display:flex;align-items:baseline;justify-content:space-between;gap:10px;padding:14px 20px 12px;font-size:20px;letter-spacing:-.02em}
+.qcust{padding:4px 0;border:0;background:none;color:var(--accent);font-size:14px;cursor:pointer;-webkit-tap-highlight-color:transparent}
+.qlist{display:flex;flex-direction:column;gap:9px;padding:0 16px}
+.qcard{cursor:pointer;user-select:none;-webkit-user-select:none;-webkit-tap-highlight-color:transparent}
+.qcard:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+.hd.qd{width:72px}
+.qd .hday{font-size:20px;letter-spacing:-.02em;white-space:nowrap;-webkit-text-stroke:.6px currentColor}
+
+/* ---- Alarms: wheel time picker ---- */
+#sheet .aw{position:relative;display:flex;align-items:stretch;justify-content:center;gap:2px;height:${AW_H * 5}px;padding:0 8px;border-radius:16px;overflow:hidden;background:var(--surf);border:1px solid var(--line)}
+#sheet .awband{position:absolute;left:8px;right:8px;top:${AW_H * 2}px;height:${AW_H}px;border-radius:12px;background:var(--surf2);pointer-events:none}
+#sheet .awc{position:relative;z-index:1;flex:1;min-width:0;height:100%;box-sizing:border-box;padding:${AW_H * 2}px 0;overflow-y:auto;overscroll-behavior:contain;scroll-snap-type:y mandatory;scroll-padding-top:${AW_H * 2}px;scrollbar-width:none;touch-action:pan-y;-webkit-mask-image:linear-gradient(transparent,#000 32%,#000 68%,transparent);mask-image:linear-gradient(transparent,#000 32%,#000 68%,transparent)}
+#sheet .awc::-webkit-scrollbar{display:none}
+#sheet .awi{height:${AW_H}px;display:flex;align-items:center;justify-content:center;font-size:27px;letter-spacing:-.02em;scroll-snap-align:start;opacity:.32;cursor:pointer;transition:opacity .12s ease}
+#sheet .awi.sel{opacity:1}
+#sheet .awc#awP .awi{font-size:21px}
+#sheet .awsep{position:relative;z-index:1;flex:none;align-self:center;font-size:27px;line-height:1;padding-bottom:3px;opacity:.7}
+#sheet .days{display:flex;gap:5px;padding:10px}
+#sheet .dchip{flex:1;min-width:0;padding:10px 0;border-radius:11px;font-size:12px;text-align:center;background:var(--surf2);opacity:.7;transition:background .18s ease,opacity .18s ease,transform .12s ease}
+#sheet .dchip:active{transform:scale(.94)}
+#sheet .dchip.on{background:var(--accent);color:#fff;opacity:1}
 
 /* ---- sheets: one pop-in card ---- */
 #overlay.open{background:rgba(0,0,0,.28)!important;-webkit-backdrop-filter:blur(10px);backdrop-filter:blur(10px)}
@@ -243,13 +272,11 @@ body.light #sheet{color-scheme:light;box-shadow:0 24px 60px rgba(0,0,0,.16)}
 #sheet .dot.ok{background:var(--ok)}
 #sheet .dot.bad{background:var(--danger)}
 
-#sheet input[type=text],#sheet input[type=date],#sheet input[type=time],#sheet select{box-sizing:border-box;min-width:0;padding:0;border:0;outline:0;background:transparent;color:inherit;font-size:15px;-webkit-appearance:none;appearance:none}
+#sheet input[type=text],#sheet input[type=date],#sheet select{box-sizing:border-box;min-width:0;padding:0;border:0;outline:0;background:transparent;color:inherit;font-size:15px;-webkit-appearance:none;appearance:none}
 #sheet .inp{flex:1;text-align:right}
 #sheet select.r{flex:1;max-width:64%;margin-left:auto;text-align:right;text-align-last:right;opacity:.85}
 #sheet select option{color:#111;background:#fff}
 #sheet input::placeholder{color:inherit;opacity:.4}
-#sheet .bigtime{width:100%;padding:6px 0;text-align:center;font-size:46px;letter-spacing:-.02em}
-#sheet .li.cen{justify-content:center}
 
 #sheet .seg{display:flex;gap:2px;padding:3px;border-radius:11px;background:var(--surf2);min-width:150px}
 #sheet .seg button{flex:1;padding:7px 10px;border-radius:8px;font-size:13px;opacity:.65;white-space:nowrap;transition:background .2s ease,opacity .2s ease}
@@ -278,7 +305,7 @@ body.light #sheet .seg button.on{background:#fff}
 #sheet .acts+.acts{margin-top:10px}
 #sheet .bt{flex:1;padding:13px 10px;border-radius:13px;font-size:15px;text-align:center;background:var(--surf2);transition:transform .12s ease,background .2s ease}
 #sheet .bt:active{transform:scale(.97)}
-#sheet .bt.pri,body.light #sheet .bt.pri{color:#fff;background:var(--accent);box-shadow:0 6px 18px rgba(255,140,20,.32)}
+#sheet .bt.pri{color:#fff;background:var(--accent);box-shadow:0 6px 18px rgba(255,140,20,.32)}
 #sheet .bt.dng{color:var(--danger)}
 #sheet .mini{flex:none;padding:6px 13px;border-radius:999px;font-size:13px;white-space:nowrap;color:var(--accent);background:rgba(255,159,10,.16)}
 #sheet .mini.dng{color:var(--danger);background:rgba(255,69,58,.14)}
@@ -369,16 +396,35 @@ function loadWidgets() {
 }
 function saveWidgets() { writeJson(KEY, widgets); }
 
+// alarms: days = weekdays 0-6 (Sun-Sat); an empty list means "once".
+// Older saved alarms (daily true/false) are converted here.
 function loadAlarms() {
   const a = readJson(AKEY);
-  return Array.isArray(a) ? a : [];
+  if (!Array.isArray(a)) return [];
+  a.forEach(function (x) {
+    if (!Array.isArray(x.days)) x.days = x.daily === false ? [] : ALL_DAYS.slice();
+    delete x.daily;
+  });
+  return a;
 }
 function saveAlarms() { writeJson(AKEY, alarms); }
+
+function defaultQuick() {
+  return [
+    { id: 'q1', name: 'Wake up', time: '06:00', days: ALL_DAYS.slice() },
+    { id: 'q2', name: 'Work', time: '08:00', days: [0, 1, 2, 3, 4] }
+  ];
+}
+function loadQuick() {
+  const q = readJson(QKEY);
+  return Array.isArray(q) ? q : defaultQuick();
+}
+function saveQuick() { writeJson(QKEY, quick); }
 
 function loadGlobal() {
   const g = {
     bg: '#000000', bgLight: '#f2f2f7', theme: 'dark', awake: false, font: 'sf', country: 'auto',
-    alarmTone: 't31', timerTone: 't43', swTone: 'off', customName: '', upFilter: 'all'
+    alarmTone: 't31', timerTone: 't43', swTone: 'off', customName: '', upFilter: 'all', alarmFmt: '12'
   };
   const s = readJson(GKEY);
   return s && typeof s === 'object' ? Object.assign(g, s) : g;
@@ -1309,7 +1355,8 @@ function openSettings() {
   h += sec('Appearance',
     '<div class="li"><span class="k">Theme</span>' + seg('themeSeg', [['dark', 'Dark'], ['light', 'Light']], globalSet.theme) + '</div>' +
     '<div class="li"><span class="k">Background</span>' + swatches('bgSw', list, curBg) + '</div>' +
-    '<div class="li"><span class="k">Numbers</span>' + seg('fontSeg', [['sf', 'Bold'], ['retro', 'Retro']], digitMode) + '</div>');
+    '<div class="li"><span class="k">Numbers</span>' + seg('fontSeg', [['sf', 'Bold'], ['retro', 'Retro']], digitMode) + '</div>' +
+    '<div class="li"><span class="k">Alarm time</span>' + alarmFmtSeg('alFmt') + '</div>');
   h += sec('Sounds', Object.keys(TONE_KINDS).map(function (k) {
     return navRow('data-tone="' + k + '"', TONE_KINDS[k].label, esc(toneName(globalSet[TONE_KINDS[k].key])));
   }).join(''));
@@ -1338,6 +1385,8 @@ function openSettings() {
     globalSet.font = v;
     saveGlobal(); applyDigitMode();
   });
+
+  pick('alFmt', setAlarmFmt);
 
   bindToggle('awake', globalSet.awake, function (on) {
     globalSet.awake = on;
@@ -1544,100 +1593,407 @@ function showTab(name) {
 }
 
 /* ==========================================================================
-   12. ALARMS
+   12. ALARMS & QUICK ALARMS
+   --------------------------------------------------------------------------
+   An alarm is { id, time 'HH:MM', on, days [0-6, Sun-Sat], label, last }.
+   An empty days list means "once". The time is picked with scroll wheels
+   (like the timer) in 12-hour (with AM/PM) or 24-hour format.
+   Quick alarms are saved shortcuts: one tap adds them to the alarm list.
    ========================================================================== */
+const QUICK_COLORS = ['#ff9f0a', '#30d158', '#4a8cf7', '#bf5af2', '#ff6a5c', '#2ec4b6'];
+
 function snoozeFive() { snoozeAt = Date.now() + 5 * 60 * 1000; }
+
+function alarmFmt() { return globalSet.alarmFmt === '24' ? '24' : '12'; }
+
+function alarmFmtSeg(id) {
+  return seg(id, [['12', '12-hour'], ['24', '24-hour']], alarmFmt());
+}
+
+// one place to change the format: the alarm list and quick cards redraw
+function setAlarmFmt(v) {
+  globalSet.alarmFmt = v === '24' ? '24' : '12';
+  saveGlobal();
+  renderAlarms();
+  renderQuick();
+}
+
+function parseTime(t) {
+  const p = String(t).split(':');
+  return { h: Number(p[0]) || 0, m: Number(p[1]) || 0 };
+}
+
+function fmtClock(t, fmt) {
+  const x = parseTime(t);
+  if (fmt === '24') return pad(x.h) + ':' + pad(x.m);
+  return ((x.h % 12) || 12) + ':' + pad(x.m) + ' ' + (x.h >= 12 ? 'PM' : 'AM');
+}
+
+function daysKey(days) { return days.slice().sort(function (a, b) { return a - b; }).join(','); }
+
+function repeatText(days) {
+  const d = days.slice().sort(function (a, b) { return a - b; });
+  const k = d.join(',');
+  if (!d.length) return 'Once';
+  if (d.length === 7) return 'Every day';
+  if (k === '1,2,3,4,5') return 'Weekdays';
+  if (k === '0,6') return 'Weekends';
+  const run = d.length >= 3 && d.every(function (x, i) { return i === 0 || x === d[i - 1] + 1; });
+  if (run) return DAYS[d[0]] + ' – ' + DAYS[d[d.length - 1]];
+  return d.map(function (x) { return DAYS[x]; }).join(', ');
+}
+
+// if the chosen time is only seconds/minutes in the past, do not ring right away
+function lateGuard(t) {
+  const now = new Date();
+  const x = parseTime(t);
+  const late = now.getHours() * 60 + now.getMinutes() - (x.h * 60 + x.m);
+  return (late >= 0 && late <= 2) ? dayKey(now) + t : '';
+}
+
+function sortAlarms() {
+  alarms.sort(function (x, y) { return x.time < y.time ? -1 : 1; });
+}
 
 function renderAlarms() {
   const box = $('alarmList');
   if (!box) return;
-  if (!alarms.length) {
-    box.innerHTML = '<div class="empty">No alarms yet. Tap + to add one.</div>';
-    return;
-  }
   box.innerHTML = '';
+  const fmt = alarmFmt();
+
   alarms.forEach(function (a) {
-    const p = a.time.split(':');
-    const h = Number(p[0]), m = p[1];
-    const ap = h >= 12 ? 'PM' : 'AM';
-    const h12 = (h % 12) === 0 ? 12 : (h % 12);
+    const x = parseTime(a.time);
+    const timeStr = fmt === '24'
+      ? timeHtml(pad(x.h) + ':' + pad(x.m), false)
+      : timeHtml(((x.h % 12) || 12) + ':' + pad(x.m), false) + '<span class="ampm">' + (x.h >= 12 ? 'PM' : 'AM') + '</span>';
 
     const row = document.createElement('div');
-    row.className = 'arow2' + (a.on ? '' : ' off') + (alarmEditMode ? ' editing' : '');
+    row.className = 'arow2' + (a.on ? '' : ' off');
     row.innerHTML =
-      '<button class="adel" aria-label="Delete">&minus;</button>' +
       '<div class="ainfo">' +
-        '<div class="time atime" style="--size:13vw">' + timeHtml(h12 + ':' + m, false) + '<span class="ampm">' + ap + '</span></div>' +
-        '<div class="alabel">' + esc(a.label || 'Alarm') + (a.daily ? ', Every day' : ', Once') + '</div>' +
+        '<div class="time atime" style="--size:13vw">' + timeStr + '</div>' +
+        '<div class="alabel">' + esc(a.label || 'Alarm') + ', ' + repeatText(a.days) + '</div>' +
       '</div>' +
       '<button class="tgl' + (a.on ? ' on' : '') + '" aria-label="On or off"><span></span></button>';
 
-    row.querySelector('.tgl').onclick = function () { a.on = !a.on; saveAlarms(); renderAlarms(); };
-    row.querySelector('.adel').onclick = function () {
-      alarms = alarms.filter(function (x) { return x !== a; });
-      saveAlarms(); renderAlarms();
+    row.querySelector('.tgl').onclick = function () {
+      a.on = !a.on;
+      if (a.on) a.last = lateGuard(a.time);
+      saveAlarms(); renderAlarms(); renderQuick();
     };
     row.querySelector('.ainfo').onclick = function (e) { openAlarmSheet(a, pt(e)); };
     box.appendChild(row);
   });
 }
 
-function openAlarmSheet(a, origin) {
-  const isNew = !a;
-  const draft = a
-    ? { time: a.time, label: a.label || '', daily: a.daily }
-    : { time: '07:00', label: '', daily: true };
+/* ---- wheel time picker ---- */
+function wheelCol(id, items, idx) {
+  return '<div class="awc" id="' + id + '">' + items.map(function (t, i) {
+    return '<div class="awi' + (i === idx ? ' sel' : '') + '" data-i="' + i + '">' + t + '</div>';
+  }).join('') + '</div>';
+}
 
-  const h = head(isNew ? 'New alarm' : 'Edit alarm') +
-    sec('', '<div class="li cen"><input type="time" id="asTime" class="bigtime" value="' + draft.time + '"></div>') +
+function wheelsHtml(fmt, h, m) {
+  const hours = [];
+  const mins = [];
+  let i;
+  if (fmt === '24') for (i = 0; i < 24; i++) hours.push(pad(i));
+  else for (i = 1; i <= 12; i++) hours.push(String(i));
+  for (i = 0; i < 60; i++) mins.push(pad(i));
+
+  const hi = fmt === '24' ? h : ((h % 12) || 12) - 1;
+  return '<div class="aw"><div class="awband"></div>' +
+    wheelCol('awH', hours, hi) + '<div class="awsep">:</div>' + wheelCol('awM', mins, m) +
+    (fmt === '24' ? '' : wheelCol('awP', ['AM', 'PM'], h >= 12 ? 1 : 0)) +
+    '</div>';
+}
+
+function wheelPos(el) {
+  return Math.max(0, Math.min(el.children.length - 1, Math.round(el.scrollTop / AW_H)));
+}
+
+function initWheels() {
+  sheet.querySelectorAll('.awc').forEach(function (el) {
+    const cur = el.querySelector('.sel');
+    let last = cur ? Number(cur.dataset.i) : 0;
+    el.scrollTop = last * AW_H;
+
+    el.addEventListener('scroll', function () {
+      const i = wheelPos(el);
+      if (i === last) return;
+      last = i;
+      Array.prototype.forEach.call(el.children, function (c, n) { c.classList.toggle('sel', n === i); });
+      haptic(6);
+    }, { passive: true });
+
+    el.onclick = function (e) {
+      const it = e.target.closest ? e.target.closest('.awi') : null;
+      if (it) el.scrollTo({ top: Number(it.dataset.i) * AW_H, behavior: 'smooth' });
+    };
+  });
+}
+
+function readWheelTime(fmt) {
+  const hi = wheelPos($('awH'));
+  const m = wheelPos($('awM'));
+  if (fmt === '24') return { h: hi, m: m };
+  return { h: ((hi + 1) % 12) + (wheelPos($('awP')) === 1 ? 12 : 0), m: m };
+}
+
+/* ---- one editor for alarms and quick alarms ----
+   cfg: title, time, label, days, ph (label placeholder), isNew, origin,
+        onSave({time,label,days}), onDelete(), onCancel()                  */
+function openAlarmEditor(cfg) {
+  let fmt = alarmFmt();
+  const days = cfg.days.slice();
+  const t = parseTime(cfg.time);
+
+  const h = head(cfg.title) +
+    '<div id="awBox">' + wheelsHtml(fmt, t.h, t.m) + '</div>' +
     sec('Details',
-      '<div class="li"><span class="k">Label</span><input type="text" id="asLabel" class="inp" placeholder="Alarm" maxlength="30" value="' + esc(draft.label) + '"></div>' +
-      '<div class="li"><span class="k">Repeat</span>' + seg('asRep', [['1', 'Every day'], ['0', 'Once']], draft.daily ? '1' : '0') + '</div>') +
+      '<div class="li"><span class="k">Label</span><input type="text" id="asLabel" class="inp" placeholder="' + cfg.ph +
+      '" maxlength="30" value="' + esc(cfg.label) + '"></div>' +
+      '<div class="li"><span class="k">Time format</span>' + alarmFmtSeg('asFmt') + '</div>') +
+    sec('Repeat', '<div class="days" id="asDays">' + DAYS.map(function (n, i) {
+      return '<button class="dchip' + (days.indexOf(i) > -1 ? ' on' : '') + '" data-d="' + i + '">' + n + '</button>';
+    }).join('') + '</div>') +
+    '<div class="sn mid" id="asRep"></div>' +
     '<div class="acts"><button class="bt" id="asCancel">Cancel</button>' +
-    (isNew ? '' : '<button class="bt dng" id="asDel">Delete</button>') +
+    (cfg.isNew ? '' : '<button class="bt dng" id="asDel">Delete</button>') +
     '<button class="bt pri" id="asSave">Save</button></div>';
-  openSheet(h, 'alarm', origin);
+  openSheet(h, 'alarm', cfg.origin);
+  initWheels();
 
-  pick('asRep', function (v) { draft.daily = v === '1'; });
+  function drawRep() { $('asRep').textContent = repeatText(days); }
+  drawRep();
+
+  $('asDays').onclick = function (e) {
+    const b = e.target.closest ? e.target.closest('[data-d]') : null;
+    if (!b) return;
+    const d = Number(b.dataset.d);
+    const i = days.indexOf(d);
+    if (i > -1) days.splice(i, 1); else days.push(d);
+    b.classList.toggle('on', i < 0);
+    drawRep();
+    haptic(6);
+  };
+
+  // changing the format keeps the time the wheels currently show
+  pick('asFmt', function (v) {
+    const cur = readWheelTime(fmt);
+    fmt = v;
+    $('awBox').innerHTML = wheelsHtml(fmt, cur.h, cur.m);
+    initWheels();
+    setAlarmFmt(v);
+  });
 
   $('asSave').onclick = function () {
-    const t = $('asTime').value;
-    if (!t) return;
-    const lbl = $('asLabel').value.trim();
-    const now = new Date();
-    const tp = t.split(':');
-    const lateBy = now.getHours() * 60 + now.getMinutes() - (Number(tp[0]) * 60 + Number(tp[1]));
-    const guard = (lateBy >= 0 && lateBy <= 2) ? dayKey(now) + t : '';
-    if (isNew) {
-      alarms.push({ id: 'a' + Date.now(), time: t, on: true, daily: draft.daily, label: lbl, last: guard });
-    } else {
-      a.time = t; a.label = lbl; a.daily = draft.daily; a.on = true; a.last = guard;
-    }
-    alarms.sort(function (x, y) { return x.time < y.time ? -1 : 1; });
-    saveAlarms(); renderAlarms(); closeSheet();
-    maybeAskNotifications();
+    const x = readWheelTime(fmt);
+    cfg.onSave({ time: pad(x.h) + ':' + pad(x.m), label: $('asLabel').value.trim(), days: days.slice() });
   };
-
   const del = $('asDel');
-  if (del) del.onclick = function () {
-    alarms = alarms.filter(function (x) { return x !== a; });
-    saveAlarms(); renderAlarms(); closeSheet();
+  if (del) del.onclick = cfg.onDelete;
+  $('asCancel').onclick = cfg.onCancel || closeSheet;
+}
+
+function openAlarmSheet(a, origin) {
+  const isNew = !a;
+  openAlarmEditor({
+    title: isNew ? 'New alarm' : 'Edit alarm',
+    time: a ? a.time : '07:00',
+    label: a ? (a.label || '') : '',
+    days: a ? a.days : ALL_DAYS,
+    ph: 'Alarm',
+    isNew: isNew,
+    origin: origin,
+    onSave: function (d) {
+      if (isNew) {
+        alarms.push({ id: 'a' + Date.now(), time: d.time, on: true, days: d.days, label: d.label, last: lateGuard(d.time) });
+      } else {
+        a.time = d.time; a.label = d.label; a.days = d.days; a.on = true; a.last = lateGuard(d.time);
+      }
+      sortAlarms(); saveAlarms(); renderAlarms(); renderQuick(); closeSheet();
+      maybeAskNotifications();
+    },
+    onDelete: function () {
+      alarms = alarms.filter(function (x) { return x !== a; });
+      saveAlarms(); renderAlarms(); renderQuick(); closeSheet();
+    }
+  });
+}
+
+/* ---- quick alarms ---- */
+function quickAlarm(q) {
+  return alarms.find(function (a) { return a.time === q.time && daysKey(a.days) === daysKey(q.days); }) || null;
+}
+
+function renderQuick() {
+  const box = $('quickBox');
+  if (!box) return;
+  const fmt = alarmFmt();
+
+  let html = '<div class="qhead"><span>Quick alarms</span><button class="qcust" id="qCust">Customize</button></div><div class="qlist">';
+  if (!quick.length) html += '<div class="hempty">No quick alarms yet. Tap Customize to add one.</div>';
+
+  quick.forEach(function (q, i) {
+    const x = parseTime(q.time);
+    const have = quickAlarm(q);
+    const top = fmt === '24' ? '24H' : (x.h >= 12 ? 'PM' : 'AM');
+    const big = fmt === '24' ? pad(x.h) + ':' + pad(x.m) : ((x.h % 12) || 12) + ':' + pad(x.m);
+    const state = have ? (have.on ? ['ok', 'Added'] : ['soon', 'Turn on']) : ['soon', '+ Add'];
+
+    html += '<div class="hcard qcard" role="button" tabindex="0" data-q="' + esc(q.id) + '" style="--tc:' + QUICK_COLORS[i % QUICK_COLORS.length] + '">' +
+      '<div class="hd qd"><span class="hmon">' + top + '</span><span class="hday">' + big + '</span></div>' +
+      '<div class="hmid"><div class="hname">' + esc(q.name) + '</div><div class="hbn">' + repeatText(q.days) + '</div></div>' +
+      '<div class="hright"><span class="hleft ' + state[0] + '">' + state[1] + '</span></div></div>';
+  });
+  box.innerHTML = html + '</div>';
+}
+
+function addQuick(q) {
+  const fmt = alarmFmt();
+  const have = quickAlarm(q);
+  if (have) {
+    if (have.on) { toast('Already in your alarms'); return; }
+    have.on = true;
+    have.last = lateGuard(have.time);
+    saveAlarms(); renderAlarms(); renderQuick();
+    toast('Alarm on · ' + fmtClock(q.time, fmt));
+    return;
+  }
+  const a = { id: 'a' + Date.now(), time: q.time, on: true, days: q.days.slice(), label: q.name, last: lateGuard(q.time) };
+  alarms.push(a);
+  sortAlarms(); saveAlarms(); renderAlarms(); renderQuick();
+  haptic(12);
+  toast('Alarm added · ' + fmtClock(q.time, fmt), {
+    action: {
+      label: 'Undo',
+      fn: function () {
+        alarms = alarms.filter(function (x) { return x !== a; });
+        saveAlarms(); renderAlarms(); renderQuick();
+      }
+    }
+  });
+  maybeAskNotifications();
+}
+
+function openQuickSheet() {
+  const fmt = alarmFmt();
+  let h = head('Quick alarms');
+  h += quick.length
+    ? sec('', quick.map(function (q) {
+      return '<button class="li nav" data-q="' + esc(q.id) + '"><div class="kk"><div class="k">' + esc(q.name) +
+        '</div><div class="d">' + fmtClock(q.time, fmt) + ' · ' + repeatText(q.days) + '</div></div></button>';
+    }).join(''))
+    : '<div class="sn mid">No quick alarms yet</div>';
+  h += '<div class="acts"><button class="bt" id="qNew">New quick alarm</button></div>' +
+    '<div class="acts"><button class="bt dng" id="qReset">Reset</button><button class="bt pri" id="done">Done</button></div>';
+  openSheet(h, 'alarm');
+
+  sheet.querySelectorAll('[data-q]').forEach(function (b) {
+    b.onclick = function () {
+      editQuick(quick.find(function (x) { return x.id === b.dataset.q; }));
+    };
+  });
+  $('qNew').onclick = function () { editQuick(null); };
+  $('qReset').onclick = function () {
+    if (!confirm('Reset quick alarms to default?')) return;
+    quick = defaultQuick();
+    saveQuick(); renderQuick(); openQuickSheet();
   };
-  $('asCancel').onclick = closeSheet;
+  $('done').onclick = closeSheet;
+}
+
+function editQuick(q) {
+  const isNew = !q;
+  openAlarmEditor({
+    title: isNew ? 'New quick alarm' : 'Edit quick alarm',
+    time: q ? q.time : '07:00',
+    label: q ? q.name : '',
+    days: q ? q.days : ALL_DAYS,
+    ph: 'Name',
+    isNew: isNew,
+    onSave: function (d) {
+      const name = d.label || 'Alarm';
+      if (isNew) quick.push({ id: 'q' + Date.now(), name: name, time: d.time, days: d.days });
+      else { q.name = name; q.time = d.time; q.days = d.days; }
+      saveQuick(); renderQuick(); openQuickSheet();
+    },
+    onDelete: function () {
+      quick = quick.filter(function (x) { return x !== q; });
+      saveQuick(); renderQuick(); openQuickSheet();
+    },
+    onCancel: openQuickSheet
+  });
+}
+
+// Builds the Alarm tab. Parts of this tab that older versions drew by hand
+// (Edit button, "Quick alarms" block, the "ring only while open" note) are
+// removed here, so the tab is always built by this file alone.
+function initAlarmPage() {
+  const view = $('v-alarm');
+  const list = $('alarmList');
+  if (!view || !list) return;
+
+  const edit = $('aEdit');
+  if (edit) edit.remove();
+
+  const plus = $('aPlus');
+  function keep(el) { return el.contains(list) || (plus && el.contains(plus)); }
+
+  const OLD = /^\s*(Quick alarms|Customize)\s*$|ring only while this app is open|No alarms yet/i;
+  Array.prototype.slice.call(view.querySelectorAll('*')).forEach(function (el) {
+    if (!el.isConnected || el.children.length || list.contains(el) || !OLD.test(el.textContent)) return;
+    let top = el;
+    while (top.parentElement && top.parentElement !== view && !keep(top.parentElement)) top = top.parentElement;
+    // the old quick-alarm block: remove the cards that follow its heading too
+    if (/Quick alarms/i.test(el.textContent)) {
+      let n = top.nextElementSibling;
+      while (n) {
+        const nx = n.nextElementSibling;
+        if (!keep(n)) n.remove();
+        n = nx;
+      }
+    }
+    top.remove();
+  });
+
+  let box = $('quickBox');
+  if (!box) {
+    box = document.createElement('div');
+    box.id = 'quickBox';
+    list.insertAdjacentElement('afterend', box);
+  }
+
+  function onPress(e) {
+    if (e.target.closest('#qCust')) { openQuickSheet(); return; }
+    const c = e.target.closest('[data-q]');
+    if (!c) return;
+    const q = quick.find(function (x) { return x.id === c.dataset.q; });
+    if (q) addQuick(q);
+  }
+  box.addEventListener('click', onPress);
+  box.addEventListener('keydown', function (e) {
+    if ((e.key === 'Enter' || e.key === ' ') && e.target.closest('[data-q]')) { e.preventDefault(); onPress(e); }
+  });
+
+  renderQuick();
 }
 
 function checkAlarms() {
   const now = new Date();
   const nowMin = now.getHours() * 60 + now.getMinutes();
   const dk = dayKey(now);
+  const wd = now.getDay();
   alarms.forEach(function (a) {
-    const p = a.time.split(':');
-    const late = nowMin - (Number(p[0]) * 60 + Number(p[1]));
-    if (a.on && late >= 0 && late <= 2 && a.last !== dk + a.time) {
+    const x = parseTime(a.time);
+    const late = nowMin - (x.h * 60 + x.m);
+    const today = !a.days.length || a.days.indexOf(wd) > -1;
+    if (a.on && today && late >= 0 && late <= 2 && a.last !== dk + a.time) {
       a.last = dk + a.time;
-      if (!a.daily) a.on = false;
-      saveAlarms(); renderAlarms();
-      startRing('Alarm ' + a.time, snoozeFive, globalSet.alarmTone);
+      if (!a.days.length) a.on = false;
+      saveAlarms(); renderAlarms(); renderQuick();
+      startRing((a.label || 'Alarm') + ' ' + fmtClock(a.time, alarmFmt()), snoozeFive, globalSet.alarmTone);
     }
   });
   if (snoozeAt && Date.now() >= snoozeAt) {
@@ -2785,19 +3141,12 @@ function initNav() {
   }, true);
 }
 
-function setPenOut(on) {
-  if (on === penOut) return;
-  penOut = on;
-  const c = $('cog');
-  if (c) c.classList.toggle('out', on);
-  haptic(on ? 8 : 10);
-}
-
-function setPlusOut(on) {
-  if (on === plusOut) return;
-  plusOut = on;
-  const a = $('add');
-  if (a) a.classList.toggle('out', on);
+// rotates the settings dots / the + button while its popover is open
+function setOut(id, on) {
+  if (popOut[id] === on) return;
+  popOut[id] = on;
+  const el = $(id);
+  if (el) el.classList.toggle('out', on);
   haptic(on ? 8 : 10);
 }
 
@@ -2830,8 +3179,8 @@ function initPopoverWatch() {
   new MutationObserver(function () {
     const open = sheet.classList.contains('open') && !sheet.classList.contains('closing');
     const kind = sheet.dataset.kind || '';
-    setPenOut(open && kind === 'settings');
-    setPlusOut(open && kind === 'add');
+    setOut('cog', open && kind === 'settings');
+    setOut('add', open && kind === 'add');
   }).observe(sheet, { attributes: true, attributeFilter: ['class', 'data-kind'] });
 }
 
@@ -3116,13 +3465,7 @@ function bindEvents() {
   };
 
   $('add').onclick = openAddWidget;
-
   $('aPlus').onclick = function (e) { openAlarmSheet(null, pt(e)); };
-  $('aEdit').onclick = function () {
-    alarmEditMode = !alarmEditMode;
-    this.textContent = alarmEditMode ? 'Done' : 'Edit';
-    renderAlarms();
-  };
 
   $('swGo').onclick = function () {
     if (sw.running) { sw.elapsed += Date.now() - sw.start; sw.running = false; }
@@ -3177,6 +3520,7 @@ function initApp() {
   initAddButton();
   initPopoverWatch();
   initUpcoming();
+  initAlarmPage();
 
   buildDial();
   buildWheels();
