@@ -26,6 +26,12 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      # Local Notifications plugin (same major version as @capacitor/core)
+      - name: Add Local Notifications plugin
+        run: |
+          MAJOR=$(node -p "const p=require('./package.json');const v=(p.dependencies||{})['@capacitor/core']||(p.devDependencies||{})['@capacitor/core']||'';v.replace(/[^0-9.]/g,'').split('.')[0]")
+          npm install @capacitor/local-notifications@${MAJOR:-latest}
+
       - name: Copy web files to www
         run: |
           rm -rf www
@@ -34,6 +40,14 @@ jobs:
 
       - name: Sync Capacitor
         run: npx cap sync android
+
+      # alarm permissions are added to the Android manifest during the build
+      - name: Add Android permissions
+        run: |
+          M=android/app/src/main/AndroidManifest.xml
+          for P in POST_NOTIFICATIONS SCHEDULE_EXACT_ALARM USE_EXACT_ALARM USE_FULL_SCREEN_INTENT WAKE_LOCK VIBRATE RECEIVE_BOOT_COMPLETED; do
+            grep -q "android.permission.$P" $M || sed -i "s#<application#<uses-permission android:name=\"android.permission.$P\" />\n    <application#" $M
+          done
 
       - name: Build debug APK
         working-directory: android
@@ -45,4 +59,4 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: clock-app-debug
-          path: android/app/build/outputs/apk/debug/app-debug.apk
+          path: android/app/build/outputs/apk/debug/app-debug.apkapk
