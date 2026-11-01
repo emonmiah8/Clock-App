@@ -1,11 +1,11 @@
 /* ==========================================================================
    CLOCK APP - main.js
-   1 Config & state        7 Digits & time HTML       13 Stopwatch
-   2 Helpers & icons       8 Home widgets             14 Timer & presets
-   3 Injected styles       9 Settings                 15 Upcoming (full calendar)
-   4 Storage              10 Edit / Add widget        16 Bottom bar & button effects
-   5 Sheet system & UI    11 Tabs                     17 Connection, permissions, SW
-   6 Tones & ringing      12 Alarms & quick alarms    18 Init
+   1 Config & state         7 Digits & time HTML        13 Stopwatch
+   2 Helpers & icons        8 Home widgets              14 Timer, presets, typed time
+   3 Injected styles        9 Widget designs + tab      15 Upcoming (swipe filters)
+   4 Storage               10 Settings & snooze         16 Bottom bar & button effects
+   5 Sheet system & UI     11 Edit / Add widget         17 Connection, notifications, SW
+   6 Tones & ringing       12 Tabs, alarms, quick       18 Init
    ========================================================================== */
 
 /* ==========================================================================
@@ -17,6 +17,7 @@ const QKEY = 'clockQuick';
 const TKEY = 'clockTimer';
 const GKEY = 'clockGlobal';
 const PKEY = 'clockPresets';
+const SKEY = 'clockSnooze';
 const PLKEY = 'clockPlace';
 const PLASKED = 'clockPlaceAsked';
 const NOTIF_ASKED = 'clockNotifAsked';
@@ -41,7 +42,7 @@ const TYPES = {
 };
 const BGS_DARK = [['#000000', 'Black'], ['#0e1014', 'Charcoal'], ['#0b1426', 'Navy'], ['#1a1410', 'Brown'], ['#0f1a14', 'Forest']];
 const BGS_LIGHT = [['#ffffff', 'White'], ['#f2f2f7', 'Gray'], ['#fbf5ea', 'Cream'], ['#eaf2ff', 'Sky'], ['#eaf6ee', 'Mint']];
-const TABS = ['home', 'alarm', 'stopwatch', 'timer'];
+const TABS = ['home', 'alarm', 'stopwatch', 'timer', 'widgets'];
 const ITEM_H = 60;   // timer wheel row height
 const AW_H = 46;     // alarm wheel row height
 const DAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
@@ -66,6 +67,8 @@ const searchKeys = [];
 let swReg = null;
 let toastTimer = null;
 let closeTimer = null;
+let schedTimer = null;
+let installEvt = null;
 
 let sw = { running: false, start: 0, elapsed: 0, laps: [] };
 let lastSwMain = '';
@@ -81,11 +84,13 @@ let lastRun = false;
 let wheelTimer = null;
 const selIdx = { pH: -1, pM: -1, pS: -1 };
 
-let actx = null;
+// ringing: ringCtx = what is ringing, ringAction = the second button (Snooze / Restart)
+// snz = a snooze waiting to ring again: { at, ctx }
 let ringTimer = null;
-let ringSnoozeFn = null;
 let ringOn = false;
-let snoozeAt = 0;
+let ringCtx = null;
+let ringAction = null;
+let snz = readJson(SKEY);
 let wakeLock = null;
 const popOut = { cog: false, add: false };
 
@@ -103,6 +108,9 @@ function esc(s) {
     .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
 }
 function haptic(p) { try { if (navigator.vibrate) navigator.vibrate(p); } catch (e) {} }
+function clampN(v, a, b) { v = Math.round(Number(v)); return isNaN(v) ? a : Math.max(a, Math.min(b, v)); }
+// Bangla digits are accepted in typed fields
+function bnDigits(s) { return String(s).replace(/[\u09E6-\u09EF]/g, function (d) { return '\u09E6\u09E7\u09E8\u09E9\u09EA\u09EB\u09EC\u09ED\u09EE\u09EF'.indexOf(d); }); }
 
 // click point for the pop-in origin
 function pt(e) {
@@ -115,7 +123,8 @@ const ICON = {
   pause: '<svg viewBox="0 0 24 24" fill="currentColor"><rect x="5.6" y="4.4" width="4.6" height="15.2" rx="1.6"/><rect x="13.8" y="4.4" width="4.6" height="15.2" rx="1.6"/></svg>',
   lap: '<svg viewBox="0 0 24 24"><path d="M6 21V3.8" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"/><path d="M6.6 4.8h11.2l-2.8 4.2 2.8 4.2H6.6z" fill="currentColor" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/></svg>',
   reset: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12a7 7 0 1 0 2.05-4.95"/><path d="M11 7.05H7.05V3.1"/></svg>',
-  plus: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>'
+  plus: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>',
+  widgets: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="4" width="7" height="7" rx="2"/><rect x="13" y="4" width="7" height="7" rx="2"/><rect x="4" y="13" width="7" height="7" rx="2"/><rect x="13" y="13" width="7" height="7" rx="2"/></svg>'
 };
 
 // replaces the icon but keeps the light-effect layers (.fx) alive while they animate
@@ -135,12 +144,9 @@ function setIcon(id, svg, label) {
 
 /* ==========================================================================
    3. INJECTED STYLES
-   --------------------------------------------------------------------------
-   One design system: calm neutral surfaces, one orange accent, state colours
-   (green start, orange pause, red reset, blue lap) that also drive the glow.
+   One design system: calm neutral surfaces, one orange accent for controls.
+   Upcoming and quick-alarm cards are neutral; only a tiny dot shows the type.
    ========================================================================== */
-
-// Upcoming categories: [label, colour]
 const UP_TYPES = {
   h: ['Holiday', '#ff6a5c'],
   r: ['Religious', '#30d158'],
@@ -154,7 +160,7 @@ function injectStyles() {
     const l = document.createElement('link');
     l.rel = 'stylesheet';
     l.setAttribute('data-clock-font', '1');
-    l.href = 'https://fonts.googleapis.com/css2?family=Poppins:wght@600;700;800&display=swap';
+    l.href = 'https://fonts.googleapis.com/css2?family=Poppins:wght@600;700;800&family=Permanent+Marker&family=Playfair+Display:wght@800;900&display=swap';
     document.head.appendChild(l);
   }
 
@@ -164,8 +170,8 @@ function injectStyles() {
 
   const css = `
 @font-face{font-family:"ClockNum";src:url("digits.ttf") format("truetype");font-weight:100 900;font-style:normal;font-display:swap;unicode-range:U+0030-0039}
-:root{--sf:"ClockNum","Poppins",system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;--accent:#ff9f0a;--danger:#ff453a;--ok:#30d158;--info:#0a84ff;--surf:rgba(255,255,255,.06);--surf2:rgba(255,255,255,.11);--line:rgba(255,255,255,.10);--pop:rgba(28,30,36,.80)}
-body.light{--surf:rgba(0,0,0,.04);--surf2:rgba(0,0,0,.07);--line:rgba(0,0,0,.09);--pop:rgba(255,255,255,.84)}
+:root{--sf:"ClockNum","Poppins",system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;--accent:#ff9f0a;--danger:#ff453a;--ok:#30d158;--info:#0a84ff;--ink:255,255,255;--surf:rgba(255,255,255,.06);--surf2:rgba(255,255,255,.11);--line:rgba(255,255,255,.10);--pop:rgba(28,30,36,.80)}
+body.light{--ink:0,0,0;--surf:rgba(0,0,0,.04);--surf2:rgba(0,0,0,.07);--line:rgba(0,0,0,.09);--pop:rgba(255,255,255,.84)}
 html,body,button,input,select,textarea,svg text,.time .txt,.hcard,.preset,.btn{font-family:var(--sf)!important}
 *{font-weight:800!important}
 body{letter-spacing:-.01em;-webkit-font-smoothing:antialiased}
@@ -173,7 +179,7 @@ body{letter-spacing:-.01em;-webkit-font-smoothing:antialiased}
 body .time .txt{font-size:min(calc(var(--size)*1),20vw);letter-spacing:0;line-height:1}
 #stage{padding:64px 12px 12px!important;margin:0 auto!important}
 
-/* ---- Upcoming ---- */
+/* ---- Upcoming (neutral cards) ---- */
 #holidays{position:relative!important;flex:1 1 auto!important;display:flex!important;flex-direction:column;min-height:320px;padding:0!important;animation:none!important}
 .hhead{position:static!important;display:flex!important;justify-content:space-between;align-items:baseline;gap:10px;padding:14px 20px 8px!important;white-space:nowrap;pointer-events:auto;font-size:20px;letter-spacing:-.02em}
 .hhead::before{display:none!important}
@@ -182,33 +188,36 @@ body .time .txt{font-size:min(calc(var(--size)*1),20vw);letter-spacing:0;line-he
 .hfilter::-webkit-scrollbar{display:none}
 .hchip{flex:none;padding:7px 15px;border-radius:999px;font-size:13px;color:inherit;background:var(--surf);border:1px solid var(--line);cursor:pointer;-webkit-tap-highlight-color:transparent;transition:background .18s ease,color .18s ease,border-color .18s ease,transform .12s ease}
 .hchip:active{transform:scale(.95)}
-.hchip.on{background:var(--accent);border-color:var(--accent);color:#1a1100;box-shadow:0 4px 14px rgba(255,159,10,.35)}
+.hchip.on{background:var(--accent);border-color:var(--accent);color:#1a1100}
 #hList{flex:1 1 0!important;display:flex!important;flex-direction:column!important;gap:9px!important;min-height:220px;max-height:none!important;overflow-y:auto!important;overflow-x:hidden!important;padding:6px 16px calc(var(--ov,0px) + 28px)!important;scroll-snap-type:none!important;overscroll-behavior:contain;touch-action:pan-y;scrollbar-width:none}
 #hList::-webkit-scrollbar{display:none}
+@keyframes swL{from{opacity:0;transform:translateX(34px)}to{opacity:1;transform:none}}
+@keyframes swR{from{opacity:0;transform:translateX(-34px)}to{opacity:1;transform:none}}
+#hList.swL{animation:swL .26s cubic-bezier(.22,.8,.25,1) both}
+#hList.swR{animation:swR .26s cubic-bezier(.22,.8,.25,1) both}
 .hgrp{flex:none;padding:14px 4px 2px;font-size:13px;opacity:.55}
 .hgrp:first-child{padding-top:2px}
-.hcard{width:auto!important;flex:none!important;display:flex!important;align-items:center;gap:14px;padding:10px 14px 10px 10px!important;border-radius:18px!important;background:linear-gradient(135deg,var(--surf2),var(--surf))!important;-webkit-backdrop-filter:none!important;backdrop-filter:none!important;border:1px solid var(--line);box-shadow:0 1px 0 rgba(255,255,255,.04) inset;transition:transform .14s ease,border-color .2s ease}
+.hcard{width:auto!important;flex:none!important;display:flex!important;align-items:center;gap:14px;padding:10px 14px 10px 10px!important;border-radius:18px!important;background:var(--surf)!important;-webkit-backdrop-filter:none!important;backdrop-filter:none!important;border:1px solid var(--line);box-shadow:none!important;transition:transform .14s ease,border-color .2s ease}
 .hcard:active{transform:scale(.985)}
-.hcard.today{border-color:var(--tc);background:linear-gradient(135deg,color-mix(in srgb,var(--tc) 22%,transparent),color-mix(in srgb,var(--tc) 8%,transparent))!important;box-shadow:0 0 22px color-mix(in srgb,var(--tc) 28%,transparent)}
+.hcard.today{border-color:rgba(var(--ink),.34);background:var(--surf2)!important}
 ${typeCss}
-.hd{flex:none;display:flex;flex-direction:column;align-items:center;justify-content:center;width:54px;height:58px;border-radius:15px;background:linear-gradient(160deg,color-mix(in srgb,var(--tc) 30%,transparent),color-mix(in srgb,var(--tc) 12%,transparent));border:1px solid color-mix(in srgb,var(--tc) 38%,transparent)}
-.hd .hmon{font-size:10.5px;letter-spacing:.06em;color:var(--tc);-webkit-text-stroke:.35px currentColor}
-.hd .hday{font-size:26px;line-height:1.05;font-weight:900!important;-webkit-text-stroke:.9px currentColor}
+.hd{flex:none;display:flex;flex-direction:column;align-items:center;justify-content:center;width:54px;height:58px;border-radius:15px;background:var(--surf2)!important;border:1px solid var(--line)!important}
+.hd .hmon{font-size:10.5px;letter-spacing:.08em;opacity:.55;color:inherit!important}
+.hd .hday{font-size:26px;line-height:1.05}
 .hmid{flex:1;min-width:0}
 .hmid .hname{margin:0;font-size:15px;line-height:1.25;overflow:hidden;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical}
 .hbn{margin-top:2px;font-size:12px;opacity:.55;overflow:hidden;white-space:nowrap;text-overflow:ellipsis}
 .hbn:empty{display:none}
 .hright{flex:none;display:flex;flex-direction:column;align-items:flex-end;gap:3px;text-align:right}
-.hright .hleft{margin:0;font-size:13px}
-.hleft.soon{color:var(--accent)}
-.hleft.ok{color:var(--ok)}
+.hright .hleft{margin:0;padding:0!important;border:0!important;background:none!important;font-size:13px;color:inherit!important;opacity:.55}
+.hright .hleft.soon{opacity:1}
 .hwd{margin:0;display:flex;align-items:center;gap:5px;font-size:11.5px;opacity:.7}
-.hwd::before{content:"";width:7px;height:7px;border-radius:50%;background:var(--tc)}
+.hwd::before{content:"";width:6px;height:6px;border-radius:50%;background:var(--tc,#8e8e93)}
 .hempty{padding:36px 24px;text-align:center;font-size:14px;line-height:1.5;opacity:.55}
-.hmore{flex:none;align-self:center;margin-top:6px;padding:10px 22px;border-radius:999px;font-size:14px;color:var(--accent);background:rgba(255,159,10,.14);border:1px solid rgba(255,159,10,.32);cursor:pointer;-webkit-tap-highlight-color:transparent}
+.hmore{flex:none;align-self:center;margin-top:6px;padding:10px 22px;border-radius:999px;font-size:14px;color:inherit;background:var(--surf2);border:1px solid var(--line);cursor:pointer;-webkit-tap-highlight-color:transparent}
 .hmore:active{transform:scale(.96)}
 
-/* ---- Alarms: quick alarm cards (same look as Upcoming) ---- */
+/* ---- Alarms: quick alarm cards ---- */
 #alarmList:empty{display:none}
 #quickBox{padding:6px 0 150px}
 .qhead{display:flex;align-items:baseline;justify-content:space-between;gap:10px;padding:14px 20px 12px;font-size:20px;letter-spacing:-.02em}
@@ -217,7 +226,7 @@ ${typeCss}
 .qcard{cursor:pointer;user-select:none;-webkit-user-select:none;-webkit-tap-highlight-color:transparent}
 .qcard:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
 .hd.qd{width:72px}
-.qd .hday{font-size:20px;letter-spacing:-.02em;white-space:nowrap;-webkit-text-stroke:.6px currentColor}
+.qd .hday{font-size:20px;letter-spacing:-.02em;white-space:nowrap}
 
 /* ---- Alarms: wheel time picker ---- */
 #sheet .aw{position:relative;display:flex;align-items:stretch;justify-content:center;gap:2px;height:${AW_H * 5}px;padding:0 8px;border-radius:16px;overflow:hidden;background:var(--surf);border:1px solid var(--line)}
@@ -255,7 +264,7 @@ body.light #sheet{color-scheme:light;box-shadow:0 24px 60px rgba(0,0,0,.16)}
 #sheet .grp{margin-top:14px;border-radius:16px;overflow:hidden;background:var(--surf);border:1px solid var(--line)}
 #sheet .sl+.grp,#sheet .shead+.grp,#sheet .pcard+.grp{margin-top:0}
 #sheet .li{display:flex;align-items:center;gap:12px;width:100%;min-height:50px;padding:10px 14px;box-sizing:border-box;text-align:left;font-size:15px}
-#sheet .li+.li{border-top:1px solid var(--line)}
+#sheet .li+.li,#sheet .li+.days{border-top:1px solid var(--line)}
 #sheet button.li{transition:background .12s ease}
 #sheet button.li:active{background:var(--surf2)}
 #sheet .k{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
@@ -272,16 +281,18 @@ body.light #sheet{color-scheme:light;box-shadow:0 24px 60px rgba(0,0,0,.16)}
 #sheet .dot.ok{background:var(--ok)}
 #sheet .dot.bad{background:var(--danger)}
 
-#sheet input[type=text],#sheet input[type=date],#sheet select{box-sizing:border-box;min-width:0;padding:0;border:0;outline:0;background:transparent;color:inherit;font-size:15px;-webkit-appearance:none;appearance:none}
+#sheet input[type=text],#sheet input[type=date],#sheet input[type=number],#sheet select{box-sizing:border-box;min-width:0;padding:0;border:0;outline:0;background:transparent;color:inherit;font-size:15px;-webkit-appearance:none;appearance:none}
+#sheet input[type=number]{-moz-appearance:textfield}
+#sheet input[type=number]::-webkit-inner-spin-button{-webkit-appearance:none}
 #sheet .inp{flex:1;text-align:right}
 #sheet select.r{flex:1;max-width:64%;margin-left:auto;text-align:right;text-align-last:right;opacity:.85}
 #sheet select option{color:#111;background:#fff}
 #sheet input::placeholder{color:inherit;opacity:.4}
 
-#sheet .seg{display:flex;gap:2px;padding:3px;border-radius:11px;background:var(--surf2);min-width:150px}
-#sheet .seg button{flex:1;padding:7px 10px;border-radius:8px;font-size:13px;opacity:.65;white-space:nowrap;transition:background .2s ease,opacity .2s ease}
-#sheet .seg button.on{opacity:1;background:rgba(255,255,255,.22);box-shadow:0 1px 3px rgba(0,0,0,.2)}
-body.light #sheet .seg button.on{background:#fff}
+.seg{display:flex;gap:2px;padding:3px;border-radius:11px;background:var(--surf2);min-width:150px}
+.seg button{flex:1;padding:7px 10px;border:0;border-radius:8px;font-size:13px;font-family:inherit;color:inherit;background:none;opacity:.65;white-space:nowrap;cursor:pointer;transition:background .2s ease,opacity .2s ease}
+.seg button.on{opacity:1;background:rgba(255,255,255,.22);box-shadow:0 1px 3px rgba(0,0,0,.2)}
+body.light .seg button.on{background:#fff}
 
 #sheet .sx{position:relative;flex:none;width:50px;height:30px;border-radius:15px;background:var(--surf2);transition:background .2s ease}
 #sheet .sx::after{content:"";position:absolute;top:2px;left:2px;width:26px;height:26px;border-radius:50%;background:#fff;box-shadow:0 2px 4px rgba(0,0,0,.3);transition:transform .22s cubic-bezier(.3,1.4,.5,1)}
@@ -297,7 +308,7 @@ body.light #sheet .seg button.on{background:#fff}
 #sheet input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:24px;height:24px;border-radius:50%;background:#fff;box-shadow:0 2px 6px rgba(0,0,0,.4)}
 #sheet input[type=range]::-moz-range-thumb{width:24px;height:24px;border:0;border-radius:50%;background:#fff;box-shadow:0 2px 6px rgba(0,0,0,.4)}
 
-#sheet .pcard{padding:14px 16px;border-radius:16px;background:rgba(255,159,10,.12);border:1px solid rgba(255,159,10,.30)}
+#sheet .pcard{padding:14px 16px;border-radius:16px;background:var(--surf2);border:1px solid var(--line)}
 #sheet .pcn{font-size:21px;letter-spacing:-.02em;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 #sheet .pcs{margin-top:3px;font-size:12.5px;opacity:.7}
 
@@ -316,6 +327,12 @@ body.light #sheet .seg button.on{background:#fff}
 #sheet .trip i{display:block;margin-top:5px;font-style:normal;font-size:12px;opacity:.55}
 #sheet .tonebox{max-height:52vh;overflow-y:auto;margin:0 -6px;padding:0 6px;scrollbar-width:none}
 #sheet .tonebox::-webkit-scrollbar{display:none}
+
+/* ---- timer: typed time ---- */
+.tmtype{display:flex;gap:8px;justify-content:center;align-items:center;margin:14px auto 0;width:min(88vw,380px)}
+.tmtype input{flex:1;min-width:0;padding:12px 14px;border-radius:14px;border:1px solid var(--line);background:var(--surf);color:inherit;font-size:15px;outline:0;text-align:center}
+.tmtype input::placeholder{color:inherit;opacity:.4}
+.tmtype button{padding:12px 18px;border:0;border-radius:14px;background:var(--surf2);color:inherit;font-size:15px;cursor:pointer}
 
 /* ---- top-right and add buttons ---- */
 #cog{width:46px;height:46px;padding:0!important;opacity:1!important;display:flex!important;align-items:center;justify-content:center;font-size:0}
@@ -340,6 +357,27 @@ body.light #sheet .seg button.on{background:#fff}
 .dialtime .cs,.dialtime .time.cs,#swCs{color:var(--accent)!important}
 .dialwrap{isolation:isolate}
 .dialwrap::before{content:"";position:absolute;inset:.8%;border-radius:50%;z-index:-1;background:rgba(255,255,255,.05);-webkit-backdrop-filter:blur(20px) saturate(1.6) brightness(.6);backdrop-filter:blur(20px) saturate(1.6) brightness(.6);box-shadow:0 20px 40px rgba(0,0,0,.4)}
+
+/* ---- Widgets tab: every design is a pure function of the time ---- */
+.wgpage{padding:72px 14px 150px}
+.wgh{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:4px 6px 16px;font-size:22px;letter-spacing:-.03em}
+.wgg{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+.wgt{position:relative;container-type:size;aspect-ratio:1/1;display:flex;align-items:center;justify-content:center;border-radius:26px;background:#1c1d24;color:#fff;overflow:hidden;cursor:pointer;-webkit-tap-highlight-color:transparent;transition:transform .14s ease}
+.wgt:active{transform:scale(.97)}
+.wgt.w2{grid-column:span 2;aspect-ratio:2/1}
+.wgt svg{display:block;overflow:visible}
+.wcol{display:flex;flex-direction:column;align-items:center;justify-content:center;width:100%;height:100%}
+.wrow{display:flex;align-items:center;justify-content:center}
+.wcg{display:grid;grid-template-columns:repeat(7,1fr);font-size:5.6cqmin;text-align:center;row-gap:1.4cqmin}
+.wcg i{font-style:normal;opacity:.55;padding-bottom:1cqmin}
+.wcg span{aspect-ratio:1/1;display:flex;align-items:center;justify-content:center}
+.widget .wgt{width:min(86vw,340px)}
+.widget .wgt.w2{width:min(94vw,520px)}
+#sheet .wgt{width:100%;cursor:default}
+#wgFull{position:fixed;inset:0;z-index:90;display:none;align-items:center;justify-content:center;background:#000}
+#wgFull.open{display:flex}
+#wgFull .wgt{width:min(96vw,96vh);cursor:default}
+#wgFull .wgt.w2{width:96vw}
 
 /* ---- round buttons: every button has a colour (--gc) that drives its glow ---- */
 .round,.fab{position:relative;display:flex;align-items:center;justify-content:center;overflow:visible!important;--gc:255,159,10;transition:transform .18s cubic-bezier(.3,1.6,.5,1),box-shadow .3s ease!important}
@@ -366,7 +404,7 @@ body.light .round:not(.main){color:#1c1c1e}
 .fx.flash{background:radial-gradient(circle,rgba(var(--gc),.60) 0,rgba(var(--gc),0) 72%);animation:flash .55s ease-out forwards}
 @keyframes burst{from{opacity:.95;transform:scale(1)}to{opacity:0;transform:scale(1.75)}}
 @keyframes flash{from{opacity:1;transform:scale(.7)}to{opacity:0;transform:scale(1.25)}}
-@media (prefers-reduced-motion:reduce){#sheet.open,#sheet.open.closing{animation:none}#swGo.live,#tmGo.live{animation:none}.fx{display:none}}
+@media (prefers-reduced-motion:reduce){#sheet.open,#sheet.open.closing,#hList.swL,#hList.swR{animation:none}#swGo.live,#tmGo.live{animation:none}.fx{display:none}}
 
 .phead button{color:var(--accent)!important}
 #nav button{transition:background-color .14s ease,opacity .14s ease,transform .1s ease!important}
@@ -396,8 +434,9 @@ function loadWidgets() {
 }
 function saveWidgets() { writeJson(KEY, widgets); }
 
-// alarms: days = weekdays 0-6 (Sun-Sat); an empty list means "once".
-// Older saved alarms (daily true/false) are converted here.
+// alarm: { id, time 'HH:MM', on, days [0-6, Sun-Sat] (empty = once), label, last, sn, sc }
+// sn = snooze minutes (0 = no snooze), sc = max snoozes (0 = unlimited).
+// A missing sn / sc means "use the default from Settings".
 function loadAlarms() {
   const a = readJson(AKEY);
   if (!Array.isArray(a)) return [];
@@ -407,7 +446,7 @@ function loadAlarms() {
   });
   return a;
 }
-function saveAlarms() { writeJson(AKEY, alarms); }
+function saveAlarms() { writeJson(AKEY, alarms); schedSoon(); }
 
 function defaultQuick() {
   return [
@@ -424,7 +463,8 @@ function saveQuick() { writeJson(QKEY, quick); }
 function loadGlobal() {
   const g = {
     bg: '#000000', bgLight: '#f2f2f7', theme: 'dark', awake: false, font: 'sf', country: 'auto',
-    alarmTone: 't31', timerTone: 't43', swTone: 'off', customName: '', upFilter: 'all', alarmFmt: '12'
+    alarmTone: 't31', timerTone: 't43', swTone: 'off', customName: '', upFilter: 'all', alarmFmt: '12',
+    snoozeMin: 5, snoozeMax: 3, wgFmt: '24'
   };
   const s = readJson(GKEY);
   return s && typeof s === 'object' ? Object.assign(g, s) : g;
@@ -449,7 +489,7 @@ function loadMyPlace() {
 }
 function saveMyPlace() { writeJson(PLKEY, myPlace); }
 
-function saveTm() { writeJson(TKEY, tm); }
+function saveTm() { writeJson(TKEY, tm); schedSoon(); }
 
 /* ---- IndexedDB: keeps the custom tone file ---- */
 function idbRun(mode, fn) {
@@ -471,9 +511,7 @@ function idbDel(k) { return idbRun('readwrite', function (s) { return s.delete(k
 
 /* ==========================================================================
    5. SHEET SYSTEM & UI BLOCKS
-   --------------------------------------------------------------------------
-   Every sheet is the same pop-in card. Small helpers build the grouped,
-   iOS-style layout: head() sec() seg() swatches() pick()
+   Every sheet is the same pop-in card. Helpers: head() sec() seg() swatches() pick()
    ========================================================================== */
 function openSheet(html, kind, origin) {
   clearTimeout(closeTimer);
@@ -546,6 +584,13 @@ function navRow(attrs, label, value) {
     (value ? '<span class="v">' + value + '</span>' : '') + '</button>';
 }
 
+// a row of preset chips (same look as the weekday chips)
+function chipRow(id, list, cur) {
+  return '<div class="days" id="' + id + '">' + list.map(function (c) {
+    return '<button class="dchip' + (String(c[0]) === String(cur) ? ' on' : '') + '" data-v="' + c[0] + '">' + c[1] + '</button>';
+  }).join('') + '</div>';
+}
+
 // segmented control or swatch row: marks the tapped button and reports its value
 function pick(id, fn) {
   const box = $(id);
@@ -568,11 +613,48 @@ function bindToggle(id, on, fn) {
   };
 }
 
+/* ---- snooze fields (used by Settings and by the alarm editor) ---- */
+const SN_MIN = [[0, 'Off'], [1, '1'], [5, '5'], [10, '10'], [15, '15'], [30, '30']];
+const SN_CNT = [[1, '1'], [2, '2'], [3, '3'], [5, '5'], [0, '&infin;']];
+
+function snoozeHtml(sn, sc) {
+  return sec('Snooze',
+    '<div class="li"><span class="k">Length (minutes)</span><input type="number" id="snMin" class="inp" min="0" max="120" inputmode="numeric" value="' + sn + '"></div>' +
+    chipRow('snMinC', SN_MIN, sn) +
+    '<div class="li"><span class="k">Max snoozes</span><input type="number" id="snCnt" class="inp" min="0" max="99" inputmode="numeric" value="' + sc + '"></div>' +
+    chipRow('snCntC', SN_CNT, sc),
+    'Type any number. 0 minutes = no snooze. 0 snoozes = unlimited.');
+}
+
+function readSnooze() {
+  return { sn: clampN($('snMin').value, 0, 120), sc: clampN($('snCnt').value, 0, 99) };
+}
+
+function bindSnooze(fn) {
+  [['snMin', 'snMinC'], ['snCnt', 'snCntC']].forEach(function (p) {
+    function mark() {
+      const v = String(clampN($(p[0]).value, 0, 999));
+      $(p[1]).querySelectorAll('[data-v]').forEach(function (b) { b.classList.toggle('on', b.dataset.v === v); });
+    }
+    $(p[1]).onclick = function (e) {
+      const b = e.target.closest ? e.target.closest('[data-v]') : null;
+      if (!b) return;
+      $(p[0]).value = b.dataset.v;
+      mark();
+      haptic(6);
+      if (fn) fn(readSnooze());
+    };
+    $(p[0]).oninput = function () { mark(); if (fn) fn(readSnooze()); };
+  });
+}
+
 /* ==========================================================================
    6. TONES & RINGING
    --------------------------------------------------------------------------
-   50 built-in tones (made by the browser, so they work offline)
-   + one custom tone from your own audio file.
+   50 built-in tones are drawn by the browser into a small WAV file and played
+   with a normal <audio> element. That is what lets a ringing alarm take the
+   audio focus from music or video, show on the lock screen (Media Session)
+   and keep going while the screen is off. One custom tone from your own file.
    S(notes, step, length) builds a note list: [midi, start s, length s]
    w = wave   ov = [overtone ratio, gain]   env = 'soft'   g0 = loudness
    ========================================================================== */
@@ -648,10 +730,10 @@ const TONE_KINDS = {
   sw: { key: 'swTone', label: 'Stopwatch lap', title: 'Stopwatch tone' }
 };
 
-let toneMaster = null;
-let toneSrc = null;
-let toneTimer = null;
-let customBuf = null;
+const SILENCE = 'data:audio/wav;base64,UklGRigAAABXQVZFZm10IBAAAAABAAEARKwAAIhYAQACABAAZGF0YQQAAAAAAAA=';
+const toneUrls = {};
+let toneEl = null;
+let toneSeq = 0;
 
 function toneById(id) {
   for (let i = 0; i < TONES.length; i++) if (TONES[i].id === id) return TONES[i];
@@ -664,39 +746,16 @@ function toneName(id) {
   return toneById(id).name;
 }
 
+// the first tap on the page "unlocks" audio so later alarms are allowed to play
 function unlockAudio() {
-  try {
-    if (!actx) actx = new (window.AudioContext || window.webkitAudioContext)();
-    if (actx.state === 'suspended') actx.resume();
-  } catch (e) {}
+  try { const a = new Audio(SILENCE); a.volume = 0.01; a.play().catch(function () {}); } catch (e) {}
 }
 
-function beep() {
-  if (!actx) return;
-  try {
-    const o = actx.createOscillator();
-    const g = actx.createGain();
-    o.type = 'sine';
-    o.frequency.value = 880;
-    g.gain.value = 0.25;
-    o.connect(g);
-    g.connect(actx.destination);
-    o.start();
-    o.stop(actx.currentTime + 0.25);
-  } catch (e) {}
-}
-
-function stopTone() {
-  clearInterval(toneTimer);
-  toneTimer = null;
-  if (toneSrc) { try { toneSrc.stop(); } catch (e) {} toneSrc = null; }
-  if (toneMaster) { try { toneMaster.disconnect(); } catch (e) {} toneMaster = null; }
-}
-
-function voice(out, t0, midi, d, tone) {
+// one note, drawn into any (offline) audio context
+function voice(ctx, out, t0, midi, d, tone) {
   const f = 440 * Math.pow(2, (midi - 69) / 12);
   const peak = tone.g0 || 0.3;
-  const g = actx.createGain();
+  const g = ctx.createGain();
   g.gain.setValueAtTime(0.0001, t0);
   if (tone.env === 'soft') {
     g.gain.linearRampToValueAtTime(peak, t0 + 0.04);
@@ -708,7 +767,7 @@ function voice(out, t0, midi, d, tone) {
   }
   g.connect(out);
 
-  const o = actx.createOscillator();
+  const o = ctx.createOscillator();
   o.type = tone.w || 'sine';
   o.frequency.value = f;
   o.connect(g);
@@ -716,8 +775,8 @@ function voice(out, t0, midi, d, tone) {
   o.stop(t0 + d + 0.3);
 
   if (tone.ov) {
-    const o2 = actx.createOscillator();
-    const g2 = actx.createGain();
+    const o2 = ctx.createOscillator();
+    const g2 = ctx.createGain();
     o2.type = 'sine';
     o2.frequency.value = f * tone.ov[0];
     g2.gain.value = tone.ov[1];
@@ -728,79 +787,174 @@ function voice(out, t0, midi, d, tone) {
   }
 }
 
-function getCustomBuffer() {
-  if (customBuf) return Promise.resolve(customBuf);
-  return idbGet('custom').then(function (data) {
-    return data ? actx.decodeAudioData(data.slice(0)) : null;
-  }).then(function (b) {
-    customBuf = b || null;
-    return customBuf;
-  }).catch(function () { return null; });
+function wavUrl(buf) {
+  const d = buf.getChannelData(0);
+  const n = d.length;
+  const v = new DataView(new ArrayBuffer(44 + n * 2));
+  function w(o, s) { for (let i = 0; i < s.length; i++) v.setUint8(o + i, s.charCodeAt(i)); }
+  w(0, 'RIFF'); v.setUint32(4, 36 + n * 2, true); w(8, 'WAVEfmt ');
+  v.setUint32(16, 16, true); v.setUint16(20, 1, true); v.setUint16(22, 1, true);
+  v.setUint32(24, buf.sampleRate, true); v.setUint32(28, buf.sampleRate * 2, true);
+  v.setUint16(32, 2, true); v.setUint16(34, 16, true); w(36, 'data'); v.setUint32(40, n * 2, true);
+  for (let i = 0; i < n; i++) {
+    const s = Math.max(-1, Math.min(1, d[i]));
+    v.setInt16(44 + i * 2, s < 0 ? s * 32768 : s * 32767, true);
+  }
+  return URL.createObjectURL(new Blob([v], { type: 'audio/wav' }));
 }
 
-// returns false when nothing could be played
-function playTone(id, loop) {
-  stopTone();
-  unlockAudio();
-  if (!actx) return false;
-
-  const master = actx.createGain();
-  master.connect(actx.destination);
-  toneMaster = master;
-
+// one cycle of a tone (with a short pause at the end so a loop sounds natural)
+function toneUrl(id) {
+  if (toneUrls[id]) return Promise.resolve(toneUrls[id]);
   if (id === 'custom') {
-    getCustomBuffer().then(function (buf) {
-      if (toneMaster !== master) return;
-      if (!buf) { playTone(TONES[0].id, loop); return; }
-      const s = actx.createBufferSource();
-      s.buffer = buf;
-      s.loop = !!loop;
-      s.connect(master);
-      s.start();
-      toneSrc = s;
+    return idbGet('custom').then(function (data) {
+      return data ? (toneUrls.custom = URL.createObjectURL(new Blob([data]))) : null;
     });
-    return true;
   }
-
+  const Off = window.OfflineAudioContext || window.webkitOfflineAudioContext;
+  if (!Off) return Promise.resolve(null);
   const t = toneById(id);
   let end = 0;
   t.n.forEach(function (x) { end = Math.max(end, x[1] + x[2]); });
+  const rate = 32000;
+  const ctx = new Off(1, Math.ceil((end + 1.1) * rate), rate);
+  t.n.forEach(function (x) { voice(ctx, ctx.destination, 0.02 + x[1], x[0], x[2], t); });
+  return ctx.startRendering().then(function (buf) { return (toneUrls[id] = wavUrl(buf)); });
+}
 
-  function cycle() {
-    if (toneMaster !== master) return;
-    const t0 = actx.currentTime + 0.02;
-    t.n.forEach(function (x) { voice(master, t0 + x[1], x[0], x[2], t); });
-  }
-  cycle();
-  if (loop) toneTimer = setInterval(cycle, (end + 0.7) * 1000);
-  return true;
+function stopTone() {
+  toneSeq++;
+  if (toneEl) { try { toneEl.pause(); } catch (e) {} toneEl = null; }
+}
+
+// resolves true when the sound really started
+function playTone(id, loop) {
+  stopTone();
+  const my = toneSeq;
+  return toneUrl(id).then(function (url) {
+    if (my !== toneSeq) return false;
+    if (!url) return id === 'custom' ? playTone(TONES[0].id, loop) : false;
+    const a = new Audio(url);
+    a.loop = !!loop;
+    toneEl = a;
+    return a.play().then(function () { return true; });
+  }).catch(function () { return false; });
 }
 
 function stopPreview() { if (!ringOn) stopTone(); }
 
-function startRing(title, snoozeFn, toneId) {
-  stopRing();
-  ringOn = true;
-  $('ringTitle').textContent = title;
-  $('ringSnooze').style.display = snoozeFn ? 'inline-block' : 'none';
-  ringSnoozeFn = snoozeFn;
-  $('ring').classList.add('open');
-  if (document.hidden) notify(title, 'Tap to open the clock', 'clock-ring');
+/* ---- ringing: alarm, snooze, timer ----
+   ctx = { kind 'alarm'|'timer', id, title, tone, sn, sc, used }              */
+function alarmCtx(a, used) {
+  return {
+    kind: 'alarm', id: a.id, used: used || 0,
+    title: (a.label || 'Alarm') + ' ' + fmtClock(a.time, alarmFmt()),
+    tone: globalSet.alarmTone,
+    sn: a.sn == null ? globalSet.snoozeMin : a.sn,
+    sc: a.sc == null ? globalSet.snoozeMax : a.sc
+  };
+}
 
-  const ok = playTone(toneId || TONES[0].id, true);
+function ringActionFor(c) {
+  if (c.kind === 'timer') return { label: 'Restart', fn: restartTimer };
+  if (c.sn > 0 && (!c.sc || c.used < c.sc)) {
+    return { label: 'Snooze ' + c.sn + ' min' + (c.sc ? ' \u00b7 ' + (c.sc - c.used) + ' left' : ''), fn: snoozeNow };
+  }
+  return null;
+}
+
+function setSnooze(s) {
+  snz = s;
+  writeJson(SKEY, s);
+  schedSoon();
+}
+
+function snoozeNow() {
+  const c = ringCtx;
+  if (!c) return;
+  const next = Object.assign({}, c, { used: c.used + 1 });
+  stopRing();
+  setSnooze({ at: Date.now() + c.sn * 60000, ctx: next });
+  toast('Snoozed for ' + c.sn + ' min');
+}
+
+function restartTimer() {
+  stopRing();
+  tm.remaining = tm.total;
+  tm.endAt = Date.now() + tm.total;
+  tm.running = tm.total > 0;
+  saveTm(); renderTm();
+}
+
+// lock-screen media controls while ringing
+function setMedia(on, title) {
+  if (!('mediaSession' in navigator)) return;
+  try {
+    const ms = navigator.mediaSession;
+    if (on) {
+      ms.metadata = new MediaMetadata({ title: title, artist: 'Clock' });
+      ms.setActionHandler('pause', function () { stopRing(); });
+      ms.setActionHandler('stop', function () { stopRing(); });
+      ms.setActionHandler('nexttrack', ringAction ? function () { ringAction.fn(); } : null);
+    } else {
+      ms.metadata = null;
+      ['pause', 'stop', 'nexttrack'].forEach(function (a) { ms.setActionHandler(a, null); });
+    }
+  } catch (e) {}
+}
+
+function startRing(c) {
+  stopRing();
+  ringCtx = c;
+  ringOn = true;
+  ringAction = ringActionFor(c);
+  const title = c.used ? c.title + ' \u00b7 snoozed' : c.title;
+
+  $('ringTitle').textContent = title;
+  const b = $('ringSnooze');
+  b.style.display = ringAction ? 'inline-block' : 'none';
+  if (ringAction) b.textContent = ringAction.label;
+  $('ring').classList.add('open');
+
+  const acts = [{ action: 'stop', title: 'Stop' }];
+  if (ringAction) acts.unshift({ action: c.kind === 'timer' ? 'again' : 'snooze', title: c.kind === 'timer' ? 'Restart' : 'Snooze' });
+  if (document.hidden || !document.hasFocus()) {
+    notify(title, 'Tap to open the clock', 'clock-ring', { silent: true, actions: acts, data: { kind: c.kind, id: c.id || '' } });
+  }
+
+  playTone(c.tone || TONES[0].id, true);
   haptic(300);
-  ringTimer = setInterval(function () {
-    if (!ok) beep();
-    haptic(300);
-  }, 900);
+  ringTimer = setInterval(function () { haptic(300); }, 900);
+  setAwake(true);
+  setMedia(true, title);
 }
 
 function stopRing() {
   ringOn = false;
-  closeNotif('clock-ring');
+  ringCtx = null;
+  ringAction = null;
+  closeNotifs();
   if (ringTimer) { clearInterval(ringTimer); ringTimer = null; }
   stopTone();
+  setMedia(false);
   $('ring').classList.remove('open');
+  if (!globalSet.awake) setAwake(false);
+}
+
+// buttons on the notification (lock screen / notification centre) come here
+function handleRingAction(action, kind, id) {
+  if (ringOn && ringCtx) {
+    if (action === 'stop') stopRing();
+    else if (action && ringAction) ringAction.fn();
+    return;
+  }
+  if (action === 'snooze' && kind === 'alarm') {
+    const a = alarms.find(function (x) { return x.id === id; });
+    const c = a ? alarmCtx(a, 1) : null;
+    if (c && c.sn > 0) setSnooze({ at: Date.now() + c.sn * 60000, ctx: c });
+  } else if (action === 'again' && kind === 'timer' && tm.total > 0) {
+    restartTimer();
+  }
 }
 
 /* ---- tone picker sheet ---- */
@@ -858,11 +1012,11 @@ function openToneSheet(kind) {
     const f = e.target.files && e.target.files[0];
     if (!f) return;
     if (f.size > 8 * 1024 * 1024) { toast('File is too big (max 8 MB)'); return; }
-    unlockAudio();
+    const Off = window.OfflineAudioContext || window.webkitOfflineAudioContext;
     f.arrayBuffer().then(function (buf) {
-      return actx.decodeAudioData(buf.slice(0)).then(function () { return idbSet('custom', buf); });
+      return new Off(1, 1, 44100).decodeAudioData(buf.slice(0)).then(function () { return idbSet('custom', buf); });
     }).then(function () {
-      customBuf = null;
+      delete toneUrls.custom;
       globalSet.customName = f.name.length > 30 ? f.name.slice(0, 27) + '...' : f.name;
       choose('custom');
     }).catch(function () { toast('This file cannot be played'); });
@@ -870,7 +1024,7 @@ function openToneSheet(kind) {
 
   $('tnDel').onclick = function () {
     idbDel('custom').catch(function () {});
-    customBuf = null;
+    delete toneUrls.custom;
     globalSet.customName = '';
     if (globalSet.alarmTone === 'custom') globalSet.alarmTone = 't31';
     if (globalSet.timerTone === 'custom') globalSet.timerTone = 't43';
@@ -969,8 +1123,11 @@ function newWidget(type) {
   if (type === 'classic') return Object.assign(base, { size: 14 });
   if (type === 'date') return Object.assign(base, { size: 14 });
   if (type === 'home') return Object.assign(base, { size: 12, hour12: false, retro: false });
+  if (isDesign(type)) return base;
   return Object.assign(base, { size: 12, hour12: false, retro: false, zone: '', city: '' });
 }
+
+function isDesign(type) { return String(type).indexOf('wg:') === 0; }
 
 function analogSvg() {
   let ticks = '';
@@ -1061,7 +1218,7 @@ function offsetText(w, zone, now) {
     let t = 'GMT' + (off < 0 ? '-' : '+') + Math.floor(a / 60) + (a % 60 ? ':' + pad(a % 60) : '');
     if (w.type === 'world') {
       const diff = off - tzOffsetMin(deviceZone(), now);
-      t += ' · ' + (diff === 0 ? 'same time as you' : hm(diff) + (diff > 0 ? ' ahead of you' : ' behind you'));
+      t += ' \u00b7 ' + (diff === 0 ? 'same time as you' : hm(diff) + (diff > 0 ? ' ahead of you' : ' behind you'));
     }
     return t;
   } catch (e) { return ''; }
@@ -1226,7 +1383,8 @@ function buildWidget(w) {
   el.dataset.id = w.id;
   el.dataset.type = w.type;
   let inner;
-  if (w.type === 'digital') inner = '<div class="time"></div>';
+  if (isDesign(w.type)) inner = wgtHtml(w.type.slice(3));
+  else if (w.type === 'digital') inner = '<div class="time"></div>';
   else if (isZoneWidget(w)) inner = '<div class="wlabel">' + esc(placeLabel(w)) +
     '</div><div class="time"></div><div class="wlabel wdate"></div><div class="wlabel wdate woff"></div>';
   else if (w.type === 'analog') inner = analogSvg();
@@ -1259,6 +1417,7 @@ function setClassic(el, now) {
 }
 
 function updateWidget(w, el, now) {
+  if (isDesign(w.type)) return;   // designs are painted by paintAll()
   if (w.type === 'digital' || isZoneWidget(w)) {
     const zone = isZoneWidget(w) ? zoneOf(w) : null;
     const str = fmtTime(now, w, zone);
@@ -1294,6 +1453,7 @@ function tick() {
     const el = widgetEl(w.id);
     if (el) updateWidget(w, el, now);
   });
+  paintAll(now);
 }
 
 function sweepLoop() {
@@ -1320,7 +1480,366 @@ function renderAll() {
 }
 
 /* ==========================================================================
-   9. SETTINGS
+   9. WIDGET DESIGNS + WIDGETS TAB
+   --------------------------------------------------------------------------
+   Every design is a function of the time that returns HTML. The tile is a CSS
+   container, so sizes are written in cqmin (1 = 1% of the tile's short side)
+   and every design scales with the tile. One painter updates all copies (the
+   Widgets tab, the Home tab, previews, full screen) once per second.
+   ========================================================================== */
+const FONT57 = {
+  '0': '01110 10001 10011 10101 11001 10001 01110', '1': '00100 01100 00100 00100 00100 00100 01110',
+  '2': '01110 10001 00001 00010 00100 01000 11111', '3': '11110 00001 00001 01110 00001 00001 11110',
+  '4': '00010 00110 01010 10010 11111 00010 00010', '5': '11111 10000 11110 00001 00001 10001 01110',
+  '6': '00110 01000 10000 11110 10001 10001 01110', '7': '11111 00001 00010 00100 01000 01000 01000',
+  '8': '01110 10001 10001 01110 10001 10001 01110', '9': '01110 10001 10001 01111 00001 00010 01100'
+};
+const BLOB = 'M32 6H68C80 6 84 16 86 26C87 32 94 36 94 50C94 64 87 68 86 74C84 84 80 94 68 94H32C20 94 16 84 14 74C13 68 6 64 6 50C6 36 13 32 14 26C16 16 20 6 32 6Z';
+const SERIF = "font-family:'Playfair Display',Georgia,serif!important;";
+const FLEXC = 'display:flex;align-items:center;justify-content:center;';
+let agMemo = { k: '', list: [] };
+
+function wh(n) { const h = n.getHours(); return pad(globalSet.wgFmt === '12' ? (h % 12) || 12 : h); }
+function wd(n, o) { return n.toLocaleDateString('en-GB', o); }
+function pol(a, r, cx, cy) {
+  const t = a * Math.PI / 180;
+  return [+((cx == null ? 100 : cx) + r * Math.sin(t)).toFixed(1), +((cy == null ? 100 : cy) - r * Math.cos(t)).toFixed(1)];
+}
+function ln(x1, y1, x2, y2, col, w) {
+  return '<line x1="' + x1 + '" y1="' + y1 + '" x2="' + x2 + '" y2="' + y2 + '" stroke="' + col + '" stroke-width="' + w + '" stroke-linecap="round"/>';
+}
+function hand(a, tail, len, w, col, cx, cy) {
+  const p = pol(a, len, cx, cy), q = pol(a, -tail, cx, cy);
+  return ln(q[0], q[1], p[0], p[1], col, w);
+}
+function ang(n) {
+  const s = n.getSeconds(), m = n.getMinutes() + s / 60, h = (n.getHours() % 12) + m / 60;
+  return { h: h * 30, m: m * 6, s: s * 6 };
+}
+function mix(a, b, t) {
+  const p = function (s) { return [1, 3, 5].map(function (i) { return parseInt(s.substr(i, 2), 16); }); };
+  const x = p(a), y = p(b);
+  return 'rgb(' + x.map(function (v, i) { return Math.round(v + (y[i] - v) * t); }).join(',') + ')';
+}
+
+// 5x7 pixel text as squares or dots, with an optional colour gradient
+function matrix(str, square, c1, c2) {
+  const ch = str.split('');
+  const W = ch.reduce(function (w, c) { return w + (c === ':' ? 2 : 6); }, -1);
+  let x = 0, o = '';
+  function cell(cx, r) {
+    const f = c2 ? mix(c1, c2, (cx + 0.5) / W) : c1;
+    o += square
+      ? '<rect x="' + (cx + 0.07) + '" y="' + (r + 0.07) + '" width=".86" height=".86" rx=".14" fill="' + f + '"/>'
+      : '<circle cx="' + (cx + 0.5) + '" cy="' + (r + 0.5) + '" r=".42" fill="' + f + '"/>';
+  }
+  ch.forEach(function (c) {
+    if (c === ':') { cell(x, 2); cell(x, 4); x += 2; return; }
+    FONT57[c].split(' ').forEach(function (row, r) {
+      for (let i = 0; i < 5; i++) if (row.charAt(i) === '1') cell(x + i, r);
+    });
+    x += 6;
+  });
+  return '<svg viewBox="0 0 ' + W + ' 7" style="width:84%">' + o + '</svg>';
+}
+
+function ray(a, f1, f2, col, w) {
+  const t = a * Math.PI / 180, dx = Math.sin(t), dy = -Math.cos(t);
+  const T = Math.min(dx ? 88 / Math.abs(dx) : 1e9, dy ? 40 / Math.abs(dy) : 1e9);
+  return ln((100 + dx * T * f1).toFixed(1), (50 + dy * T * f1).toFixed(1), (100 + dx * T * f2).toFixed(1), (50 + dy * T * f2).toFixed(1), col, w);
+}
+
+function blobSv(txt) {
+  return '<svg viewBox="0 0 100 100" style="width:34cqmin;height:34cqmin"><path d="' + BLOB + '" fill="#c6f56b"/>' +
+    '<text x="50" y="65" text-anchor="middle" font-size="44" fill="#111">' + txt + '</text></svg>';
+}
+
+function calHtml(n) {
+  const y = n.getFullYear(), m = n.getMonth();
+  const first = new Date(y, m, 1).getDay(), dim = new Date(y, m + 1, 0).getDate(), prev = new Date(y, m, 0).getDate();
+  const rows = Math.ceil((first + dim) / 7) * 7;
+  let cells = '';
+  for (let i = 0; i < rows; i++) {
+    const d = i - first + 1;
+    if (d < 1) cells += '<span style="opacity:.35">' + (prev + d) + '</span>';
+    else if (d > dim) cells += '<span style="opacity:.35">' + (d - dim) + '</span>';
+    else cells += '<span' + (d === n.getDate() ? ' style="background:#ff3b30;border-radius:50%"' : '') + '>' + d + '</span>';
+  }
+  return '<div style="background:#000;border-radius:9cqmin;padding:5cqmin;width:82cqmin">' +
+    '<div style="display:flex;justify-content:space-between;font-size:6.4cqmin;margin-bottom:2cqmin"><span style="color:#ff3b30">' +
+    wd(n, { month: 'long' }).toUpperCase() + '</span><span>' + y + '</span></div>' +
+    '<div class="wcg">' + 'SMTWTFS'.split('').map(function (x) { return '<i>' + x + '</i>'; }).join('') + cells + '</div></div>';
+}
+
+function agendaHtml(n) {
+  const today = new Date(n.getFullYear(), n.getMonth(), n.getDate());
+  const k = dayKey(today) + detectCountry();
+  if (agMemo.k !== k) agMemo = { k: k, list: getUpcoming(today) };
+  const l = agMemo.list;
+  const e = l[0];
+  const more = l.filter(function (x) { return x.diff <= 30; }).length - 1;
+  let ev = '<div style="font-size:6.4cqmin;opacity:.6">No upcoming dates</div>';
+  if (e) {
+    ev = '<div style="border-left:1.2cqmin solid #9a7ad8;background:rgba(154,122,216,.2);border-radius:2.4cqmin;padding:2.4cqmin 3.4cqmin">' +
+      '<div style="font-size:6.6cqmin;line-height:1.2">' + esc(e.n) + '</div><div style="font-size:5cqmin;opacity:.65;margin-top:.6cqmin">' +
+      (e.diff === 0 ? 'Today' : e.diff === 1 ? 'Tomorrow' : 'In ' + e.diff + ' days') + '</div></div>' +
+      (more > 0 ? '<div style="margin-top:2.6cqmin;font-size:5.4cqmin;color:#b79bea">' + more + ' more event' + (more > 1 ? 's' : '') + '</div>' : '');
+  }
+  return '<div style="background:#0c0d10;border-radius:10cqmin;padding:7cqmin 6cqmin;width:80cqmin">' +
+    '<div style="font-size:6.2cqmin;letter-spacing:.06em;color:#c9bdf0">' + wd(n, { weekday: 'long' }).toUpperCase() + '</div>' +
+    '<div style="font-size:15cqmin;line-height:1;margin:1cqmin 0 3.4cqmin">' + n.getDate() + '</div>' + ev + '</div>';
+}
+
+const WG = [
+  { id: 'blob', n: 'Blob', h: function (n) {
+    return '<div class="wcol"><div class="wrow" style="gap:4cqmin">' + blobSv(wh(n)) +
+      '<div style="' + FLEXC + 'width:34cqmin;height:34cqmin;border:1.3cqmin solid #c6f56b;border-radius:9cqmin;font-size:15cqmin">' + pad(n.getMinutes()) + '</div></div>' +
+      '<div style="margin-top:5cqmin;font-size:5.6cqmin;letter-spacing:.04em">' + wd(n, { weekday: 'long' }).toUpperCase() + ' \u2022 ' +
+      wd(n, { day: '2-digit', month: 'short' }).toUpperCase() + '</div></div>';
+  } },
+  { id: 'quad', n: 'Quad', h: function (n) {
+    const c = FLEXC + 'width:31cqmin;height:31cqmin;font-size:15cqmin;';
+    return '<div style="display:grid;grid-template-columns:auto auto;gap:3cqmin">' +
+      '<div style="' + c + 'background:#ececec;color:#333;border-radius:50%/58% 58% 42% 42%">' + wh(n) + '</div>' +
+      '<div style="' + c + 'border:1.2cqmin solid #ddd;border-radius:9cqmin">' + pad(n.getMinutes()) + '</div>' +
+      '<div style="' + c + 'background:#000;color:#aaa;border-radius:50%">' + pad(n.getSeconds()) + '</div>' +
+      '<div style="' + c + 'background:#000;color:#bbb;font-size:11cqmin;border-radius:36% 64% 64% 36%/36% 36% 64% 64%">' +
+      wd(n, { weekday: 'short' }).toUpperCase() + '</div></div>';
+  } },
+  { id: 'brush', n: 'Brush', w2: 1, h: function (n) {
+    const A = 'position:absolute;line-height:1;white-space:nowrap;';
+    return "<div style=\"position:relative;width:100%;height:100%;font-family:'Permanent Marker','Poppins',cursive!important\">" +
+      '<div style="' + A + 'left:22%;top:5%;font-size:58cqmin;color:#d9f66f">' + wh(n) + '</div>' +
+      '<div style="' + A + 'left:43%;top:27%;font-size:58cqmin;color:#d9f66f">' + pad(n.getMinutes()) + '</div>' +
+      '<div style="' + A + 'left:60%;top:9%;font-size:15cqmin;color:#fbf3e6">' + wd(n, { month: 'long' }).toUpperCase() + '</div>' +
+      '<div style="' + A + FLEXC + 'left:79%;top:30%;width:22cqmin;height:22cqmin;border-radius:50%;background:#fbf3e6;color:#111;font-size:13cqmin">' + n.getDate() + '</div>' +
+      '<div style="' + A + 'left:7%;top:57%;font-size:7cqmin;color:#fbf3e6">TODAY IS</div>' +
+      '<div style="' + A + 'left:6%;top:66%;font-size:12cqmin;color:#111;background:#fbf3e6;border-radius:9cqmin;padding:1.6cqmin 5cqmin;transform:rotate(-4deg)">' +
+      wd(n, { weekday: 'long' }).toUpperCase() + '</div></div>';
+  } },
+  { id: 'outline', n: 'Outline', h: function (n) {
+    const cols = ['#ffffff', '#c9d1d5'];
+    let i = 0;
+    return '<div style="font-size:27cqmin;letter-spacing:-.02em;-webkit-text-stroke:.9cqmin #6c7378;paint-order:stroke fill">' +
+      (wh(n) + ':' + pad(n.getMinutes())).split('').map(function (c) {
+        return '<span style="color:' + (c === ':' ? cols[1] : cols[i++ % 2]) + '">' + c + '</span>';
+      }).join('') + '</div>';
+  } },
+  { id: 'serif', n: 'Serif split', h: function (n) {
+    return '<div class="wcol" style="' + SERIF + '"><div class="wrow" style="gap:3cqmin;font-size:30cqmin;line-height:1;color:#eaf6ff">' +
+      '<span>' + wh(n) + '</span><span style="width:.7cqmin;height:22cqmin;background:#778"></span><span>' + pad(n.getMinutes()) + '</span></div>' +
+      '<div style="margin-top:4cqmin;font-size:6cqmin;font-family:var(--sf)!important">' + wd(n, { day: 'numeric', month: 'short' }) + ', ' + wd(n, { weekday: 'long' }) + '</div></div>';
+  } },
+  { id: 'dial1', n: 'Black dial', h: function (n) {
+    const a = ang(n);
+    let w = '';
+    [1, 2, 4, 5, 7, 8, 10, 11].forEach(function (k) {
+      w += '<polygon points="' + [pol(k * 30 - 5, 92), pol(k * 30 + 5, 92), pol(k * 30, 70)].map(function (p) { return p.join(','); }).join(' ') + '" fill="#eee"/>';
+    });
+    return '<svg viewBox="0 0 200 200" style="width:86cqmin"><circle cx="100" cy="100" r="98" fill="#000"/>' + w +
+      '<g fill="#eee" font-size="40" text-anchor="middle"><text x="100" y="52">0</text><text x="156" y="114">3</text><text x="100" y="178">6</text><text x="44" y="114">9</text></g>' +
+      hand(a.h, 8, 48, 11, '#dcdcdc') + hand(a.h, 8, 45, 5, '#000') + hand(a.m, 8, 76, 9, '#dcdcdc') + hand(a.m, 8, 73, 3.4, '#000') +
+      hand(a.s, 16, 82, 1.6, '#aaa') + '<circle cx="100" cy="100" r="6" fill="#bbb"/></svg>';
+  } },
+  { id: 'dial2', n: 'White dial', h: function (n) {
+    const a = ang(n);
+    let r = '', t = '';
+    for (let k = 0; k < 12; k++) { const p = pol(k * 30, 24), q = pol(k * 30, 98); r += ln(p[0], p[1], q[0], q[1], '#888', 0.8); }
+    [[12, 0], [2, 60], [4, 120], [6, 180], [8, 240], [10, 300]].forEach(function (x) {
+      const p = pol(x[1], 68);
+      const rot = (x[1] === 0 || x[1] === 180) ? 0 : (x[1] > 90 && x[1] < 270 ? x[1] - 180 : x[1]);
+      t += '<text x="' + p[0] + '" y="' + (p[1] + 11) + '" transform="rotate(' + rot + ' ' + p[0] + ' ' + p[1] + ')">' + x[0] + '</text>';
+    });
+    return '<svg viewBox="0 0 200 200" style="width:86cqmin"><circle cx="100" cy="100" r="98" fill="#e9e9ec"/>' + r +
+      '<g fill="#161616" font-size="32" text-anchor="middle">' + t + '</g>' +
+      hand(a.h, 8, 46, 6, '#1a1a1a') + hand(a.m, 8, 78, 4, '#1a1a1a') + hand(a.s, 18, 88, 1.4, '#1a1a1a') +
+      '<circle cx="100" cy="100" r="4.5" fill="#1a1a1a"/></svg>';
+  } },
+  { id: 'stack', n: 'Stack', h: function (n) {
+    const h = wh(n), m = pad(n.getMinutes()), d = [h[0], h[1], m[0], m[1]], c = ['#ffffff', '#e6c8ee', '#cbbcf2', '#ffffff'];
+    const cell = function (i) { return '<span style="color:' + c[i] + '">' + d[i] + '</span>'; };
+    return '<div style="font-size:47cqmin;line-height:.8;letter-spacing:-.04em;text-align:center;-webkit-text-stroke:.9cqmin #555;paint-order:stroke fill">' +
+      '<div>' + cell(0) + cell(1) + '</div><div>' + cell(2) + cell(3) + '</div></div>';
+  } },
+  { id: 'dial3', n: 'Purple dial', h: function (n) {
+    const a = ang(n);
+    let t = '';
+    for (let k = 0; k < 12; k++) {
+      if (k % 3 === 0) continue;
+      const p = pol(k * 30, 80), q = pol(k * 30, 96);
+      t += ln(p[0], p[1], q[0], q[1], '#b6f46f', 5);
+    }
+    return '<svg viewBox="0 0 200 200" style="width:86cqmin"><circle cx="100" cy="100" r="98" fill="#3f2397"/>' + t +
+      '<g fill="#b6f46f" font-size="40" text-anchor="middle"><text x="100" y="52">12</text><text x="44" y="114">9</text><text x="100" y="178">6</text></g>' +
+      '<rect x="134" y="87" width="38" height="26" rx="4" fill="none" stroke="#fff" stroke-width="2"/>' +
+      '<text x="153" y="107" font-size="20" fill="#fff" text-anchor="middle">' + n.getDate() + '</text>' +
+      hand(a.h, 8, 56, 14, '#b6f46f') + hand(a.m, 10, 84, 3.4, '#fff') + hand(a.s, 16, 86, 1.2, '#8fb27c') +
+      '<circle cx="100" cy="100" r="5" fill="#3f2397"/></svg>';
+  } },
+  { id: 'serifdate', n: 'Serif date', h: function (n) {
+    return '<div class="wcol" style="' + SERIF + '"><div style="font-size:6.6cqmin;color:#cfd3f5;font-family:var(--sf)!important">' +
+      wd(n, { weekday: 'long' }) + ', ' + wd(n, { day: '2-digit', month: 'long' }) + '</div>' +
+      '<div style="font-size:31cqmin;line-height:1.1;color:#d4d8ff">' + wh(n) + ':' + pad(n.getMinutes()) + '</div></div>';
+  } },
+  { id: 'pixel', n: 'Pixel', h: function (n) {
+    return '<div class="wcol"><div style="margin-bottom:4cqmin;font-size:4.6cqmin;letter-spacing:.2em;opacity:.85">' +
+      wd(n, { day: '2-digit', month: 'short' }).toUpperCase() + ', ' + wd(n, { weekday: 'long' }).toUpperCase() + '</div>' +
+      matrix(wh(n) + ':' + pad(n.getMinutes()), 1, '#f5b5e3', '#a9c9ff') + '</div>';
+  } },
+  { id: 'wide', n: 'Wide dial', w2: 1, h: function (n) {
+    const a = ang(n);
+    let r = '';
+    for (let i = 0; i < 60; i++) if (i % 5) r += ray(i * 6, 0.9, 0.96, '#5a5a5a', 0.6);
+    for (let k = 0; k < 12; k++) if (k % 3) r += ray(k * 30, 0.5, 0.94, '#fff', 1.5);
+    return '<svg viewBox="0 0 200 100" style="width:94%"><rect x="2" y="2" width="196" height="96" rx="44" fill="#000"/>' + r +
+      '<g fill="#e5483f" font-size="19" text-anchor="middle"><text x="100" y="33">12</text><text x="100" y="80">6</text><text x="30" y="57">9</text><text x="172" y="57">3</text></g>' +
+      '<text x="126" y="55" font-size="9.5" fill="#fff"><tspan fill="#e5483f">' + wd(n, { weekday: 'short' }).toUpperCase() + '</tspan> ' + n.getDate() + '</text>' +
+      hand(a.h, 0, 28, 5.5, '#fff', 100, 50) + hand(a.m, 0, 40, 5.5, '#fff', 100, 50) + hand(a.s, 10, 44, 1.5, '#e5483f', 100, 50) +
+      '<circle cx="100" cy="50" r="3" fill="#000" stroke="#e5483f" stroke-width="1"/></svg>';
+  } },
+  { id: 'cal', n: 'Month calendar', h: calHtml },
+  { id: 'agenda', n: 'Agenda', h: agendaHtml },
+  { id: 'geo', n: 'Geometric', h: function (n) {
+    const h = wh(n), m = pad(n.getMinutes()), d = [h[0], h[1], m[0], m[1]];
+    const cell = function (c) {
+      const k = (+c) % 4, cx = [12, 38, 12, 38][k], cy = [12, 12, 38, 38][k];
+      return '<svg viewBox="0 0 50 50" style="width:100%"><rect x="2" y="2" width="46" height="46" rx="3" fill="none" stroke="#f0b8cc" stroke-width="1.6"/>' +
+        '<path d="M25 2V48M2 25H48" stroke="#f0b8cc" stroke-width="1.1" fill="none"/>' +
+        '<text x="25" y="37" text-anchor="middle" font-size="34" fill="none" stroke="#f0b8cc" stroke-width="1.5">' + c + '</text>' +
+        '<circle cx="' + cx + '" cy="' + cy + '" r="5" fill="#9ed49a"/></svg>';
+    };
+    return '<div style="display:grid;grid-template-columns:1fr 1fr;width:62cqmin;gap:1cqmin">' + d.map(cell).join('') + '</div>';
+  } },
+  { id: 'dot', n: 'Dot matrix', h: function (n) {
+    return '<div class="wcol">' + matrix(wh(n) + ':' + pad(n.getMinutes()), 0, '#ffffff') +
+      '<div style="margin-top:3cqmin;align-self:flex-start;margin-left:8%;font-size:5cqmin;letter-spacing:.14em;opacity:.7">' +
+      wd(n, { weekday: 'short' }).toUpperCase() + ', ' + wd(n, { day: '2-digit', month: 'short' }).toUpperCase() + '</div></div>';
+  } },
+  { id: 'ios', n: 'Date card', h: function (n) {
+    return '<div style="' + FLEXC + 'flex-direction:column;background:#fff;color:#000;width:74cqmin;height:74cqmin;border-radius:17cqmin">' +
+      '<div style="font-size:11cqmin"><span style="color:#ff3b30">' + wd(n, { weekday: 'short' }) + '</span> <span style="color:#8e8e93">' + wd(n, { month: 'short' }) + '</span></div>' +
+      '<div style="font-size:42cqmin;line-height:1">' + n.getDate() + '</div></div>';
+  } },
+  { id: 'ios2', n: 'Serif card', h: function (n) {
+    return '<div style="position:relative;' + FLEXC + 'background:#fff;color:#000;width:74cqmin;height:74cqmin;border-radius:17cqmin;' + SERIF + '">' +
+      '<span style="position:absolute;top:7cqmin;right:9cqmin;font-size:9cqmin;color:#ff3b30">' + wd(n, { weekday: 'short' }) + '</span>' +
+      '<span style="font-size:52cqmin;line-height:1;margin-top:5cqmin">' + pad(n.getDate()) + '</span></div>';
+  } }
+];
+const WGM = {};
+WG.forEach(function (d) { WGM[d.id] = d; });
+
+function wgtHtml(id) {
+  const d = WGM[id];
+  return '<div class="wgt' + (d && d.w2 ? ' w2' : '') + '" data-wg="' + id + '"></div>';
+}
+
+// repaints every visible design tile only when its HTML really changed
+function paintAll(now) {
+  now = now || new Date();
+  document.querySelectorAll('.wgt[data-wg]').forEach(function (el) {
+    const d = WGM[el.dataset.wg];
+    if (!d || !el.offsetParent) return;
+    const s = d.h(now);
+    if (el._s !== s) { el._s = s; el.innerHTML = s; }
+  });
+}
+
+function initWidgetsTab() {
+  const t = $('v-timer');
+  if (!t || $('v-widgets')) return;
+
+  const v = document.createElement('div');
+  v.id = 'v-widgets';
+  v.className = t.className.replace(/\bactive\b/g, '').trim();
+  t.parentNode.appendChild(v);
+
+  // bottom-bar button: a copy of the Timer button with its own icon and label
+  const tb = document.querySelector('#nav [data-tab="timer"]');
+  if (tb) {
+    const b = tb.cloneNode(true);
+    b.removeAttribute('id');
+    b.classList.remove('active');
+    b.dataset.tab = 'widgets';
+    b.setAttribute('aria-label', 'Widgets');
+    const s = b.querySelector('svg');
+    if (s) s.outerHTML = ICON.widgets; else b.innerHTML = ICON.widgets;
+    b.querySelectorAll('*').forEach(function (el) {
+      if (!el.children.length && el.textContent.trim()) el.textContent = 'Widgets';
+    });
+    tb.parentNode.appendChild(b);
+  }
+
+  v.innerHTML = '<div class="wgpage"><div class="wgh"><span>Widgets</span>' +
+    seg('wgFmt', [['24', '24h'], ['12', '12h']], globalSet.wgFmt) + '</div>' +
+    '<div class="wgg">' + WG.map(function (d) { return wgtHtml(d.id); }).join('') + '</div></div>';
+
+  pick('wgFmt', function (x) { globalSet.wgFmt = x; saveGlobal(); paintAll(); });
+  v.addEventListener('click', function (e) {
+    const el = e.target.closest ? e.target.closest('.wgt[data-wg]') : null;
+    if (el) openWidgetSheet(el.dataset.wg, pt(e));
+  });
+}
+
+function openWidgetSheet(id, origin) {
+  const d = WGM[id];
+  if (!d) return;
+  const h = head(d.n) + '<div>' + wgtHtml(id) + '</div>' +
+    '<div class="acts"><button class="bt pri" id="wgAdd">Add to Home tab</button></div>' +
+    '<div class="acts"><button class="bt" id="wgFs">Full screen</button><button class="bt" id="wgPhone">Phone home screen</button></div>' +
+    '<div class="acts"><button class="bt" id="done">Close</button></div>';
+  openSheet(h, 'widget', origin);
+  paintAll();
+
+  $('wgAdd').onclick = function () {
+    widgets.push(newWidget('wg:' + id));
+    saveWidgets(); renderAll(); closeSheet();
+    toast(d.n + ' added to Home');
+  };
+  $('wgFs').onclick = function () { closeSheet(); openFull(id); };
+  $('wgPhone').onclick = function () { openPhoneSheet(id); };
+  $('done').onclick = closeSheet;
+}
+
+function openFull(id) {
+  let f = $('wgFull');
+  if (!f) {
+    f = document.createElement('div');
+    f.id = 'wgFull';
+    f.onclick = function () {
+      f.classList.remove('open');
+      if (document.fullscreenElement) document.exitFullscreen().catch(function () {});
+    };
+    document.body.appendChild(f);
+  }
+  f.innerHTML = wgtHtml(id);
+  f.classList.add('open');
+  paintAll();
+  if (f.requestFullscreen) f.requestFullscreen().catch(function () {});
+}
+
+// A website cannot draw on the phone launcher. This explains the options honestly.
+function openPhoneSheet(id) {
+  const standalone = window.matchMedia && matchMedia('(display-mode: standalone)').matches;
+  let h = head('Phone home screen', 'phBack') +
+    '<div class="sn mid" style="line-height:1.55;text-align:left">' +
+    'A web app cannot put a live widget on the launcher by itself. What works today: install this app to the home screen ' +
+    '(it opens like a normal app), then use <b>Full screen</b> on any design to turn the phone into a desk clock. ' +
+    'Real launcher widgets need a native Android wrapper app.</div>';
+  if (installEvt && !standalone) h += '<div class="acts"><button class="bt pri" id="phInstall">Install app</button></div>';
+  h += '<div class="acts"><button class="bt" id="done">Close</button></div>';
+  openSheet(h, 'widget');
+  $('phBack').onclick = function () { openWidgetSheet(id); };
+  const i = $('phInstall');
+  if (i) i.onclick = function () {
+    installEvt.prompt();
+    installEvt.userChoice.then(function () { installEvt = null; closeSheet(); });
+  };
+  $('done').onclick = closeSheet;
+}
+
+/* ==========================================================================
+   10. SETTINGS
    ========================================================================== */
 function applyTheme() {
   const light = globalSet.theme === 'light';
@@ -1346,6 +1865,12 @@ async function setAwake(on) {
   } catch (e) {}
 }
 
+function snoozeSummary() {
+  return globalSet.snoozeMin > 0
+    ? globalSet.snoozeMin + ' min \u00b7 ' + (globalSet.snoozeMax ? globalSet.snoozeMax + '\u00d7' : '\u221e')
+    : 'Off';
+}
+
 function openSettings() {
   const light = globalSet.theme === 'light';
   const list = light ? BGS_LIGHT : BGS_DARK;
@@ -1359,7 +1884,7 @@ function openSettings() {
     '<div class="li"><span class="k">Alarm time</span>' + alarmFmtSeg('alFmt') + '</div>');
   h += sec('Sounds', Object.keys(TONE_KINDS).map(function (k) {
     return navRow('data-tone="' + k + '"', TONE_KINDS[k].label, esc(toneName(globalSet[TONE_KINDS[k].key])));
-  }).join(''));
+  }).join('') + navRow('id="snbtn"', 'Snooze', snoozeSummary()));
   h += sec('General',
     toggleRow('awake', 'Keep screen awake', globalSet.awake) +
     navRow('id="upbtn"', 'Upcoming dates', esc(countryName(detectCountry()) || 'Auto')) +
@@ -1396,6 +1921,7 @@ function openSettings() {
   sheet.querySelectorAll('[data-tone]').forEach(function (b) {
     b.onclick = function () { openToneSheet(b.dataset.tone); };
   });
+  $('snbtn').onclick = openSnoozeSettings;
   $('upbtn').onclick = openUpcomingSettings;
   $('permbtn').onclick = openPermissions;
   $('fs').onclick = function () {
@@ -1405,8 +1931,22 @@ function openSettings() {
   $('done').onclick = closeSheet;
 }
 
+function openSnoozeSettings() {
+  const h = head('Snooze', 'snBack') + snoozeHtml(globalSet.snoozeMin, globalSet.snoozeMax) +
+    '<div class="sn mid">These are the defaults for new alarms. Every alarm can have its own values.</div>' +
+    '<div class="acts"><button class="bt pri" id="done">Done</button></div>';
+  openSheet(h, 'settings');
+  bindSnooze(function (v) {
+    globalSet.snoozeMin = v.sn;
+    globalSet.snoozeMax = v.sc;
+    saveGlobal();
+  });
+  $('snBack').onclick = openSettings;
+  $('done').onclick = closeSheet;
+}
+
 /* ==========================================================================
-   10. EDIT / ADD WIDGET SHEETS
+   11. EDIT / ADD WIDGET SHEETS
    ========================================================================== */
 // big card: place name, time zone, GMT offset
 function fillPlace(w) {
@@ -1416,7 +1956,7 @@ function fillPlace(w) {
   const zone = zoneOf(w);
   n.textContent = placeLabel(w) || 'Choose a place';
   s.textContent = [zone, offsetText(w, zone, new Date()), w.type === 'home' ? GEO_NOTES[geoStatus] : '']
-    .filter(Boolean).join(' · ');
+    .filter(Boolean).join(' \u00b7 ');
 }
 
 function placeHtml(w) {
@@ -1506,14 +2046,17 @@ function initWorldEdit(w) {
 function openEdit(id, origin) {
   const w = widgets.find(function (x) { return x.id === id; });
   if (!w) return;
+  const design = isDesign(w.type) ? WGM[w.type.slice(3)] : null;
   const zone = isZoneWidget(w);
 
-  let h = head(TYPES[w.type].n);
+  let h = head(design ? design.n : TYPES[w.type].n);
   if (zone) h += placeHtml(w);
 
-  h += sec('Appearance',
-    '<div class="li"><span class="k">Color</span>' + swatches('clr', COLORS.map(function (c) { return [c, c]; }), w.color) + '</div>' +
-    '<div class="li"><span class="k">Size</span><input type="range" id="sz" min="6" max="26" step="1" value="' + w.size + '"></div>');
+  if (!design) {
+    h += sec('Appearance',
+      '<div class="li"><span class="k">Color</span>' + swatches('clr', COLORS.map(function (c) { return [c, c]; }), w.color) + '</div>' +
+      '<div class="li"><span class="k">Size</span><input type="range" id="sz" min="6" max="26" step="1" value="' + w.size + '"></div>');
+  }
 
   if (w.type === 'digital' || zone) {
     h += sec('Time',
@@ -1526,8 +2069,10 @@ function openEdit(id, origin) {
   openSheet(h, 'edit', origin);
   editW = w;
 
-  pick('clr', function (v) { w.color = v; saveWidgets(); applyStyle(w); });
-  $('sz').oninput = function (e) { w.size = Number(e.target.value); saveWidgets(); applyStyle(w); };
+  if (!design) {
+    pick('clr', function (v) { w.color = v; saveWidgets(); applyStyle(w); });
+    $('sz').oninput = function (e) { w.size = Number(e.target.value); saveWidgets(); applyStyle(w); };
+  }
 
   if (zone) initWorldEdit(w);
 
@@ -1554,7 +2099,8 @@ function openAddWidget() {
   h += sec('', Object.keys(TYPES).map(function (t) {
     return '<button class="li nav" data-t="' + t + '"><div class="kk"><div class="k">' + TYPES[t].n +
       '</div><div class="d">' + TYPES[t].d + '</div></div></button>';
-  }).join(''));
+  }).join('') +
+    '<button class="li nav" id="moreWg"><div class="kk"><div class="k">More designs</div><div class="d">' + WG.length + ' styles in the Widgets tab</div></div></button>');
   h += '<div class="acts"><button class="bt dng" id="reset">Reset all</button><button class="bt pri" id="done">Close</button></div>';
   openSheet(h, 'add');
 
@@ -1565,6 +2111,7 @@ function openAddWidget() {
       window.scrollTo(0, document.body.scrollHeight);
     };
   });
+  $('moreWg').onclick = function () { showTab('widgets'); };
   $('reset').onclick = function () {
     if (confirm('Reset all widgets to default?')) {
       widgets = defaultWidgets();
@@ -1575,12 +2122,18 @@ function openAddWidget() {
 }
 
 /* ==========================================================================
-   11. TABS
+   12. TABS, ALARMS & QUICK ALARMS
+   --------------------------------------------------------------------------
+   The time is picked with scroll wheels (12 or 24 hour) or typed (7:30 pm,
+   19:45, 730). Every alarm has its own snooze length and snooze limit.
+   Quick alarms are saved shortcuts: one tap adds them to the alarm list.
    ========================================================================== */
 function showTab(name) {
   TABS.forEach(function (t) {
-    $('v-' + t).classList.toggle('active', t === name);
-    document.querySelector('#nav [data-tab="' + t + '"]').classList.toggle('active', t === name);
+    const v = $('v-' + t);
+    const b = document.querySelector('#nav [data-tab="' + t + '"]');
+    if (v) v.classList.toggle('active', t === name);
+    if (b) b.classList.toggle('active', t === name);
   });
   $('add').style.display = name === 'home' ? 'block' : 'none';
   window.scrollTo(0, 0);
@@ -1590,19 +2143,8 @@ function showTab(name) {
     renderUpcoming();
     setTimeout(measureUpcoming, 60);
   }
+  tick();
 }
-
-/* ==========================================================================
-   12. ALARMS & QUICK ALARMS
-   --------------------------------------------------------------------------
-   An alarm is { id, time 'HH:MM', on, days [0-6, Sun-Sat], label, last }.
-   An empty days list means "once". The time is picked with scroll wheels
-   (like the timer) in 12-hour (with AM/PM) or 24-hour format.
-   Quick alarms are saved shortcuts: one tap adds them to the alarm list.
-   ========================================================================== */
-const QUICK_COLORS = ['#ff9f0a', '#30d158', '#4a8cf7', '#bf5af2', '#ff6a5c', '#2ec4b6'];
-
-function snoozeFive() { snoozeAt = Date.now() + 5 * 60 * 1000; }
 
 function alarmFmt() { return globalSet.alarmFmt === '24' ? '24' : '12'; }
 
@@ -1629,6 +2171,21 @@ function fmtClock(t, fmt) {
   return ((x.h % 12) || 12) + ':' + pad(x.m) + ' ' + (x.h >= 12 ? 'PM' : 'AM');
 }
 
+// typed alarm time: "7:30 pm", "19:45", "730", "7 am", Bangla digits too
+function parseTyped(s) {
+  s = bnDigits(s).trim().toLowerCase().replace(/\./g, '');
+  const m = /^(\d{1,2})(?:[:\s]?(\d{2}))?\s*(am|pm|a|p)?$/.exec(s);
+  if (!m) return null;
+  let h = +m[1];
+  const mi = m[2] ? +m[2] : 0;
+  if (mi > 59) return null;
+  if (m[3]) {
+    if (h < 1 || h > 12) return null;
+    h = (h % 12) + (m[3].charAt(0) === 'p' ? 12 : 0);
+  } else if (h > 23) return null;
+  return { h: h, m: mi };
+}
+
 function daysKey(days) { return days.slice().sort(function (a, b) { return a - b; }).join(','); }
 
 function repeatText(days) {
@@ -1639,7 +2196,7 @@ function repeatText(days) {
   if (k === '1,2,3,4,5') return 'Weekdays';
   if (k === '0,6') return 'Weekends';
   const run = d.length >= 3 && d.every(function (x, i) { return i === 0 || x === d[i - 1] + 1; });
-  if (run) return DAYS[d[0]] + ' – ' + DAYS[d[d.length - 1]];
+  if (run) return DAYS[d[0]] + ' \u2013 ' + DAYS[d[d.length - 1]];
   return d.map(function (x) { return DAYS[x]; }).join(', ');
 }
 
@@ -1741,8 +2298,8 @@ function readWheelTime(fmt) {
 }
 
 /* ---- one editor for alarms and quick alarms ----
-   cfg: title, time, label, days, ph (label placeholder), isNew, origin,
-        onSave({time,label,days}), onDelete(), onCancel()                  */
+   cfg: title, time, label, days, sn, sc, ph (label placeholder), isNew, origin,
+        onSave({time,label,days,sn,sc}), onDelete(), onCancel()                */
 function openAlarmEditor(cfg) {
   let fmt = alarmFmt();
   const days = cfg.days.slice();
@@ -1753,16 +2310,19 @@ function openAlarmEditor(cfg) {
     sec('Details',
       '<div class="li"><span class="k">Label</span><input type="text" id="asLabel" class="inp" placeholder="' + cfg.ph +
       '" maxlength="30" value="' + esc(cfg.label) + '"></div>' +
+      '<div class="li"><span class="k">Type time</span><input type="text" id="asType" class="inp" placeholder="7:30 pm or 19:45" maxlength="10" autocomplete="off"></div>' +
       '<div class="li"><span class="k">Time format</span>' + alarmFmtSeg('asFmt') + '</div>') +
     sec('Repeat', '<div class="days" id="asDays">' + DAYS.map(function (n, i) {
       return '<button class="dchip' + (days.indexOf(i) > -1 ? ' on' : '') + '" data-d="' + i + '">' + n + '</button>';
     }).join('') + '</div>') +
     '<div class="sn mid" id="asRep"></div>' +
+    snoozeHtml(cfg.sn, cfg.sc) +
     '<div class="acts"><button class="bt" id="asCancel">Cancel</button>' +
     (cfg.isNew ? '' : '<button class="bt dng" id="asDel">Delete</button>') +
     '<button class="bt pri" id="asSave">Save</button></div>';
   openSheet(h, 'alarm', cfg.origin);
   initWheels();
+  bindSnooze();
 
   function drawRep() { $('asRep').textContent = repeatText(days); }
   drawRep();
@@ -1778,6 +2338,21 @@ function openAlarmEditor(cfg) {
     haptic(6);
   };
 
+  // a typed time moves the wheels
+  function applyTyped() {
+    const v = $('asType').value.trim();
+    if (!v) return true;
+    const p = parseTyped(v);
+    if (!p) { toast('Try 7:30 pm or 19:45'); return false; }
+    $('awBox').innerHTML = wheelsHtml(fmt, p.h, p.m);
+    initWheels();
+    $('asType').value = '';
+    haptic(8);
+    return true;
+  }
+  $('asType').onchange = applyTyped;
+  $('asType').onkeydown = function (e) { if (e.key === 'Enter') { e.preventDefault(); applyTyped(); $('asType').blur(); } };
+
   // changing the format keeps the time the wheels currently show
   pick('asFmt', function (v) {
     const cur = readWheelTime(fmt);
@@ -1788,8 +2363,10 @@ function openAlarmEditor(cfg) {
   });
 
   $('asSave').onclick = function () {
+    if (!applyTyped()) return;
     const x = readWheelTime(fmt);
-    cfg.onSave({ time: pad(x.h) + ':' + pad(x.m), label: $('asLabel').value.trim(), days: days.slice() });
+    const s = readSnooze();
+    cfg.onSave({ time: pad(x.h) + ':' + pad(x.m), label: $('asLabel').value.trim(), days: days.slice(), sn: s.sn, sc: s.sc });
   };
   const del = $('asDel');
   if (del) del.onclick = cfg.onDelete;
@@ -1803,14 +2380,16 @@ function openAlarmSheet(a, origin) {
     time: a ? a.time : '07:00',
     label: a ? (a.label || '') : '',
     days: a ? a.days : ALL_DAYS,
+    sn: a && a.sn != null ? a.sn : globalSet.snoozeMin,
+    sc: a && a.sc != null ? a.sc : globalSet.snoozeMax,
     ph: 'Alarm',
     isNew: isNew,
     origin: origin,
     onSave: function (d) {
       if (isNew) {
-        alarms.push({ id: 'a' + Date.now(), time: d.time, on: true, days: d.days, label: d.label, last: lateGuard(d.time) });
+        alarms.push({ id: 'a' + Date.now(), time: d.time, on: true, days: d.days, label: d.label, sn: d.sn, sc: d.sc, last: lateGuard(d.time) });
       } else {
-        a.time = d.time; a.label = d.label; a.days = d.days; a.on = true; a.last = lateGuard(d.time);
+        a.time = d.time; a.label = d.label; a.days = d.days; a.sn = d.sn; a.sc = d.sc; a.on = true; a.last = lateGuard(d.time);
       }
       sortAlarms(); saveAlarms(); renderAlarms(); renderQuick(); closeSheet();
       maybeAskNotifications();
@@ -1835,14 +2414,14 @@ function renderQuick() {
   let html = '<div class="qhead"><span>Quick alarms</span><button class="qcust" id="qCust">Customize</button></div><div class="qlist">';
   if (!quick.length) html += '<div class="hempty">No quick alarms yet. Tap Customize to add one.</div>';
 
-  quick.forEach(function (q, i) {
+  quick.forEach(function (q) {
     const x = parseTime(q.time);
     const have = quickAlarm(q);
     const top = fmt === '24' ? '24H' : (x.h >= 12 ? 'PM' : 'AM');
     const big = fmt === '24' ? pad(x.h) + ':' + pad(x.m) : ((x.h % 12) || 12) + ':' + pad(x.m);
     const state = have ? (have.on ? ['ok', 'Added'] : ['soon', 'Turn on']) : ['soon', '+ Add'];
 
-    html += '<div class="hcard qcard" role="button" tabindex="0" data-q="' + esc(q.id) + '" style="--tc:' + QUICK_COLORS[i % QUICK_COLORS.length] + '">' +
+    html += '<div class="hcard qcard" role="button" tabindex="0" data-q="' + esc(q.id) + '">' +
       '<div class="hd qd"><span class="hmon">' + top + '</span><span class="hday">' + big + '</span></div>' +
       '<div class="hmid"><div class="hname">' + esc(q.name) + '</div><div class="hbn">' + repeatText(q.days) + '</div></div>' +
       '<div class="hright"><span class="hleft ' + state[0] + '">' + state[1] + '</span></div></div>';
@@ -1858,14 +2437,16 @@ function addQuick(q) {
     have.on = true;
     have.last = lateGuard(have.time);
     saveAlarms(); renderAlarms(); renderQuick();
-    toast('Alarm on · ' + fmtClock(q.time, fmt));
+    toast('Alarm on \u00b7 ' + fmtClock(q.time, fmt));
     return;
   }
   const a = { id: 'a' + Date.now(), time: q.time, on: true, days: q.days.slice(), label: q.name, last: lateGuard(q.time) };
+  if (q.sn != null) a.sn = q.sn;
+  if (q.sc != null) a.sc = q.sc;
   alarms.push(a);
   sortAlarms(); saveAlarms(); renderAlarms(); renderQuick();
   haptic(12);
-  toast('Alarm added · ' + fmtClock(q.time, fmt), {
+  toast('Alarm added \u00b7 ' + fmtClock(q.time, fmt), {
     action: {
       label: 'Undo',
       fn: function () {
@@ -1883,7 +2464,7 @@ function openQuickSheet() {
   h += quick.length
     ? sec('', quick.map(function (q) {
       return '<button class="li nav" data-q="' + esc(q.id) + '"><div class="kk"><div class="k">' + esc(q.name) +
-        '</div><div class="d">' + fmtClock(q.time, fmt) + ' · ' + repeatText(q.days) + '</div></div></button>';
+        '</div><div class="d">' + fmtClock(q.time, fmt) + ' \u00b7 ' + repeatText(q.days) + '</div></div></button>';
     }).join(''))
     : '<div class="sn mid">No quick alarms yet</div>';
   h += '<div class="acts"><button class="bt" id="qNew">New quick alarm</button></div>' +
@@ -1911,12 +2492,14 @@ function editQuick(q) {
     time: q ? q.time : '07:00',
     label: q ? q.name : '',
     days: q ? q.days : ALL_DAYS,
+    sn: q && q.sn != null ? q.sn : globalSet.snoozeMin,
+    sc: q && q.sc != null ? q.sc : globalSet.snoozeMax,
     ph: 'Name',
     isNew: isNew,
     onSave: function (d) {
       const name = d.label || 'Alarm';
-      if (isNew) quick.push({ id: 'q' + Date.now(), name: name, time: d.time, days: d.days });
-      else { q.name = name; q.time = d.time; q.days = d.days; }
+      if (isNew) quick.push({ id: 'q' + Date.now(), name: name, time: d.time, days: d.days, sn: d.sn, sc: d.sc });
+      else { q.name = name; q.time = d.time; q.days = d.days; q.sn = d.sn; q.sc = d.sc; }
       saveQuick(); renderQuick(); openQuickSheet();
     },
     onDelete: function () {
@@ -1927,9 +2510,8 @@ function editQuick(q) {
   });
 }
 
-// Builds the Alarm tab. Parts of this tab that older versions drew by hand
-// (Edit button, "Quick alarms" block, the "ring only while open" note) are
-// removed here, so the tab is always built by this file alone.
+// Builds the Alarm tab. Pieces that older versions drew by hand (Edit button,
+// "Quick alarms" block, the "ring only while open" note) are removed here.
 function initAlarmPage() {
   const view = $('v-alarm');
   const list = $('alarmList');
@@ -1946,7 +2528,6 @@ function initAlarmPage() {
     if (!el.isConnected || el.children.length || list.contains(el) || !OLD.test(el.textContent)) return;
     let top = el;
     while (top.parentElement && top.parentElement !== view && !keep(top.parentElement)) top = top.parentElement;
-    // the old quick-alarm block: remove the cards that follow its heading too
     if (/Quick alarms/i.test(el.textContent)) {
       let n = top.nextElementSibling;
       while (n) {
@@ -1993,12 +2574,13 @@ function checkAlarms() {
       a.last = dk + a.time;
       if (!a.days.length) a.on = false;
       saveAlarms(); renderAlarms(); renderQuick();
-      startRing((a.label || 'Alarm') + ' ' + fmtClock(a.time, alarmFmt()), snoozeFive, globalSet.alarmTone);
+      startRing(alarmCtx(a, 0));
     }
   });
-  if (snoozeAt && Date.now() >= snoozeAt) {
-    snoozeAt = 0;
-    startRing('Alarm (snoozed)', snoozeFive, globalSet.alarmTone);
+  if (snz && Date.now() >= snz.at) {
+    const c = snz.ctx;
+    setSnooze(null);
+    startRing(c);
   }
 }
 
@@ -2106,7 +2688,7 @@ function renderLaps() {
 }
 
 /* ==========================================================================
-   14. TIMER & PRESETS
+   14. TIMER, PRESETS & TYPED TIME
    ========================================================================== */
 function tmLeft() { return tm.running ? Math.max(0, tm.endAt - Date.now()) : tm.remaining; }
 
@@ -2118,6 +2700,50 @@ function fmtTimer(ms) {
 
 function fmtHMS(s) {
   return pad(Math.floor(s / 3600)) + ':' + pad(Math.floor((s % 3600) / 60)) + ':' + pad(s % 60);
+}
+
+// typed timer: "1h 30m", "90s", "5:30" (min:sec), "1:30:00", "10" (minutes)
+function parseDur(s) {
+  s = bnDigits(s).toLowerCase().trim();
+  let m = /^(\d{1,2}):(\d{1,2}):(\d{1,2})$/.exec(s);
+  let sec = null;
+  if (m) sec = +m[1] * 3600 + +m[2] * 60 + +m[3];
+  else if ((m = /^(\d{1,3}):(\d{1,2})$/.exec(s))) sec = +m[1] * 60 + +m[2];
+  else if (/^\d+$/.test(s)) sec = +s * 60;
+  else {
+    let t = 0;
+    s.replace(/(\d+(?:\.\d+)?)\s*(h|m|s)[a-z]*/g, function (x, n, u) {
+      t += n * { h: 3600, m: 60, s: 1 }[u];
+      sec = t;
+      return '';
+    });
+    if (sec != null) sec = Math.round(sec);
+  }
+  return sec == null ? null : Math.min(sec, 86399);
+}
+
+function initTimerTyping() {
+  const pk = $('tmPicker');
+  if (!pk || $('tmTypeIn')) return;
+  const d = document.createElement('div');
+  d.id = 'tmType';
+  d.className = 'tmtype';
+  d.innerHTML = '<input type="text" id="tmTypeIn" placeholder="Type: 1h 30m \u00b7 90s \u00b7 5:30" maxlength="14" autocomplete="off">' +
+    '<button type="button" id="tmTypeGo">Set</button>';
+  pk.insertAdjacentElement('afterend', d);
+
+  function go() {
+    const v = $('tmTypeIn').value.trim();
+    if (!v) return;
+    const s = parseDur(v);
+    if (!s) { toast('Try 1h 30m, 90s or 5:30'); return; }
+    pickPreset(s * 1000);
+    $('tmTypeIn').value = '';
+    $('tmTypeIn').blur();
+    toast('Timer set \u00b7 ' + fmtHMS(s));
+  }
+  $('tmTypeGo').onclick = go;
+  $('tmTypeIn').onkeydown = function (e) { if (e.key === 'Enter') { e.preventDefault(); go(); } };
 }
 
 function wheelIndex(id) {
@@ -2186,7 +2812,9 @@ function renderTm() {
   const pk = $('tmPicker');
   const rn = $('tmRun');
   const rs = $('tmReset');
+  const ty = $('tmType');
   if (pk) pk.style.display = inRun ? 'none' : 'flex';
+  if (ty) ty.style.display = inRun ? 'none' : 'flex';
   if (rn) rn.style.display = inRun ? 'flex' : 'none';
   if (rs) rs.style.display = inRun ? 'flex' : 'none';
   if (lastRun && !inRun) setTimeout(syncWheels, 30);
@@ -2207,7 +2835,7 @@ function renderTm() {
     tm.running = false;
     tm.remaining = tm.total;
     saveTm(); renderTm();
-    startRing('Timer finished', null, globalSet.timerTone);
+    startRing({ kind: 'timer', id: '', title: 'Timer finished', tone: globalSet.timerTone, sn: 0, sc: 0, used: 0 });
   }
 }
 
@@ -2265,12 +2893,23 @@ function openPresetSheet(origin) {
     return '<div><select id="' + id + '">' + o + '</select><i>' + label + '</i></div>';
   }
   const h = head('New timer') +
-    sec('', '<div class="li"><span class="k">Name</span><input type="text" id="ptName" class="inp" placeholder="For example Tea" maxlength="24"></div>') +
+    sec('', '<div class="li"><span class="k">Name</span><input type="text" id="ptName" class="inp" placeholder="For example Tea" maxlength="24"></div>' +
+      '<div class="li"><span class="k">Type time</span><input type="text" id="ptType" class="inp" placeholder="1h 30m or 5:30" maxlength="14" autocomplete="off"></div>') +
     sec('Duration', '<div class="trip">' + col('ptH', 24, 'hours', 0) + col('ptM', 60, 'minutes', 5) + col('ptS', 60, 'seconds', 0) + '</div>') +
     '<div class="acts"><button class="bt" id="ptCancel">Cancel</button><button class="bt pri" id="ptSave">Save</button></div>';
   openSheet(h, 'preset', origin);
 
+  // a typed duration moves the three pickers
+  $('ptType').onchange = function () {
+    const s = parseDur($('ptType').value);
+    if (!s) { toast('Try 1h 30m, 90s or 5:30'); return; }
+    $('ptH').value = Math.floor(s / 3600);
+    $('ptM').value = Math.floor((s % 3600) / 60);
+    $('ptS').value = s % 60;
+  };
+
   $('ptSave').onclick = function () {
+    if ($('ptType').value.trim()) $('ptType').onchange();
     const s = Number($('ptH').value) * 3600 + Number($('ptM').value) * 60 + Number($('ptS').value);
     if (s <= 0) return;
     const name = $('ptName').value.trim() || 'Timer';
@@ -2284,20 +2923,14 @@ function openPresetSheet(origin) {
    15. UPCOMING  (every important day of the calendar, nothing typed by hand)
    --------------------------------------------------------------------------
    Country  : Settings choice, otherwise GPS -> internet (IP) -> time zone -> language
-   Sources, all merged into one list for the next 12 months:
-     1. date-holidays library (about 200 countries): public holidays, bank
-        holidays, optional days, observances. Saved in the browser cache.
-     2. Nager.Date API as a backup when the library has nothing for a country.
-     3. Built-in worldwide calendar (always works, even offline):
-        - Islamic calendar  : Ramadan, Eid, Ashura, Mawlid, Shab-e-Barat ...
-        - Hebrew calendar   : Rosh Hashanah, Yom Kippur, Hanukkah, Passover ...
-        - Chinese calendar  : Lunar New Year, Lantern, Dragon Boat, Mid-Autumn ...
-        - Christian dates   : Easter (Western and Orthodox), Ash Wednesday ...
-        - Seasons           : equinoxes and solstices
-        - World days        : UN and international days, Valentine's, Mother's Day ...
-        - Local days        : small extra list for some countries (for example BD)
-     4. Your own dates.
-   Duplicates between sources are removed (same name within 3 days).
+   Sources, merged into one list for the next 12 months:
+     1. date-holidays library (about 200 countries), cached for offline use
+     2. Nager.Date API as a backup when the library has nothing for a country
+     3. Built-in calendar (works offline): Islamic, Hebrew and Chinese calendars,
+        Easter, seasons, world days, a few local days
+     4. Your own dates
+   Duplicates (same name within 3 days) are removed.
+   Swipe left / right on the list to move between the filters.
    ========================================================================== */
 const LIB_URLS = ['holidays.min.js', 'https://cdn.jsdelivr.net/npm/date-holidays@3/dist/umd.min.js', 'https://unpkg.com/date-holidays@3/dist/umd.min.js'];
 const LIB_CACHE = 'clock-holidays-lib';
@@ -2715,9 +3348,9 @@ const SEASON_N = ['March Equinox', 'June Solstice', 'September Equinox', 'Decemb
 function addDays(d, n) { return new Date(d.getFullYear(), d.getMonth(), d.getDate() + n); }
 
 // n-th weekday of a month (month 0-11, weekday 0 = Sunday)
-function nthWeekday(y, m, wd, n) {
+function nthWeekday(y, m, wdy, n) {
   const first = new Date(y, m, 1);
-  return new Date(y, m, 1 + ((wd - first.getDay() + 7) % 7) + (n - 1) * 7);
+  return new Date(y, m, 1 + ((wdy - first.getDay() + 7) % 7) + (n - 1) * 7);
 }
 
 function easterWestern(y) {
@@ -2902,6 +3535,34 @@ function drawChips() {
   }).join('');
 }
 
+// changes the filter; dir > 0 slides the list in from the right, dir < 0 from the left
+function setFilter(v, dir) {
+  globalSet.upFilter = v;
+  saveGlobal();
+  upLimit = UP_PAGE;
+  drawChips();
+  renderUpcoming();
+  const box = $('hList');
+  if (box) {
+    box.scrollTop = 0;
+    box.classList.remove('swL', 'swR');
+    void box.offsetWidth;
+    if (dir) box.classList.add(dir > 0 ? 'swL' : 'swR');
+  }
+  const bar = $('hFilter');
+  const on = bar ? bar.querySelector('.on') : null;
+  if (on) bar.scrollTo({ left: on.offsetLeft - (bar.clientWidth - on.offsetWidth) / 2, behavior: 'smooth' });
+  haptic(8);
+}
+
+function stepFilter(dir) {
+  const cur = globalSet.upFilter || 'all';
+  const i = UP_FILTERS.findIndex(function (f) { return f[0] === cur; });
+  const j = i + dir;
+  if (j < 0 || j >= UP_FILTERS.length) return;
+  setFilter(UP_FILTERS[j][0], dir);
+}
+
 function renderUpcoming() {
   const box = $('hList');
   if (!box) return;
@@ -2924,7 +3585,7 @@ function renderUpcoming() {
   lastUpSig = sig;
 
   if (!list.length) {
-    box.innerHTML = '<div class="hempty">' + (holLoading ? 'Loading dates...' : 'Nothing here for the next 12 months. Try another filter, or add your own date in Settings.') + '</div>';
+    box.innerHTML = '<div class="hempty">' + (holLoading ? 'Loading dates...' : 'Nothing here for the next 12 months. Swipe to another filter, or add your own date in Settings.') + '</div>';
     return;
   }
 
@@ -2937,13 +3598,13 @@ function renderUpcoming() {
       html += '<div class="hgrp">' + it.dt.toLocaleDateString('en-GB', { month: 'long', year: 'numeric' }) + '</div>';
     }
     const left = it.diff === 0 ? 'Today' : (it.diff === 1 ? 'Tomorrow' : 'In ' + it.diff + ' days');
-    const wd = it.dt.toLocaleDateString('en-GB', { weekday: 'short' });
+    const wdn = it.dt.toLocaleDateString('en-GB', { weekday: 'short' });
     html += '<div class="hcard t-' + it.t + (it.diff === 0 ? ' today' : '') + '">' +
       '<div class="hd"><span class="hmon">' + MON[it.dt.getMonth()] + '</span>' +
       '<span class="hday">' + it.dt.getDate() + '</span></div>' +
       '<div class="hmid"><div class="hname">' + esc(it.n) + '</div><div class="hbn">' + esc(it.b) + '</div></div>' +
       '<div class="hright"><span class="hleft' + (it.diff <= 7 ? ' soon' : '') + '">' + left + '</span>' +
-      '<span class="hwd">' + wd + ', ' + UP_TYPES[it.t][0] + '</span></div>' +
+      '<span class="hwd">' + wdn + ', ' + UP_TYPES[it.t][0] + '</span></div>' +
       '</div>';
   });
   if (all.length > list.length) {
@@ -2985,7 +3646,7 @@ function openUpcomingSettings() {
     if (!list.length) { box.innerHTML = ''; return; }
     box.innerHTML = sec('Your dates', list.map(function (c, i) {
       return '<div class="li"><div class="kk"><div class="k">' + esc(c.n) + '</div><div class="d">' +
-        esc(c.d + (c.r ? ' · every year' : '')) + '</div></div>' +
+        esc(c.d + (c.r ? ' \u00b7 every year' : '')) + '</div></div>' +
         '<button class="mini dng" data-i="' + i + '">Delete</button></div>';
     }).join(''));
     box.querySelectorAll('[data-i]').forEach(function (b) {
@@ -3048,14 +3709,9 @@ function initUpcoming() {
     bar.className = 'hfilter';
     bar.onclick = function (e) {
       const b = e.target.closest ? e.target.closest('[data-f]') : null;
-      if (!b) return;
-      globalSet.upFilter = b.dataset.f;
-      saveGlobal();
-      upLimit = UP_PAGE;
-      drawChips();
-      renderUpcoming();
-      box.scrollTop = 0;
-      haptic(8);
+      if (!b || b.dataset.f === (globalSet.upFilter || 'all')) return;
+      const order = UP_FILTERS.map(function (x) { return x[0]; });
+      setFilter(b.dataset.f, order.indexOf(b.dataset.f) > order.indexOf(globalSet.upFilter || 'all') ? 1 : -1);
     };
     box.parentNode.insertBefore(bar, box);
   }
@@ -3076,12 +3732,27 @@ function initUpcoming() {
     if (idx !== lastIdx) { lastIdx = idx; haptic(7); }
   }, { passive: true });
 
+  // swipe left / right on the section = next / previous filter
+  let sx = 0, sy = 0, st = 0;
+  hol.addEventListener('touchstart', function (e) {
+    const t = e.touches[0];
+    sx = t.clientX; sy = t.clientY; st = Date.now();
+  }, { passive: true });
+  hol.addEventListener('touchend', function (e) {
+    if (e.target.closest && e.target.closest('#hFilter')) return;
+    const t = e.changedTouches[0];
+    const dx = t.clientX - sx, dy = t.clientY - sy;
+    if (Math.abs(dx) < 60 || Math.abs(dx) < Math.abs(dy) * 1.6 || Date.now() - st > 700) return;
+    stepFilter(dx < 0 ? 1 : -1);
+  }, { passive: true });
+
   window.addEventListener('resize', measureUpcoming);
   if (window.ResizeObserver) {
     const ro = new ResizeObserver(measureUpcoming);
     [hol, $('nav')].forEach(function (el) { if (el) ro.observe(el); });
   }
 }
+
 
 /* ==========================================================================
    16. BOTTOM BAR, BUTTON EFFECTS, SETTINGS BUTTON, PLUS BUTTON
@@ -3193,7 +3864,7 @@ function initIcons() {
 }
 
 /* ==========================================================================
-   17. CONNECTION, PERMISSIONS & SERVICE WORKER
+   17. CONNECTION, NOTIFICATIONS, PERMISSIONS & SERVICE WORKER
    ========================================================================== */
 function hideToast() {
   const el = $('toast');
@@ -3281,9 +3952,16 @@ function initConnection() {
     renderUpcoming();
   });
   window.addEventListener('online', function () { toast('Back online'); onBackOnline(); });
+  window.addEventListener('beforeinstallprompt', function (e) { e.preventDefault(); installEvt = e; });
 }
 
-/* ---- notifications ---- */
+/* ---- notifications ----
+   While the app is open an alarm / timer rings with sound and also posts a
+   notification with Snooze / Stop buttons (shown on the lock screen and in the
+   notification centre). The buttons are handled by sw-notify.js and arrive
+   here as a message. Where the browser supports scheduled notifications
+   (TimestampTrigger) the next alarm is also scheduled, so it can show even if
+   the page was closed. */
 function notifSupported() { return 'Notification' in window; }
 
 function requestNotifications() {
@@ -3306,22 +3984,70 @@ function maybeAskNotifications() {
   requestNotifications();
 }
 
-function notify(title, body, tag) {
+function notify(title, body, tag, extra) {
   if (!notifSupported() || Notification.permission !== 'granted') return;
-  const opts = { body: body, tag: tag || 'clock', renotify: true, requireInteraction: true, vibrate: [300, 150, 300, 150, 300] };
-  function plain() { try { new Notification(title, opts); } catch (e) {} }
+  const opts = Object.assign({ body: body, tag: tag || 'clock', renotify: true, requireInteraction: true, vibrate: [300, 150, 300, 150, 300] }, extra || {});
+  function plain() { try { delete opts.actions; new Notification(title, opts); } catch (e) {} }
   if (swReg && swReg.showNotification) swReg.showNotification(title, opts).catch(plain);
   else plain();
 }
 
-function closeNotif(tag) {
+function closeNotifs() {
   try {
     if (swReg && swReg.getNotifications) {
-      swReg.getNotifications({ tag: tag }).then(function (list) {
-        list.forEach(function (n) { n.close(); });
+      swReg.getNotifications().then(function (list) {
+        list.forEach(function (n) { if (n.tag === 'clock-ring' || n.tag.indexOf('sch-') === 0) n.close(); });
       });
     }
   } catch (e) {}
+}
+
+function nextAlarmTime(a) {
+  const x = parseTime(a.time);
+  const now = new Date();
+  for (let i = 0; i < 8; i++) {
+    const d = new Date(now.getFullYear(), now.getMonth(), now.getDate() + i, x.h, x.m, 0, 0);
+    if (d <= now) continue;
+    if (!a.days.length || a.days.indexOf(d.getDay()) > -1) return d.getTime();
+  }
+  return 0;
+}
+
+function schedSoon() {
+  clearTimeout(schedTimer);
+  schedTimer = setTimeout(syncSchedule, 500);
+}
+
+function syncSchedule() {
+  if (!swReg || !window.TimestampTrigger || !notifSupported() || Notification.permission !== 'granted') return;
+  const A = [{ action: 'snooze', title: 'Snooze' }, { action: 'stop', title: 'Stop' }];
+  const T = [{ action: 'again', title: 'Restart' }, { action: 'stop', title: 'Stop' }];
+
+  function add(tag, ts, title, kind, id, acts) {
+    if (!ts || ts <= Date.now()) return;
+    swReg.showNotification(title, {
+      tag: tag, showTrigger: new TimestampTrigger(ts), requireInteraction: true,
+      vibrate: [300, 150, 300, 150, 300], actions: acts, data: { kind: kind, id: id }
+    }).catch(function () {});
+  }
+
+  swReg.getNotifications({ includeTriggered: true }).then(function (list) {
+    list.forEach(function (n) { if (n.tag.indexOf('sch-') === 0) n.close(); });
+    alarms.forEach(function (a) {
+      if (a.on) add('sch-a' + a.id, nextAlarmTime(a), (a.label || 'Alarm') + ' ' + fmtClock(a.time, alarmFmt()), 'alarm', a.id, A);
+    });
+    if (tm.running) add('sch-timer', tm.endAt, 'Timer finished', 'timer', '', T);
+    if (snz) add('sch-snz', snz.at, snz.ctx.title, 'alarm', snz.ctx.id || '', A);
+  }).catch(function () {});
+}
+
+// the app was opened by a notification button while it was closed (?ring=snooze&kind=alarm&id=...)
+function readRingParam() {
+  const p = new URLSearchParams(location.search);
+  const r = p.get('ring');
+  if (!r) return;
+  try { history.replaceState(null, '', location.pathname); } catch (e) {}
+  handleRingAction(r === 'open' ? '' : r, p.get('kind') || 'alarm', p.get('id') || '');
 }
 
 function requestPersistentStorage() {
@@ -3358,7 +4084,7 @@ function openPermissions() {
   Promise.all([geoPermState(), notifState(), storageState()]).then(function (r) {
     const rows = [
       ['geo', 'Location', 'Shows the time of the place where you are and picks the country for Upcoming dates.', r[0]],
-      ['notif', 'Notifications', 'Alerts for alarms and timers while the app is in the background.', r[1]],
+      ['notif', 'Notifications', 'Alarm and timer alerts with Snooze / Stop buttons on the lock screen and notification centre.', r[1]],
       ['store', 'Keep my data', 'Stops the browser from deleting your alarms and settings.', r[2]]
     ];
     const online = navigator.onLine !== false;
@@ -3378,7 +4104,9 @@ function openPermissions() {
           : '<span class="v">' + stateHtml(cls, permLabel(st)) + '</span>') + '</div>';
     }).join('') +
       '<div class="li"><span class="k">Keep screen awake</span><span class="v">' +
-      (('wakeLock' in navigator) ? 'Supported' : 'Not supported') + '</span></div>');
+      (('wakeLock' in navigator) ? 'Supported' : 'Not supported') + '</span></div>' +
+      '<div class="li"><span class="k">Scheduled alerts (app closed)</span><span class="v">' +
+      (window.TimestampTrigger ? 'Supported' : 'Not supported') + '</span></div>');
     h += '<div class="acts"><button class="bt pri" id="done">Done</button></div>';
     openSheet(h, 'settings');
 
@@ -3424,13 +4152,19 @@ function initWorldHome() {
   }, 10 * 60 * 1000);
 }
 
-/* ---- service worker: offline support, notifications, silent update ---- */
+/* ---- service worker: offline support, notification buttons, silent update ---- */
 function registerSW() {
   if (!('serviceWorker' in navigator)) return;
 
   // a new version takes over by itself; reload only when nothing is running
   navigator.serviceWorker.addEventListener('controllerchange', function () {
     if (!ringOn && !tm.running && !sw.running) location.reload();
+  });
+
+  // Snooze / Stop / Restart pressed on a notification
+  navigator.serviceWorker.addEventListener('message', function (e) {
+    const d = e.data || {};
+    if (d.type === 'ring-action') handleRingAction(d.action, d.kind, d.id);
   });
 
   navigator.serviceWorker.register('sw.js')
@@ -3447,7 +4181,7 @@ function registerSW() {
       setInterval(function () { reg.update().catch(function () {}); }, 60 * 60 * 1000);
       return navigator.serviceWorker.ready;
     })
-    .then(function (reg) { if (reg) swReg = reg; })
+    .then(function (reg) { if (reg) { swReg = reg; schedSoon(); } })
     .catch(function () {});
 }
 
@@ -3458,11 +4192,7 @@ function bindEvents() {
   overlay.onclick = closeSheet;
 
   $('ringStop').onclick = stopRing;
-  $('ringSnooze').onclick = function () {
-    const f = ringSnoozeFn;
-    stopRing();
-    if (f) f();
-  };
+  $('ringSnooze').onclick = function () { if (ringAction) ringAction.fn(); };
 
   $('add').onclick = openAddWidget;
   $('aPlus').onclick = function (e) { openAlarmSheet(null, pt(e)); };
@@ -3492,7 +4222,7 @@ function bindEvents() {
   };
 
   ['click', 'touchstart'].forEach(function (ev) {
-    document.addEventListener(ev, unlockAudio, { passive: true });
+    document.addEventListener(ev, unlockAudio, { passive: true, once: true });
   });
 
   document.addEventListener('visibilitychange', function () {
@@ -3515,12 +4245,14 @@ function initApp() {
   bindEvents();
   initIcons();
   initPressFeedback();
+  initWidgetsTab();
   initNav();
   initSettingsButton();
   initAddButton();
   initPopoverWatch();
   initUpcoming();
   initAlarmPage();
+  initTimerTyping();
 
   buildDial();
   buildWheels();
@@ -3547,6 +4279,7 @@ function initApp() {
 
   showTab('home');
   measureUpcoming();
+  readRingParam();
 }
 
 if (document.readyState === 'loading') {
