@@ -49,4 +49,4 @@ jobs:
         with:
           name: clock-app-debug
           path: android/app/build/outputs/apk/**/*.apk
-          if-no-files-found: errorerror
+          if-no-files-found: error
