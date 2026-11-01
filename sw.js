@@ -28,7 +28,8 @@ const SHELL_FILES = [
   './css/style.css',
   './js/main.js',
   './icons/icon-192.png',
-  './icons/icon-512.png'
+  './icons/icon-512.png',
+   './sw-notify.js'
 ];
 
 /* ---------- install: সব ফাইল আগেই cache এ রাখা ---------- */
