@@ -1,11 +1,11 @@
 /* ==========================================================================
    CLOCK APP - main.js
-   1 Config & state         7 Digits & time HTML        13 Stopwatch (+ scroll fade)
+   1 Config & state         7 Digits & time HTML        13 Stopwatch (lap table)
    2 Helpers & icons        8 Home widgets              14 Timer, presets, typed time
-   3 Injected styles        9 Widget designs + tab      15 Upcoming (fully dynamic)
-   4 Storage               10 Settings & snooze         16 Bottom bar & button effects
-   5 Sheet system & UI     11 Edit / Add widget         17 Connection, notifications, SW
-   6 Tones & ringing       12 Tabs, alarms, quick       18 Init
+   3 Injected styles        9 Widget designs + tab      15 Upcoming (dynamic data)
+   4 Storage                10 Settings & snooze        16 Bottom bar & button effects
+   5 Sheet system & UI      11 Edit / Add widget        17 Connection, notifications, SW
+   6 Tones & ringing        12 Tabs, alarms, quick      18 Init
    ========================================================================== */
 
 /* ==========================================================================
@@ -23,15 +23,16 @@ const PLASKED = 'clockPlaceAsked';
 const NOTIF_ASKED = 'clockNotifAsked';
 const CUSTOM_KEY = 'customUpcomingEvents';
 const HKEY = 'clockHol2_';
+const WKEY = 'clockWd_';
 const IPKEY = 'clockIpCc';
-const WDKEY = 'clockWorldDays';
 const GEO_URL = 'https://geocoding-api.open-meteo.com/v1/search';
 const REVERSE_URL = 'https://api.bigdatacloud.net/data/reverse-geocode-client';
 const HOL_URL = 'https://date.nager.at/api/v3/PublicHolidays/';
-const WD_URL = 'https://api.wikimedia.org/feed/v1/wikipedia/en/onthisday/holidays/';
+const WD_URL = 'https://query.wikidata.org/sparql';
 const PLACE_FRESH_MS = 20 * 60 * 1000;
 const HOL_TTL = 7 * 24 * 3600 * 1000;
-const WD_TTL = 60 * 24 * 3600 * 1000;
+const WD_TTL = 30 * 24 * 3600 * 1000;
+const PRE_MS = 15 * 60 * 1000;   // "notify before ringing"
 
 const RETRO = ['#4aa3d8', '#ef5b55', '#f4f1ea'];
 const COLORS = ['#ffffff', '#4fc3f7', '#81c784', '#ffb74d', '#f06292'];
@@ -50,7 +51,9 @@ const ITEM_H = 60;   // timer wheel row height
 const AW_H = 46;     // alarm wheel row height
 const DAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 const ALL_DAYS = [0, 1, 2, 3, 4, 5, 6];
-const VIB = [300, 150, 300, 150, 300];
+const RING_MIN = [1, 2, 3, 5, 10, 15, 30];
+// haptic groups: ui = touches and wheels, alarm / timer = vibration while ringing
+const HAP = { ui: 'hapUi', alarm: 'hapAlarm', timer: 'hapTimer' };
 
 let widgets = loadWidgets();
 let alarms = loadAlarms();
@@ -77,7 +80,6 @@ let installEvt = null;
 let sw = { running: false, start: 0, elapsed: 0, laps: [] };
 let lastSwMain = '';
 let lastSwCs = '';
-let swRaf = 0;
 
 let tm = { total: 300000, remaining: 300000, running: false, endAt: 0 };
 try {
@@ -92,11 +94,14 @@ const selIdx = { pH: -1, pM: -1, pS: -1 };
 // ringing: ringCtx = what is ringing, ringAction = the second button (Snooze / Restart)
 // snz = a snooze waiting to ring again: { at, ctx }
 let ringTimer = null;
+let ringStopTimer = null;
+let rampTimer = null;
 let ringOn = false;
 let ringCtx = null;
 let ringAction = null;
 let snz = readJson(SKEY);
 let wakeLock = null;
+const preSent = {};
 const popOut = { cog: false, add: false };
 // Capacitor (Android app): native notifications. null in a normal browser.
 const CAP = window.Capacitor && Capacitor.isNativePlatform && Capacitor.isNativePlatform() && Capacitor.Plugins ? Capacitor.Plugins : null;
@@ -117,16 +122,18 @@ function esc(s) {
   return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
     .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
 }
-function haptic(p) { try { if (navigator.vibrate) navigator.vibrate(p); } catch (e) {} }
+// vibration, gated by the three haptic switches in Settings (kind: 'ui' | 'alarm' | 'timer')
+function haptic(p, kind) {
+  try {
+    if (globalSet && globalSet[HAP[kind || 'ui']] === false) return;
+    if (navigator.vibrate) navigator.vibrate(p);
+  } catch (e) {}
+}
 function clampN(v, a, b) { v = Math.round(Number(v)); return isNaN(v) ? a : Math.max(a, Math.min(b, v)); }
 // nearest ancestor of the event target that matches a selector (or null)
 function hit(e, sel) { return e && e.target && e.target.closest ? e.target.closest(sel) : null; }
 // Bangla digits are accepted in typed fields
 function bnDigits(s) { return String(s).replace(/[\u09E6-\u09EF]/g, function (d) { return '\u09E6\u09E7\u09E8\u09E9\u09EA\u09EB\u09EC\u09ED\u09EE\u09EF'.indexOf(d); }); }
-function addDays(d, n) { return new Date(d.getFullYear(), d.getMonth(), d.getDate() + n); }
-
-// vibration while an alarm / timer rings (Settings > Vibration)
-function hapOn(kind) { return (kind === 'timer' ? globalSet.hapTimer : globalSet.hapAlarm) !== false; }
 
 // click point for the pop-in origin
 function pt(e) {
@@ -160,22 +167,24 @@ function setIcon(id, svg, label) {
 
 /* ==========================================================================
    3. INJECTED STYLES
-   One design system: calm neutral surfaces, one orange accent for controls.
+   One design system: calm neutral surfaces, one orange accent, one serif font.
+   To change the font, edit FONT_URL and --sf below.
    ========================================================================== */
+// type of an upcoming day: name, colour. "Holidays" filter = every public holiday (any type)
 const UP_TYPES = {
   h: ['Holiday', '#ff6a5c'],
-  r: ['Religious', '#30d158'],
-  i: ['Observance', '#4a8cf7'],
-  w: ['World day', '#bf5af2'],
-  s: ['Season', '#2ec4b6']
+  n: ['National', '#4a8cf7'],
+  c: ['Cultural', '#bf5af2'],
+  r: ['Religious', '#30d158']
 };
+const FONT_URL = 'https://fonts.googleapis.com/css2?family=Newsreader:opsz,wght@6..72,400..800&family=Permanent+Marker&family=Playfair+Display:wght@800;900&display=swap';
 
 function injectStyles() {
   if (navigator.onLine !== false && !document.querySelector('link[data-clock-font]')) {
     const l = document.createElement('link');
     l.rel = 'stylesheet';
     l.setAttribute('data-clock-font', '1');
-    l.href = 'https://fonts.googleapis.com/css2?family=Poppins:wght@600;700;800&family=Permanent+Marker&family=Playfair+Display:wght@800;900&display=swap';
+    l.href = FONT_URL;
     document.head.appendChild(l);
   }
 
@@ -184,11 +193,11 @@ function injectStyles() {
   }).join('');
 
   const css = `
-@font-face{font-family:"ClockNum";src:url("digits.ttf") format("truetype");font-weight:100 900;font-style:normal;font-display:swap;unicode-range:U+0030-0039}
-:root{--sf:"ClockNum","Poppins",system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;--accent:#ff9f0a;--danger:#ff453a;--ok:#30d158;--info:#0a84ff;--ink:255,255,255;--surf:rgba(255,255,255,.06);--surf2:rgba(255,255,255,.11);--line:rgba(255,255,255,.10);--pop:rgba(28,30,36,.80)}
+:root{--sf:"Newsreader","Source Serif 4",Georgia,"Times New Roman",serif;--accent:#ff9f0a;--danger:#ff453a;--ok:#30d158;--info:#0a84ff;--ink:255,255,255;--surf:rgba(255,255,255,.06);--surf2:rgba(255,255,255,.11);--line:rgba(255,255,255,.10);--pop:rgba(28,30,36,.80)}
 body.light{--ink:0,0,0;--surf:rgba(0,0,0,.04);--surf2:rgba(0,0,0,.07);--line:rgba(0,0,0,.09);--pop:rgba(255,255,255,.84)}
 html,body,button,input,select,textarea,svg text,.time .txt,.hcard,.preset,.btn{font-family:var(--sf)!important}
-*{font-weight:800!important}
+*{font-weight:500!important}
+.time,.time .txt,svg text,.stitle,#sheet .k,.hname,.atitle,.title,.qhead,.hhead,.wgh,.lrow,.pcn{font-weight:700!important}
 body{letter-spacing:-.01em;-webkit-font-smoothing:antialiased}
 .atitle,.title,.hname{letter-spacing:-.03em}
 body .time .txt{font-size:min(calc(var(--size)*1),20vw);letter-spacing:0;line-height:1}
@@ -293,15 +302,15 @@ body.light #sheet{color-scheme:light;box-shadow:0 24px 60px rgba(0,0,0,.16)}
 #sheet .shead+.sl{margin-top:2px}
 #sheet .grp{margin-top:14px;border-radius:16px;overflow:hidden;background:var(--surf);border:1px solid var(--line)}
 #sheet .sl+.grp,#sheet .shead+.grp,#sheet .pcard+.grp{margin-top:0}
-#sheet .li{display:flex;align-items:center;gap:12px;width:100%;min-height:50px;padding:10px 14px;box-sizing:border-box;text-align:left;font-size:15px}
+#sheet .li{display:flex;align-items:center;gap:12px;width:100%;min-height:50px;padding:10px 14px;box-sizing:border-box;text-align:left;font-size:16px}
 #sheet .li+.li,#sheet .li+.days{border-top:1px solid var(--line)}
 #sheet button.li{transition:background .12s ease}
 #sheet button.li:active{background:var(--surf2)}
 #sheet .k{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 #sheet .kk{flex:1;min-width:0}
 #sheet .kk .k{white-space:normal}
-#sheet .d{font-size:12px;line-height:1.35;margin-top:2px;opacity:.55;white-space:normal}
-#sheet .v{display:flex;align-items:center;gap:6px;min-width:0;max-width:52%;font-size:14px;opacity:.6;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+#sheet .d{font-size:13px;line-height:1.4;margin-top:2px;opacity:.6;white-space:normal}
+#sheet .v{display:flex;align-items:center;gap:6px;min-width:0;max-width:52%;font-size:15px;opacity:.6;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 #sheet .nav::after{content:"\\203A";flex:none;font-size:22px;line-height:1;opacity:.4;margin-left:-4px}
 #sheet .sn{margin:8px 8px 0;font-size:12px;line-height:1.4;opacity:.6}
 #sheet .sn.mid{text-align:center;margin:14px 0 4px}
@@ -387,11 +396,21 @@ body.light .seg::before{background:#fff;box-shadow:0 1px 4px rgba(0,0,0,.18)}
 #swHand line{stroke:var(--accent)!important}
 #swHand circle:first-of-type{fill:var(--accent)!important}
 .dialtime .cs,.dialtime .time.cs,#swCs{color:var(--accent)!important}
-.dialwrap{isolation:isolate;--fade:1}
-.dialwrap::before{content:"";position:absolute;inset:.8%;border-radius:50%;z-index:-1;background:rgba(255,255,255,.05);-webkit-backdrop-filter:blur(20px) saturate(1.6) brightness(.6);backdrop-filter:blur(20px) saturate(1.6) brightness(.6);box-shadow:0 20px 40px rgba(0,0,0,.4);opacity:var(--fade)}
-/* scrolling down fades the dial (face, ticks, hands); the time text stays */
-.dialwrap svg:not(.dg){opacity:var(--fade);will-change:opacity}
-#laps .lap{will-change:opacity}
+.dialwrap{isolation:isolate}
+.dialwrap::before{content:"";position:absolute;inset:.8%;border-radius:50%;z-index:-1;background:rgba(255,255,255,.05);-webkit-backdrop-filter:blur(20px) saturate(1.6) brightness(.6);backdrop-filter:blur(20px) saturate(1.6) brightness(.6);box-shadow:0 20px 40px rgba(0,0,0,.4)}
+
+/* ---- stopwatch: lap table (Lap | Lap time | Total), fastest red, slowest blue ---- */
+#laps{display:block;width:min(94vw,520px);margin:20px auto 0;padding:0 0 150px;max-height:none;overflow:visible}
+.lhead,.lrow{display:grid;grid-template-columns:1fr 1.5fr 1fr;align-items:center;padding:0 22px;column-gap:6px}
+.lhead{padding-top:12px;padding-bottom:14px;font-size:19px;opacity:.55;border-bottom:1px solid var(--line)}
+.lrow{position:relative;padding-top:20px;padding-bottom:20px;font-size:25px;letter-spacing:-.01em;font-variant-numeric:lining-nums tabular-nums}
+.lrow+.lrow::before{content:"";position:absolute;top:0;left:22px;right:22px;border-top:1px solid var(--line)}
+.lhead span:nth-child(2),.lrow span:nth-child(2){text-align:center}
+.lhead span:last-child,.lrow span:last-child{text-align:right}
+.lrow.fast span:nth-child(-n+2){color:#ff6b61}
+.lrow.slow span:nth-child(-n+2){color:#5b8ff0}
+
+#ringStop.holding{transform:scale(.94);opacity:.8}
 
 /* ---- Widgets tab: every design is a pure function of the time ---- */
 .wgpage{padding:72px 14px 150px}
@@ -496,7 +515,9 @@ function loadGlobal() {
   const g = {
     bg: '#000000', bgLight: '#f2f2f7', theme: 'dark', awake: false, font: 'sf', country: 'auto',
     alarmTone: 't31', timerTone: 't43', swTone: 'off', customName: '', upFilter: 'all', alarmFmt: '12',
-    snoozeMin: 5, snoozeMax: 3, wgFmt: '24', hapAlarm: true, hapTimer: true
+    snoozeMin: 5, snoozeMax: 3, wgFmt: '24',
+    ringMin: 5, stopWith: 'button', preNotify: true, gradual: true,
+    hapUi: true, hapAlarm: true, hapTimer: true
   };
   const s = readJson(GKEY);
   return s && typeof s === 'object' ? Object.assign(g, s) : g;
@@ -610,8 +631,10 @@ function swatches(id, list, cur) {
   }).join('') + '</div>';
 }
 
-function toggleRow(id, label, on) {
-  return '<button class="li" id="' + id + '"><span class="k">' + label + '</span><span class="sx' + (on ? ' on' : '') + '"></span></button>';
+// on/off row; desc (optional) is the small grey text under the label
+function toggleRow(id, label, on, desc) {
+  return '<button class="li" id="' + id + '"><div class="kk"><div class="k">' + label + '</div>' +
+    (desc ? '<div class="d">' + desc + '</div>' : '') + '</div><span class="sx' + (on ? ' on' : '') + '"></span></button>';
 }
 
 function navRow(attrs, label, value) {
@@ -864,21 +887,34 @@ function stopTone() {
   if (toneEl) { try { toneEl.pause(); } catch (e) {} toneEl = null; }
 }
 
-// resolves true when the sound really started
-function playTone(id, loop) {
+// resolves true when the sound really started; quiet = start at low volume (gradual alarm)
+function playTone(id, loop, quiet) {
   stopTone();
   const my = toneSeq;
   return toneUrl(id).then(function (url) {
     if (my !== toneSeq) return false;
-    if (!url) return id === 'custom' ? playTone(TONES[0].id, loop) : false;
+    if (!url) return id === 'custom' ? playTone(TONES[0].id, loop, quiet) : false;
     const a = new Audio(url);
     a.loop = !!loop;
+    if (quiet) a.volume = 0.1;
     toneEl = a;
     return a.play().then(function () { return true; });
   }).catch(function () { return false; });
 }
 
 function stopPreview() { if (!ringOn) stopTone(); }
+
+// gradual alarm volume: 10% -> 100% over 30 seconds
+function rampVolume() {
+  clearInterval(rampTimer);
+  const t0 = Date.now();
+  rampTimer = setInterval(function () {
+    if (!toneEl || !ringOn) { clearInterval(rampTimer); return; }
+    const f = Math.min(1, (Date.now() - t0) / 30000);
+    try { toneEl.volume = 0.1 + 0.9 * f; } catch (e) {}
+    if (f >= 1) clearInterval(rampTimer);
+  }, 500);
+}
 
 /* ---- ringing: alarm, snooze, timer ----
    ctx = { kind 'alarm'|'timer', id, title, tone, sn, sc, used }              */
@@ -899,6 +935,8 @@ function ringActionFor(c) {
   }
   return null;
 }
+
+function holdStop(c) { return !!c && c.kind === 'alarm' && globalSet.stopWith === 'hold'; }
 
 function setSnooze(s) {
   snz = s;
@@ -948,6 +986,7 @@ function startRing(c) {
   const title = c.used ? c.title + ' \u00b7 snoozed' : c.title;
 
   $('ringTitle').textContent = title;
+  $('ringStop').textContent = holdStop(c) ? 'Hold to stop' : 'Stop';
   const b = $('ringSnooze');
   b.style.display = ringAction ? 'inline-block' : 'none';
   if (ringAction) b.textContent = ringAction.label;
@@ -956,15 +995,21 @@ function startRing(c) {
   const acts = [{ action: 'stop', title: 'Stop' }];
   if (ringAction) acts.unshift({ action: c.kind === 'timer' ? 'again' : 'snooze', title: c.kind === 'timer' ? 'Restart' : 'Snooze' });
   if (document.hidden || !document.hasFocus()) {
-    notify(title, 'Tap to open the clock', 'clock-ring', {
-      silent: true, actions: acts, data: { kind: c.kind, id: c.id || '' },
-      vibrate: hapOn(c.kind) ? VIB : []
-    });
+    notify(title, 'Tap to open the clock', 'clock-ring', { silent: true, actions: acts, data: { kind: c.kind, id: c.id || '' } });
   }
 
-  playTone(c.tone || TONES[0].id, true);
-  if (hapOn(c.kind)) haptic(300);
-  ringTimer = setInterval(function () { if (ringCtx && hapOn(ringCtx.kind)) haptic(300); }, 900);
+  const gradual = c.kind === 'alarm' && !!globalSet.gradual;
+  playTone(c.tone || TONES[0].id, true, gradual).then(function (ok) {
+    if (ok && gradual && ringOn) rampVolume();
+  });
+  haptic(300, c.kind);
+  ringTimer = setInterval(function () { haptic(300, c.kind); }, 900);
+  // ring duration: an alarm stops by itself after the chosen time
+  if (c.kind === 'alarm' && globalSet.ringMin > 0) {
+    ringStopTimer = setTimeout(function () {
+      if (ringOn) { stopRing(); toast('Alarm stopped automatically'); }
+    }, globalSet.ringMin * 60000);
+  }
   setAwake(true);
   setMedia(true, title);
   if (LN && !document.hidden) setTimeout(function () { LN.removeAllDeliveredNotifications().catch(function () {}); }, 1500);
@@ -976,15 +1021,28 @@ function stopRing() {
   ringAction = null;
   closeNotifs();
   if (ringTimer) { clearInterval(ringTimer); ringTimer = null; }
-  haptic(0);
+  clearTimeout(ringStopTimer);
+  clearInterval(rampTimer);
   stopTone();
   setMedia(false);
   $('ring').classList.remove('open');
   if (!globalSet.awake) setAwake(false);
 }
 
+function alarmOff(id) {
+  const a = alarms.find(function (x) { return x.id === id; });
+  if (!a) return;
+  a.on = false;
+  saveAlarms(); renderAlarms(); renderQuick();
+  toast('Alarm turned off');
+}
+
 // buttons on the notification (lock screen / notification centre) come here
 function handleRingAction(action, kind, id) {
+  if (kind === 'pre') {                      // the "rings in 15 minutes" notification
+    if (action === 'alarmoff') alarmOff(id);
+    return;
+  }
   if (ringOn && ringCtx) {
     if (action === 'stop') stopRing();
     else if (action && ringAction) ringAction.fn();
@@ -1377,11 +1435,14 @@ function cacheSearch(key, list) {
   if (searchKeys.length > 40) delete searchCache[searchKeys.shift()];
 }
 
-// offline fallback: the time zone names the browser knows
 function localZoneSearch(q) {
   if (!zoneIndex) {
     let all = [];
     try { all = Intl.supportedValuesOf('timeZone'); } catch (e) {}
+    if (!all.length) {
+      all = ['Asia/Dhaka', 'Asia/Kolkata', 'Asia/Karachi', 'Asia/Dubai', 'Asia/Riyadh', 'Asia/Tokyo', 'Asia/Singapore',
+        'Europe/London', 'Europe/Paris', 'America/New_York', 'America/Los_Angeles', 'Australia/Sydney', 'UTC'];
+    }
     zoneIndex = all.filter(validZone).map(function (z) {
       return { name: tzCity(z), timezone: z, admin1: z.split('/')[0], country: '' };
     });
@@ -1622,7 +1683,7 @@ function calHtml(n) {
 
 function agendaHtml(n) {
   const today = new Date(n.getFullYear(), n.getMonth(), n.getDate());
-  const k = dayKey(today) + detectCountry() + wdVersion;
+  const k = dayKey(today) + detectCountry();
   if (agMemo.k !== k) agMemo = { k: k, list: getUpcoming(today) };
   const l = agMemo.list;
   const e = l[0];
@@ -1944,6 +2005,8 @@ function snoozeSummary() {
     : 'Off';
 }
 
+function stopWithLabel() { return globalSet.stopWith === 'hold' ? 'Hold button' : 'Button'; }
+
 function openSettings() {
   const light = globalSet.theme === 'light';
   const list = light ? BGS_LIGHT : BGS_DARK;
@@ -1953,15 +2016,31 @@ function openSettings() {
   h += sec('Appearance',
     '<div class="li"><span class="k">Theme</span>' + seg('themeSeg', [['dark', 'Dark'], ['light', 'Light']], globalSet.theme) + '</div>' +
     '<div class="li"><span class="k">Background</span>' + swatches('bgSw', list, curBg) + '</div>' +
-    '<div class="li"><span class="k">Numbers</span>' + seg('fontSeg', [['sf', 'Bold'], ['retro', 'Retro']], digitMode) + '</div>' +
-    '<div class="li"><span class="k">Alarm time</span>' + alarmFmtSeg('alFmt') + '</div>');
-  h += sec('Sounds', Object.keys(TONE_KINDS).map(function (k) {
+    '<div class="li"><span class="k">Numbers</span>' + seg('fontSeg', [['sf', 'Bold'], ['retro', 'Retro']], digitMode) + '</div>');
+
+  h += sec('Alarms',
+    '<div class="li"><span class="k">Ring duration</span><select class="r" id="ringDur">' +
+    RING_MIN.map(function (m) {
+      return '<option value="' + m + '"' + (m === globalSet.ringMin ? ' selected' : '') + '>' + m + (m === 1 ? ' minute' : ' minutes') + '</option>';
+    }).join('') + '</select></div>' +
+    navRow('id="stbtn"', 'Stop alarm with', stopWithLabel()) +
+    navRow('data-tone="alarm"', 'Default alarm sound', esc(toneName(globalSet.alarmTone))) +
+    navRow('id="snbtn"', 'Snooze', snoozeSummary()) +
+    '<div class="li"><span class="k">Alarm time</span>' + alarmFmtSeg('alFmt') + '</div>' +
+    toggleRow('preN', 'Notify before ringing', globalSet.preNotify,
+      'Get a notification 15 minutes before an alarm goes off so you have a chance to turn it off before it rings.') +
+    toggleRow('grad', 'Gradual alarm volume', globalSet.gradual,
+      'The alarm rings at a lower volume and slowly increases until it reaches full volume.'));
+
+  h += sec('Other sounds', ['timer', 'sw'].map(function (k) {
     return navRow('data-tone="' + k + '"', TONE_KINDS[k].label, esc(toneName(globalSet[TONE_KINDS[k].key])));
-  }).join('') + navRow('id="snbtn"', 'Snooze', snoozeSummary()));
-  h += sec('Vibration',
-    toggleRow('hapA', 'Alarm vibration', hapOn('alarm')) +
-    toggleRow('hapT', 'Timer vibration', hapOn('timer')),
-    'Vibrate while an alarm or timer is ringing.');
+  }).join(''));
+
+  h += sec('Haptics',
+    toggleRow('hapUi', 'Touch & UI', globalSet.hapUi !== false, 'Vibrate on taps, wheels and buttons.') +
+    toggleRow('hapAlarm', 'Alarm', globalSet.hapAlarm !== false, 'Vibrate while an alarm is ringing.') +
+    toggleRow('hapTimer', 'Timer', globalSet.hapTimer !== false, 'Vibrate when a timer finishes.'));
+
   h += sec('General',
     toggleRow('awake', 'Keep screen awake', globalSet.awake) +
     navRow('id="upbtn"', 'Upcoming dates', esc(countryName(detectCountry()) || 'Auto')) +
@@ -1991,15 +2070,26 @@ function openSettings() {
 
   pick('alFmt', setAlarmFmt);
 
-  bindToggle('hapA', hapOn('alarm'), function (on) {
-    globalSet.hapAlarm = on;
-    saveGlobal(); schedSoon();
-    if (on) haptic(40);
+  $('ringDur').onchange = function (e) {
+    globalSet.ringMin = clampN(e.target.value, 1, 60);
+    saveGlobal();
+  };
+  $('stbtn').onclick = openStopSettings;
+
+  bindToggle('preN', globalSet.preNotify, function (on) {
+    globalSet.preNotify = on;
+    saveGlobal();
+    if (on) maybeAskNotifications();
+    schedSoon();
   });
-  bindToggle('hapT', hapOn('timer'), function (on) {
-    globalSet.hapTimer = on;
-    saveGlobal(); schedSoon();
-    if (on) haptic(40);
+  bindToggle('grad', globalSet.gradual, function (on) { globalSet.gradual = on; saveGlobal(); });
+
+  [['hapUi', 'ui'], ['hapAlarm', 'alarm'], ['hapTimer', 'timer']].forEach(function (p) {
+    bindToggle(p[0], globalSet[p[0]] !== false, function (on) {
+      globalSet[p[0]] = on;
+      saveGlobal();
+      if (on) haptic(40, p[1]);   // a short buzz to show it works
+    });
   });
 
   bindToggle('awake', globalSet.awake, function (on) {
@@ -2018,6 +2108,29 @@ function openSettings() {
     if (document.fullscreenElement) document.exitFullscreen();
     else if (document.documentElement.requestFullscreen) document.documentElement.requestFullscreen().catch(function () {});
   };
+  $('done').onclick = closeSheet;
+}
+
+function openStopSettings() {
+  const opts = [
+    ['button', 'Button', 'Tap Stop on the ringing screen.'],
+    ['hold', 'Hold button', 'Hold Stop for 1.5 seconds, so it cannot be stopped by accident.']
+  ];
+  const h = head('Stop alarm with', 'spBack') + sec('', opts.map(function (o) {
+    return '<button class="li' + (globalSet.stopWith === o[0] ? ' sel' : '') + '" data-v="' + o[0] + '"><div class="kk"><div class="k">' + o[1] +
+      '</div><div class="d">' + o[2] + '</div></div><span class="chk">&#10003;</span></button>';
+  }).join('')) + '<div class="acts"><button class="bt pri" id="done">Done</button></div>';
+  openSheet(h, 'settings');
+
+  sheet.querySelectorAll('.li[data-v]').forEach(function (b) {
+    b.onclick = function () {
+      globalSet.stopWith = b.dataset.v;
+      saveGlobal();
+      sheet.querySelectorAll('.li[data-v]').forEach(function (x) { x.classList.toggle('sel', x === b); });
+      haptic(8);
+    };
+  });
+  $('spBack').onclick = openSettings;
   $('done').onclick = closeSheet;
 }
 
@@ -2231,7 +2344,6 @@ function showTab(name) {
   window.scrollTo(0, 0);
   closeSheet();
   if (name === 'timer') setTimeout(syncWheels, 50);
-  if (name === 'stopwatch') setTimeout(schedSwFade, 30);
   if (name === 'home') {
     renderUpcoming();
     setTimeout(measureUpcoming, 60);
@@ -2659,6 +2771,30 @@ function initAlarmPage() {
   renderQuick();
 }
 
+// "Notify before ringing": 15 minutes before an alarm, once per ring time
+function checkPre() {
+  if (!globalSet.preNotify) return;
+  const now = Date.now();
+  alarms.forEach(function (a) {
+    if (!a.on) return;
+    const t = nextAlarmTime(a);
+    const left = t - now;
+    if (!t || left <= 0 || left > PRE_MS || preSent[a.id] === t) return;
+    preSent[a.id] = t;
+    const title = (a.label || 'Alarm') + ' ' + fmtClock(a.time, alarmFmt());
+    const min = Math.ceil(left / 60000);
+    toast(title + ' rings in ' + min + ' min', {
+      ms: 9000,
+      action: { label: 'Turn off', fn: function () { alarmOff(a.id); } }
+    });
+    if (document.hidden) {
+      notify('Alarm in ' + min + ' min', title, 'pre-' + a.id, {
+        requireInteraction: false, actions: [{ action: 'alarmoff', title: 'Turn off' }], data: { kind: 'pre', id: a.id }
+      });
+    }
+  });
+}
+
 function checkAlarms() {
   const now = new Date();
   const nowMin = now.getHours() * 60 + now.getMinutes();
@@ -2685,10 +2821,11 @@ function checkAlarms() {
     setSnooze(null);
     startRing(c);
   }
+  checkPre();
 }
 
 /* ==========================================================================
-   13. STOPWATCH  (+ scroll fade)
+   13. STOPWATCH
    ========================================================================== */
 function swMs() { return sw.elapsed + (sw.running ? Date.now() - sw.start : 0); }
 
@@ -2716,7 +2853,7 @@ function buildDial() {
   for (let k = 1; k <= 12; k++) {
     const a = k * 30 * Math.PI / 180;
     s += '<text x="' + (150 + 108 * Math.sin(a)).toFixed(1) + '" y="' + (150 - 108 * Math.cos(a) + 5).toFixed(1) +
-      '" text-anchor="middle" font-size="15" font-weight="700" fill="#ececec">' + (k * 5) + '</text>';
+      '" text-anchor="middle" font-size="15" fill="#ececec">' + (k * 5) + '</text>';
   }
   g.innerHTML = s;
 
@@ -2729,7 +2866,7 @@ function buildDial() {
   for (let q = 0; q < 6; q++) {
     const b = q * 60 * Math.PI / 180;
     t += '<text x="' + (150 + 25 * Math.sin(b)).toFixed(1) + '" y="' + (208 - 25 * Math.cos(b) + 3).toFixed(1) +
-      '" text-anchor="middle" font-size="9" font-weight="700" fill="#cfcfcf">' + labels[q] + '</text>';
+      '" text-anchor="middle" font-size="9" fill="#cfcfcf">' + labels[q] + '</text>';
   }
   sg.innerHTML = t;
 }
@@ -2775,70 +2912,29 @@ function renderSw() {
   if (h2) h2.setAttribute('transform', 'rotate(' + (((ms / 60000) % 30) / 30 * 360).toFixed(2) + ' 150 208)');
 }
 
+// Lap table: newest on top. Shortest lap = red, longest lap = blue (needs 2+ laps).
 function renderLaps() {
   const box = $('laps');
   if (!box) return;
-  box.innerHTML = '';
-  for (let i = sw.laps.length - 1; i >= 0; i--) {
-    const total = fmtMs(sw.laps[i]);
-    const prev = i > 0 ? sw.laps[i - 1] : 0;
-    const split = fmtMs(sw.laps[i] - prev);
-    const row = document.createElement('div');
-    row.className = 'lap';
-    row.textContent = 'Lap ' + (i + 1) + '   +' + split.main + '.' + split.cs + '   ' + total.main + '.' + total.cs;
-    box.appendChild(row);
+  const n = sw.laps.length;
+  if (!n) { box.innerHTML = ''; return; }
+
+  const split = sw.laps.map(function (t, i) { return t - (i ? sw.laps[i - 1] : 0); });
+  let lo = 0, hi = 0;
+  split.forEach(function (v, i) {
+    if (v < split[lo]) lo = i;
+    if (v > split[hi]) hi = i;
+  });
+
+  let html = '<div class="lhead"><span>Lap</span><span>Lap time</span><span>Total</span></div>';
+  for (let i = n - 1; i >= 0; i--) {
+    const cls = n > 1 ? (i === lo ? ' fast' : (i === hi ? ' slow' : '')) : '';
+    const s = fmtMs(split[i]);
+    const t = fmtMs(sw.laps[i]);
+    html += '<div class="lrow' + cls + '"><span>' + pad(i + 1) + '</span><span>+' + s.main + '.' + s.cs +
+      '</span><span>' + t.main + '.' + t.cs + '</span></div>';
   }
-  schedSwFade();
-}
-
-/* Scrolling down fades the dial out (face, ticks, hands) while the big time
-   stays pinned near the top, and lap rows fade as they slide under it.
-   It works whichever element scrolls: the page, the stopwatch tab or the lap list. */
-const SW_PIN = 64;   // px from the top where the time stays
-
-function schedSwFade() {
-  if (!swRaf) swRaf = requestAnimationFrame(swFade);
-}
-
-function swFade() {
-  swRaf = 0;
-  const view = $('v-stopwatch');
-  const wrap = view ? view.querySelector('.dialwrap') : null;
-  if (!wrap || !wrap.offsetParent) return;
-
-  const laps = $('laps');
-  const s = Math.max(
-    window.scrollY || 0, view.scrollTop || 0,
-    laps ? laps.scrollTop : 0,
-    laps && laps.parentElement ? laps.parentElement.scrollTop : 0
-  );
-  const p = Math.min(1, s / Math.max(120, wrap.offsetHeight * 0.55));
-  wrap.style.setProperty('--fade', (1 - p).toFixed(3));
-
-  // keep the time visible at the top once its natural place scrolls away
-  const t = view.querySelector('.dialtime');
-  let limit = -1;
-  if (t) {
-    const cur = t._sh || 0;
-    const natural = t.getBoundingClientRect().top - cur;
-    const want = s > 0 ? Math.max(0, SW_PIN - natural) : 0;
-    if (want !== cur) { t.style.translate = want ? '0 ' + want + 'px' : ''; t._sh = want; }
-    if (want > 0) limit = t.getBoundingClientRect().bottom;
-  }
-
-  // lap rows fade out as they reach the pinned time
-  if (laps) {
-    Array.prototype.forEach.call(laps.children, function (r) {
-      const o = limit < 0 ? 1 : Math.max(0, Math.min(1, (r.getBoundingClientRect().top - limit) / 48));
-      r.style.opacity = o === 1 ? '' : o.toFixed(2);
-    });
-  }
-}
-
-function initSwFade() {
-  // scroll events do not bubble, so listen in the capture phase to catch any scroller
-  document.addEventListener('scroll', schedSwFade, { passive: true, capture: true });
-  window.addEventListener('resize', schedSwFade);
+  box.innerHTML = html;
 }
 
 /* ==========================================================================
@@ -3069,30 +3165,30 @@ function openPresetSheet(origin) {
 }
 
 /* ==========================================================================
-   15. UPCOMING  (nothing typed by hand, everything is fetched or calculated)
+   15. UPCOMING  (fully dynamic: nothing is typed by hand)
    --------------------------------------------------------------------------
    Country : Settings choice, otherwise GPS -> internet (IP) -> time zone -> language
-   Sources merged into one list for the next 12 months:
-     1. date-holidays library: public, bank, optional and observance days and the
-        religious days of about 200 countries (copy kept in the browser cache)
-     2. Nager.Date API as a backup when the library has nothing for a country
-     3. Wikipedia "holidays and observances" feed, one request per calendar day,
-        for world days and other observances (saved for 60 days, then refreshed)
-     4. Seasons: equinoxes and solstices, calculated with astronomy formulas
-     5. Your own dates
-   Duplicates (same name within 3 days) are removed. Everything refreshes by
-   itself when the app opens, comes back online, or a new day starts.
+   Sources for the next 12 months, merged into one list:
+     1. date-holidays library (about 200 countries), cached for offline use
+        -> public holidays, bank days, observances, local-language names
+     2. Nager.Date API, only when the library has nothing for the country
+     3. Wikidata (SPARQL): every recurring national / historic / cultural day
+        that is linked to the country (e.g. Bangladesh: Language Martyrs' Day,
+        Genocide Remembrance Day, Martyred Intellectuals Day ...). Saved 30 days.
+     4. Your own dates
+   Duplicates (same / similar name within 3 days) are merged.
+   Each day gets one type: Religious, National & historic, Cultural or Holiday.
+   "Holidays" filter shows every public holiday, whatever its type.
    Swipe left / right on the list to move between the filters.
    ========================================================================== */
 const LIB_URLS = ['holidays.min.js', 'https://cdn.jsdelivr.net/npm/date-holidays@3/dist/umd.min.js', 'https://unpkg.com/date-holidays@3/dist/umd.min.js'];
 const LIB_CACHE = 'clock-holidays-lib';
-// names that are religious by wording; world days by wording
-const REL_RE = /christmas|\beaster|good friday|epiphany|ascension|pentecost|\bwhit(sun|\s|$)|corpus christi|assumption|all saints|all souls|immaculate|diwali|deepavali|\bholi\b|vesak|buddha|navratri|dussehra|durga|janmashtami|ramadan|\beid|fitr|adha|ashura|mawlid|passover|hanukkah|yom kippur|rosh hashan|nyepi|waisak|thaipusam|palm sunday|maundy|ramazan|bayram|kurban|\braya\b|nuzul|arafah|shab-e|miladun|isra|qadr|purim|sukkot|shavuot|ash wednesday|nanak|baisakhi|vaisakhi|mahavir|onam|pongal|ganesh|rath yatra|shivaratri|ram navami|poya|new year/i;
-const WORLD_RE = /^(world|international|global|universal|united nations)\b/i;
-const UP_FILTERS = [['all', 'All'], ['h', 'Holidays'], ['r', 'Religious'], ['i', 'Observances'], ['w', 'World days'], ['s', 'Seasons']];
-const UP_ORDER = 'hrisw';
+const REL_RE = /christmas|\beaster|good friday|epiphany|ascension|pentecost|\bwhit(sun|\s|$)|corpus christi|assumption|all saints|all souls|immaculate|diwali|deepavali|\bholi\b|vesak|buddha|navratri|dussehra|durga|janmashtami|ramadan|\beid|fitr|adha|ashura|mawlid|passover|hanukkah|yom kippur|rosh hashan|nyepi|waisak|thaipusam|palm sunday|maundy|ramazan|bayram|kurban|\braya\b|nuzul|arafah|shab-e|miladun|isra|qadr|purim|sukkot|shavuot|ash wednesday|nanak|baisakhi|vaisakhi|mahavir|onam|pongal|ganesh|rath yatra|shivaratri|ram navami|poya|puja|purnima|ashtami|muharram|hijri|laylat|lailat/i;
+const HIST_RE = /independence|victory|liberation|martyr|shaheed|remembrance|memorial|massacre|genocide|revolution|republic|constitution|national|armed forces|army|veteran|heroes|unification|founding|freedom|resistance|uprising|sovereignty|\bflag\b|\bwar\b|battle|mourning|mother language|language day|language movement|anniversary/i;
+const UP_FILTERS = [['all', 'All'], ['h', 'Holidays'], ['n', 'National & historic'], ['c', 'Cultural'], ['r', 'Religious']];
 const UP_PAGE = 40;
 const UP_DAYS = 366;
+const MONTHS = ['jan', 'feb', 'mar', 'apr', 'may', 'jun', 'jul', 'aug', 'sep', 'oct', 'nov', 'dec'];
 
 let lastCc = null;
 let countryCache = null;
@@ -3104,11 +3200,9 @@ let holLoading = false;
 let lastUpSig = '';
 let lastOv = -1;
 let upLimit = UP_PAGE;
-let wdData = readJson(WDKEY) || {};   // 'MM-DD' -> { t: saved at, l: [[name, type], ...] }
-let wdBusy = false;
-let wdVersion = 0;                    // grows whenever new world days arrive
 const holMemo = {};
 const extraBusy = {};
+const wdBusy = {};
 
 /* ---- all countries: the list is made by the browser ---- */
 function countryList() {
@@ -3276,7 +3370,7 @@ function loadLib() {
 }
 
 // null = library not loaded yet, [] = no data for this country
-// every type is kept: public days are "h", everything else is "i" (refined later)
+// item: { d 'YYYY-MM-DD', n English name, l local name, p public holiday? }
 function libList(cc, yr) {
   const k = cc + yr;
   if (holMemo[k]) return holMemo[k];
@@ -3292,7 +3386,7 @@ function libList(cc, yr) {
     new H(cc).getHolidays(yr).forEach(function (x) {
       const d = x.date.slice(0, 10);
       const n = names[d + x.rule] || x.name;
-      out.push({ d: d, n: n, l: x.name !== n ? x.name : '', c: x.type === 'public' ? 'h' : 'i' });
+      out.push({ d: d, n: n, l: x.name !== n ? x.name : '', p: x.type === 'public' });
     });
   } catch (e) {}
   holMemo[k] = out;
@@ -3319,7 +3413,7 @@ function fetchExtra(cc, yr) {
         return {
           d: x.date, n: x.name || '',
           l: x.localName && x.localName !== x.name ? x.localName : '',
-          c: (x.types || []).indexOf('Public') > -1 ? 'h' : 'i'
+          p: (x.types || []).indexOf('Public') > -1
         };
       }) : []);
     })
@@ -3337,8 +3431,56 @@ function holItems(cc, yr) {
   return c ? c.list : [];
 }
 
+/* ---- source 3: Wikidata, every recurring day of the country (fixed day of the year) ---- */
+// "March 26" / "26 March" -> { m: 2, d: 26 }; moon-calendar values (1 Shawwal ...) give null
+function parseMD(s) {
+  const t = String(s).toLowerCase();
+  let m = /([a-z]{3,})\.?\s+(\d{1,2})\b/.exec(t);
+  let mon, day;
+  if (m) { mon = m[1]; day = +m[2]; }
+  else if ((m = /\b(\d{1,2})(?:st|nd|rd|th)?\s+([a-z]{3,})/.exec(t))) { day = +m[1]; mon = m[2]; }
+  else return null;
+  const i = MONTHS.indexOf(mon.slice(0, 3));
+  return (i < 0 || day < 1 || day > 31) ? null : { m: i, d: day };
+}
+
+function wdQuery(cc) {
+  return 'SELECT ?itemLabel ?dayLabel (EXISTS{?item wdt:P31 wd:Q1197685} AS ?pub) WHERE {' +
+    ' ?c wdt:P297 "' + cc + '". ?item wdt:P17 ?c; wdt:P837 ?day.' +
+    ' SERVICE wikibase:label { bd:serviceParam wikibase:language "en". } } LIMIT 600';
+}
+
+function readWd(cc) {
+  const o = readJson(WKEY + cc);
+  return o && Array.isArray(o.list) ? o : null;
+}
+
+function fetchWd(cc) {
+  const c = readWd(cc);
+  if (wdBusy[cc] || (c && Date.now() - c.ts < WD_TTL)) return Promise.resolve();
+  wdBusy[cc] = 1;
+  const url = WD_URL + '?format=json&origin=*&query=' + encodeURIComponent(wdQuery(cc));
+
+  return fetchJson(url, { timeout: 25000, retries: 1 })
+    .then(function (d) {
+      const seen = {};
+      const list = [];
+      ((d && d.results && d.results.bindings) || []).forEach(function (b) {
+        const n = b.itemLabel && b.itemLabel.value;
+        const md = b.dayLabel && parseMD(b.dayLabel.value);
+        if (!n || !md || /^Q\d+$/.test(n)) return;
+        const k = md.m + '-' + md.d + n;
+        if (seen[k]) return;
+        seen[k] = 1;
+        list.push({ m: md.m, d: md.d, n: n, p: !!(b.pub && b.pub.value === 'true') });
+      });
+      writeJson(WKEY + cc, { ts: Date.now(), list: list });
+    })
+    .catch(function () {})   // offline or busy: the next load tries again
+    .then(function () { delete wdBusy[cc]; });
+}
+
 function loadHolidays(cc) {
-  loadWorldDays();
   if (!cc) return;
   const y = new Date().getFullYear();
   holLoading = true;
@@ -3348,6 +3490,7 @@ function loadHolidays(cc) {
       const l = libList(cc, yr);
       if (!(l && l.length) && navigator.onLine !== false) jobs.push(fetchExtra(cc, yr));
     });
+    if (navigator.onLine !== false && /^[A-Z]{2}$/.test(cc)) jobs.push(fetchWd(cc));
     return Promise.all(jobs);
   }).then(function () {
     holLoading = false;
@@ -3355,82 +3498,7 @@ function loadHolidays(cc) {
   });
 }
 
-/* ---- source 3: Wikipedia holidays and observances (per calendar day) ---- */
-function wdKey(d) { return pad(d.getMonth() + 1) + '-' + pad(d.getDate()); }
-
-// keeps world days, religious days and "... Day / Week" observances; drops saints' feasts
-function wdClass(name) {
-  if (!name || name.length > 70 || /\bsaint\b|\bst\. |\bfeast\b|\bsolemnity\b|\bour lady\b/i.test(name)) return '';
-  if (WORLD_RE.test(name)) return 'w';
-  if (REL_RE.test(name)) return 'r';
-  if (/\b(day|week|eve)\b/i.test(name)) return 'i';
-  return '';
-}
-
-function wdSave() { writeJson(WDKEY, wdData); }
-
-function loadWorldDays() {
-  if (wdBusy || navigator.onLine === false) return;
-  const today = new Date();
-  const todo = [];
-  for (let i = 0; i <= UP_DAYS; i++) {
-    const k = wdKey(addDays(today, i));
-    const c = wdData[k];
-    if ((!c || Date.now() - c.t > WD_TTL) && todo.indexOf(k) < 0) todo.push(k);
-  }
-  if (!todo.length) return;
-
-  wdBusy = true;
-  let fails = 0, done = 0;
-
-  // three requests at a time, nearest days first; stops early when the service is unreachable
-  function next() {
-    if (fails >= 5 || !todo.length) return Promise.resolve();
-    const k = todo.shift();
-    const p = k.split('-');
-    return fetchJson(WD_URL + p[0] + '/' + p[1], { timeout: 10000, retries: 0 })
-      .then(function (d) {
-        const seen = {};
-        const l = [];
-        ((d && d.holidays) || []).forEach(function (x) {
-          const n = String(x.text || '').split(/\s*[\(\[]/)[0].trim();
-          const t = wdClass(n);
-          if (t && !seen[n]) { seen[n] = 1; l.push([n, t]); }
-        });
-        wdData[k] = { t: Date.now(), l: l };
-        wdVersion++;
-        if (++done === 20) renderUpcoming();
-      })
-      .catch(function () { fails++; })
-      .then(next);
-  }
-
-  Promise.all([next(), next(), next()]).then(function () {
-    wdBusy = false;
-    wdSave();
-    renderUpcoming();
-  });
-}
-
-/* ---- source 4: seasons (equinoxes and solstices, Meeus mean-event polynomials) ---- */
-const SEASON_C = [
-  [2451623.80984, 365242.37404, 0.05169, -0.00411, -0.00057],
-  [2451716.56767, 365241.62603, 0.00325, 0.00888, -0.00030],
-  [2451810.21715, 365242.01767, -0.11575, 0.00337, 0.00078],
-  [2451900.05952, 365242.74049, -0.06223, -0.00823, 0.00032]
-];
-const SEASON_N = ['March Equinox', 'June Solstice', 'September Equinox', 'December Solstice'];
-
-function seasonDates(y) {
-  const t = (y - 2000) / 1000;
-  return SEASON_C.map(function (c, i) {
-    const jde = c[0] + t * (c[1] + t * (c[2] + t * (c[3] + t * c[4])));
-    const d = new Date((jde - 2440587.5) * 864e5);
-    return { n: SEASON_N[i], dt: new Date(d.getFullYear(), d.getMonth(), d.getDate()) };
-  });
-}
-
-/* ---- source 5: your own dates ---- */
+/* ---- source 4: your own dates ---- */
 function loadCustom() {
   const c = readJson(CUSTOM_KEY);
   return Array.isArray(c) ? c : [];
@@ -3440,80 +3508,82 @@ function saveCustom(list) { writeJson(CUSTOM_KEY, list); }
 /* ---- merge everything: today until one year ahead ---- */
 function norm(s) { return String(s).toLowerCase().replace(/\bthe\b|\bday\b/g, '').replace(/[^a-z0-9]/g, ''); }
 
-function upType(name, base) {
-  if (REL_RE.test(name)) return 'r';
-  if (base === 'i' && WORLD_RE.test(name)) return 'w';
-  return base;
-}
-
-// same event under a slightly different name ("Eid al-Fitr" / "Eid al-Fitr Holiday")
 function sameName(a, b) {
   const x = norm(a), y = norm(b);
-  return x === y || (x.length > 5 && y.length > 5 && (x.indexOf(y) > -1 || y.indexOf(x) > -1));
+  return x === y || (x.length > 3 && y.length > 3 && (x.indexOf(y) > -1 || y.indexOf(x) > -1));
+}
+
+// one type per day: religious, national & historic, public holiday, otherwise cultural
+function dayType(name, pub) {
+  if (REL_RE.test(name)) return 'r';
+  if (HIST_RE.test(name)) return 'n';
+  return pub ? 'h' : 'c';
 }
 
 function getUpcoming(today) {
   const cc = detectCountry();
   const y = today.getFullYear();
   const out = [];
-  const seen = {};
 
-  function push(dt, n, b, t) {
+  // forced = type chosen by the user for own dates
+  function push(dt, n, local, pub, forced) {
     const diff = Math.round((dt - today) / 864e5);
-    if (diff < 0 || diff > UP_DAYS) return;
-    const k = dayKey(dt) + norm(n);
-    if (seen[k]) return;
-    seen[k] = 1;
-    out.push({ dt: dt, n: n, b: b || '', t: UP_TYPES[t] ? t : 'i', diff: diff });
+    if (diff < 0 || diff > UP_DAYS || !n) return;
+    const dup = out.find(function (e) { return Math.abs(e.dt - dt) <= 3.5 * 864e5 && sameName(e.n, n); });
+    if (dup) {
+      if (pub) dup.pub = true;
+      if (!dup.b && local) dup.b = local;
+      return;
+    }
+    out.push({ dt: dt, n: n, b: local || '', t: forced || dayType(n, pub), pub: !!pub, diff: diff });
   }
 
-  // 1 + 2: library or backup API
   if (cc) {
     for (let yr = y; yr <= y + 1; yr++) {
+      // 1 + 2: library, or the backup API when the library has nothing
       holItems(cc, yr).forEach(function (x) {
         const p = String(x.d).split('-');
-        if (p.length === 3) push(new Date(+p[0], +p[1] - 1, +p[2]), x.n, x.l, upType(x.n, x.c));
+        if (p.length === 3) push(new Date(+p[0], +p[1] - 1, +p[2]), x.n, x.l, x.p);
       });
+    }
+    // 3: Wikidata (fixed-date national, historic and cultural days)
+    const wd = readWd(cc);
+    if (wd) {
+      for (let yr = y; yr <= y + 1; yr++) {
+        wd.list.forEach(function (x) { push(new Date(yr, x.m, x.d), x.n, '', x.p); });
+      }
     }
   }
 
-  // 3 + 4: world days and seasons, skipped when the same event is already listed within 3 days
-  const base = out.slice();
-  function addExtra(dt, n, t) {
-    const clash = base.some(function (b) { return Math.abs(b.dt - dt) <= 3.5 * 864e5 && sameName(n, b.n); });
-    if (!clash) push(dt, n, '', t);
-  }
-  for (let i = 0; i <= UP_DAYS; i++) {
-    const d = addDays(today, i);
-    const c = wdData[wdKey(d)];
-    if (c) c.l.forEach(function (x) { addExtra(d, x[0], x[1]); });
-  }
-  for (let yr = y; yr <= y + 1; yr++) {
-    seasonDates(yr).forEach(function (s) { push(s.dt, s.n, '', 's'); });
-  }
-
-  // 5: your own dates
+  // 4: your own dates
   loadCustom().forEach(function (c) {
     const p = String(c.d).split('-');
     if (p.length !== 3 || !c.n) return;
+    const t = UP_TYPES[c.t] ? c.t : 'c';
+    const pub = t === 'h';
     if (c.r) {
-      for (let yr = y; yr <= y + 1; yr++) push(new Date(yr, +p[1] - 1, +p[2]), c.n, c.b, c.t);
+      for (let yr = y; yr <= y + 1; yr++) push(new Date(yr, +p[1] - 1, +p[2]), c.n, c.b, pub, t);
     } else {
-      push(new Date(+p[0], +p[1] - 1, +p[2]), c.n, c.b, c.t);
+      push(new Date(+p[0], +p[1] - 1, +p[2]), c.n, c.b, pub, t);
     }
   });
 
   out.sort(function (a, b) {
-    return (a.dt - b.dt) || (UP_ORDER.indexOf(a.t) - UP_ORDER.indexOf(b.t)) || a.n.localeCompare(b.n);
+    return (a.dt - b.dt) || ((b.pub ? 1 : 0) - (a.pub ? 1 : 0)) || a.n.localeCompare(b.n);
   });
   return out;
 }
 
 /* ---- screen ---- */
+function curFilter() {
+  const f = globalSet.upFilter;
+  return UP_FILTERS.some(function (x) { return x[0] === f; }) ? f : 'all';
+}
+
 function drawChips() {
   const box = $('hFilter');
   if (!box) return;
-  const cur = globalSet.upFilter || 'all';
+  const cur = curFilter();
   box.innerHTML = UP_FILTERS.map(function (f) {
     return '<button class="hchip' + (f[0] === cur ? ' on' : '') + '" data-f="' + f[0] + '">' + f[1] + '</button>';
   }).join('');
@@ -3540,7 +3610,7 @@ function setFilter(v, dir) {
 }
 
 function stepFilter(dir) {
-  const cur = globalSet.upFilter || 'all';
+  const cur = curFilter();
   const i = UP_FILTERS.findIndex(function (f) { return f[0] === cur; });
   const j = i + dir;
   if (j < 0 || j >= UP_FILTERS.length) return;
@@ -3554,23 +3624,24 @@ function renderUpcoming() {
   const now = new Date();
   const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
   const cc = detectCountry();
-  const f = globalSet.upFilter || 'all';
+  const f = curFilter();
 
   const sub = document.querySelector('.hsub');
   if (sub) sub.textContent = cc ? (flagOf(cc) + ' ' + countryName(cc)).trim() : '';
 
-  const all = getUpcoming(today).filter(function (it) { return f === 'all' || it.t === f; });
+  const all = getUpcoming(today).filter(function (it) {
+    return f === 'all' || (f === 'h' ? it.pub : it.t === f);
+  });
   const list = all.slice(0, upLimit);
-  const loading = holLoading || wdBusy;
 
   // draw again only when something really changed (keeps the scroll position)
-  const sig = [dayKey(today), cc, f, loading, upLimit, all.length,
+  const sig = [dayKey(today), cc, f, holLoading, upLimit, all.length,
     list.map(function (it) { return dayKey(it.dt) + it.n + it.t; }).join('|')].join('#');
   if (sig === lastUpSig) return;
   lastUpSig = sig;
 
   if (!list.length) {
-    box.innerHTML = '<div class="hempty">' + (loading ? 'Loading dates...' : 'Nothing here for the next 12 months. Swipe to another filter, or add your own date in Settings.') + '</div>';
+    box.innerHTML = '<div class="hempty">' + (holLoading ? 'Loading dates...' : 'Nothing here for the next 12 months. Swipe to another filter, or add your own date in Settings.') + '</div>';
     return;
   }
 
@@ -3589,7 +3660,7 @@ function renderUpcoming() {
       '<span class="hday">' + it.dt.getDate() + '</span></div>' +
       '<div class="hmid"><div class="hname">' + esc(it.n) + '</div><div class="hbn">' + esc(it.b) + '</div></div>' +
       '<div class="hright"><span class="hleft' + (it.diff <= 7 ? ' soon' : '') + '">' + left + '</span>' +
-      '<span class="hwd">' + wdn + ', ' + UP_TYPES[it.t][0] + '</span></div>' +
+      '<span class="hwd">' + wdn + ', ' + (it.pub ? 'Holiday' : UP_TYPES[it.t][0]) + '</span></div>' +
       '</div>';
   });
   if (all.length > list.length) {
@@ -3601,6 +3672,7 @@ function renderUpcoming() {
 function openUpcomingSettings() {
   const sel = globalSet.country || 'auto';
   const opt = function (v, t, s) { return '<option value="' + v + '"' + (s ? ' selected' : '') + '>' + t + '</option>'; };
+  const typeOpts = [['c', 'Cultural'], ['n', 'National & historic'], ['h', 'Holiday'], ['r', 'Religious']];
 
   let h = head('Upcoming dates', 'upBack');
   h += sec('Country',
@@ -3608,22 +3680,20 @@ function openUpcomingSettings() {
     opt('auto', 'Auto (' + esc(countryName(autoCountry()) || 'unknown') + ')', sel === 'auto') +
     countryList().map(function (x) { return opt(x.c, esc(flagOf(x.c) + ' ' + x.n), sel === x.c); }).join('') +
     '</select></div>',
-    'Public and religious days follow this country. World days and seasons are shown for everyone. ' +
-    'Dates are loaded from the internet, saved for offline use and update by themselves. ' +
-    'Moon-based days (Eid, Ramadan...) can differ by a day.');
+    'Public holidays, national, historic and cultural days follow this country. They come from online holiday databases and are saved for offline use. ' +
+    'Moon-based days (Eid, Ramadan...) are calculated, so the real date can differ by a day.');
   h += sec('Add your own date',
     '<div class="li"><span class="k">Date</span><input type="date" class="inp" id="upDate"></div>' +
     '<div class="li"><span class="k">Name</span><input type="text" class="inp" id="upName" placeholder="Birthday" maxlength="40"></div>' +
-    '<div class="li"><span class="k">Type</span>' + seg('upType', [['i', 'Observance'], ['h', 'Holiday'], ['r', 'Religious']], 'i') + '</div>' +
+    '<div class="li"><span class="k">Type</span><select class="r" id="upType">' +
+    typeOpts.map(function (o) { return opt(o[0], o[1], o[0] === 'c'); }).join('') + '</select></div>' +
     '<div class="li"><span class="k">Repeat</span>' + seg('upRep', [['1', 'Every year'], ['0', 'Once']], '1') + '</div>');
   h += '<div class="acts"><button class="bt pri" id="upAdd">Add date</button></div>';
   h += '<div id="upList"></div>';
   h += '<div class="acts"><button class="bt" id="done">Done</button></div>';
   openSheet(h, 'settings');
 
-  let type = 'i';
   let rep = '1';
-  pick('upType', function (v) { type = v; });
   pick('upRep', function (v) { rep = v; });
 
   function drawCustom() {
@@ -3658,7 +3728,7 @@ function openUpcomingSettings() {
     const n = $('upName').value.trim();
     if (!d || !n) { toast('Choose a date and write a name'); return; }
     const l = loadCustom();
-    l.push({ d: d, n: n, b: '', t: type, r: rep === '1' ? 1 : 0 });
+    l.push({ d: d, n: n, b: '', t: $('upType').value, r: rep === '1' ? 1 : 0 });
     saveCustom(l);
     $('upName').value = '';
     drawCustom(); renderUpcoming();
@@ -3695,9 +3765,9 @@ function initUpcoming() {
     bar.className = 'hfilter';
     bar.onclick = function (e) {
       const b = hit(e, '[data-f]');
-      if (!b || b.dataset.f === (globalSet.upFilter || 'all')) return;
+      if (!b || b.dataset.f === curFilter()) return;
       const order = UP_FILTERS.map(function (x) { return x[0]; });
-      setFilter(b.dataset.f, order.indexOf(b.dataset.f) > order.indexOf(globalSet.upFilter || 'all') ? 1 : -1);
+      setFilter(b.dataset.f, order.indexOf(b.dataset.f) > order.indexOf(curFilter()) ? 1 : -1);
     };
     box.parentNode.insertBefore(bar, box);
   }
@@ -3979,7 +4049,7 @@ function maybeAskNotifications() {
 function notify(title, body, tag, extra) {
   if (LN) return;
   if (!notifSupported() || Notification.permission !== 'granted') return;
-  const opts = Object.assign({ body: body, tag: tag || 'clock', renotify: true, requireInteraction: true, vibrate: VIB }, extra || {});
+  const opts = Object.assign({ body: body, tag: tag || 'clock', renotify: true, requireInteraction: true, vibrate: [300, 150, 300, 150, 300] }, extra || {});
   function plain() { try { delete opts.actions; new Notification(title, opts); } catch (e) {} }
   if (swReg && swReg.showNotification) swReg.showNotification(title, opts).catch(plain);
   else plain();
@@ -4023,7 +4093,7 @@ function syncSchedule() {
     if (!ts || ts <= Date.now()) return;
     swReg.showNotification(title, {
       tag: tag, showTrigger: new TimestampTrigger(ts), requireInteraction: true,
-      vibrate: hapOn(kind) ? VIB : [], actions: acts, data: { kind: kind, id: id }
+      vibrate: [300, 150, 300, 150, 300], actions: acts, data: { kind: kind, id: id }
     }).catch(function () {});
   }
 
@@ -4040,9 +4110,8 @@ function syncSchedule() {
 /* ---- Android app (Capacitor Local Notifications) ----
    Every alarm is handed to Android's alarm manager, so it shows on the lock
    screen with Snooze / Stop buttons even when the app is closed. Repeating
-   alarms use a weekly schedule per selected day. Two channels exist:
-   'alarm' (vibrates) and 'alarm_q' (no vibration); the vibration setting
-   picks the channel. */
+   alarms use a weekly schedule per selected day. "Notify before ringing" adds
+   one extra notification 15 minutes before the next ring of each alarm. */
 function hashId(s) {
   let h = 7;
   for (let i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) % 9000000;
@@ -4058,8 +4127,9 @@ function nativeSync() {
     function item(id, title, body, kind, rid, schedule) {
       schedule.allowWhileIdle = true;
       return {
-        id: id, title: title, body: body, schedule: schedule, channelId: hapOn(kind) ? 'alarm' : 'alarm_q',
-        actionTypeId: kind === 'timer' ? 'TIMER' : 'ALARM', extra: { kind: kind, id: rid }, autoCancel: true
+        id: id, title: title, body: body, schedule: schedule, channelId: 'alarm',
+        actionTypeId: kind === 'timer' ? 'TIMER' : (kind === 'pre' ? 'PRE' : 'ALARM'),
+        extra: { kind: kind, id: rid }, autoCancel: true
       };
     }
     alarms.forEach(function (a) {
@@ -4068,13 +4138,16 @@ function nativeSync() {
       const title = a.label || 'Alarm';
       const body = fmtClock(a.time, alarmFmt());
       const base = hashId(a.id);
+      const next = nextAlarmTime(a);
       if (!a.days.length) {
-        const ts = nextAlarmTime(a);
-        if (ts) list.push(item(base + 7, title, body, 'alarm', a.id, { at: new Date(ts) }));
+        if (next) list.push(item(base + 7, title, body, 'alarm', a.id, { at: new Date(next) }));
       } else {
         a.days.forEach(function (d) {
           list.push(item(base + d, title, body, 'alarm', a.id, { on: { weekday: d + 1, hour: x.h, minute: x.m } }));
         });
+      }
+      if (globalSet.preNotify && next && next - PRE_MS > Date.now()) {
+        list.push(item(base + 8, 'Alarm in 15 min', title + ' ' + body, 'pre', a.id, { at: new Date(next - PRE_MS) }));
       }
     });
     if (tm.running && tm.endAt > Date.now()) list.push(item(1, 'Timer finished', 'Tap to open', 'timer', '', { at: new Date(tm.endAt) }));
@@ -4098,18 +4171,17 @@ function exactCheck() {
 
 function initNative() {
   if (!LN) return;
-  const ch = { name: 'Alarms and timers', description: 'Alarm and timer alerts', importance: 5, visibility: 1, lights: true };
-  LN.createChannel(Object.assign({ id: 'alarm', vibration: true }, ch)).catch(function () {});
-  LN.createChannel(Object.assign({ id: 'alarm_q', vibration: false }, ch, { name: 'Alarms and timers (no vibration)' })).catch(function () {});
+  LN.createChannel({ id: 'alarm', name: 'Alarms and timers', description: 'Alarm and timer alerts', importance: 5, visibility: 1, vibration: true, lights: true }).catch(function () {});
   LN.registerActionTypes({ types: [
     { id: 'ALARM', actions: [{ id: 'snooze', title: 'Snooze' }, { id: 'stop', title: 'Stop', destructive: true }] },
-    { id: 'TIMER', actions: [{ id: 'again', title: 'Restart' }, { id: 'stop', title: 'Stop', destructive: true }] }
+    { id: 'TIMER', actions: [{ id: 'again', title: 'Restart' }, { id: 'stop', title: 'Stop', destructive: true }] },
+    { id: 'PRE', actions: [{ id: 'alarmoff', title: 'Turn off', destructive: true }] }
   ] }).catch(function () {});
   LN.addListener('localNotificationActionPerformed', function (ev) {
     const x = (ev.notification && ev.notification.extra) || {};
     const act = ev.actionId === 'tap' ? '' : ev.actionId;
     handleRingAction(act, x.kind || 'alarm', x.id || '');
-    if (!act) checkAlarms();   // tapping the notification opens the app and lets it ring
+    if (!act && x.kind !== 'pre') checkAlarms();   // tapping the notification opens the app and lets it ring
   });
   nativeSync();
 }
@@ -4185,8 +4257,6 @@ function openPermissions() {
     }).join('') +
       '<div class="li"><span class="k">Keep screen awake</span><span class="v">' +
       (('wakeLock' in navigator) ? 'Supported' : 'Not supported') + '</span></div>' +
-      '<div class="li"><span class="k">Vibration</span><span class="v">' +
-      (navigator.vibrate ? 'Supported' : 'Not supported') + '</span></div>' +
       '<div class="li"><span class="k">Scheduled alerts (app closed)</span><span class="v">' +
       (window.TimestampTrigger || LN ? 'Supported' : 'Not supported') + '</span></div>');
     h += '<div class="acts"><button class="bt pri" id="done">Done</button></div>';
@@ -4273,7 +4343,19 @@ function registerSW() {
 function bindEvents() {
   overlay.onclick = closeSheet;
 
-  $('ringStop').onclick = stopRing;
+  // Stop: one tap, or (Settings > Stop alarm with > Hold button) hold for 1.5 seconds
+  const rs = $('ringStop');
+  let holdT = null;
+  rs.onclick = function () { if (!holdStop(ringCtx)) stopRing(); };
+  rs.addEventListener('pointerdown', function () {
+    if (!holdStop(ringCtx)) return;
+    clearTimeout(holdT);
+    rs.classList.add('holding');
+    holdT = setTimeout(function () { rs.classList.remove('holding'); stopRing(); }, 1500);
+  });
+  ['pointerup', 'pointercancel', 'pointerleave'].forEach(function (ev) {
+    rs.addEventListener(ev, function () { clearTimeout(holdT); rs.classList.remove('holding'); });
+  });
   $('ringSnooze').onclick = function () { if (ringAction) ringAction.fn(); };
 
   $('add').onclick = openAddWidget;
@@ -4315,6 +4397,7 @@ function bindEvents() {
     tick();
     loadHolidays(detectCountry());
     renderUpcoming();
+    schedSoon();
   });
   document.addEventListener('click', function () {
     if (globalSet.awake && !wakeLock) setAwake(true);
@@ -4335,7 +4418,6 @@ function initApp() {
   initUpcoming();
   initAlarmPage();
   initTimerTyping();
-  initSwFade();
 
   buildDial();
   buildWheels();
