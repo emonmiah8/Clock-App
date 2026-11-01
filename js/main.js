@@ -94,7 +94,10 @@ let snz = readJson(SKEY);
 let wakeLock = null;
 const popOut = { cog: false, add: false };
 // Capacitor (Android app): native notifications. null in a normal browser.
-const LN = (window.Capacitor && Capacitor.isNativePlatform && Capacitor.isNativePlatform() && Capacitor.Plugins) ? (Capacitor.Plugins.LocalNotifications || null) : null;
+const CAP = window.Capacitor && Capacitor.isNativePlatform && Capacitor.isNativePlatform() && Capacitor.Plugins ? Capacitor.Plugins : null;
+const LN = CAP ? (CAP.LocalNotifications || null) : null;
+// native home-screen widget plugin (ClockWidgetPlugin.java). null in a browser.
+const CW = CAP ? (CAP.ClockWidget || null) : null;
 
 const sheet = document.getElementById('sheet');
 const overlay = document.getElementById('overlay');
@@ -111,6 +114,8 @@ function esc(s) {
 }
 function haptic(p) { try { if (navigator.vibrate) navigator.vibrate(p); } catch (e) {} }
 function clampN(v, a, b) { v = Math.round(Number(v)); return isNaN(v) ? a : Math.max(a, Math.min(b, v)); }
+// nearest ancestor of the event target that matches a selector (or null)
+function hit(e, sel) { return e && e.target && e.target.closest ? e.target.closest(sel) : null; }
 // Bangla digits are accepted in typed fields
 function bnDigits(s) { return String(s).replace(/[\u09E6-\u09EF]/g, function (d) { return '\u09E6\u09E7\u09E8\u09E9\u09EA\u09EB\u09EC\u09ED\u09EE\u09EF'.indexOf(d); }); }
 
@@ -147,7 +152,6 @@ function setIcon(id, svg, label) {
 /* ==========================================================================
    3. INJECTED STYLES
    One design system: calm neutral surfaces, one orange accent for controls.
-   Upcoming and quick-alarm cards are neutral; only a tiny dot shows the type.
    ========================================================================== */
 const UP_TYPES = {
   h: ['Holiday', '#ff6a5c'],
@@ -181,7 +185,16 @@ body{letter-spacing:-.01em;-webkit-font-smoothing:antialiased}
 body .time .txt{font-size:min(calc(var(--size)*1),20vw);letter-spacing:0;line-height:1}
 #stage{padding:64px 12px 12px!important;margin:0 auto!important}
 
-/* ---- Upcoming (neutral cards) ---- */
+/* ---- bottom tab bar: floating glass pill, active tab highlighted ---- */
+#nav{position:fixed!important;left:12px!important;right:12px!important;bottom:calc(10px + env(safe-area-inset-bottom,0px))!important;width:auto!important;max-width:520px;margin:0 auto!important;transform:none!important;display:flex!important;align-items:stretch;gap:2px;padding:5px!important;border-radius:26px!important;background:var(--pop)!important;-webkit-backdrop-filter:blur(24px) saturate(1.6);backdrop-filter:blur(24px) saturate(1.6);border:1px solid var(--line)!important;box-shadow:0 12px 34px rgba(0,0,0,.34)!important}
+#nav button{flex:1;min-width:0;display:flex!important;flex-direction:column;align-items:center;justify-content:center;gap:3px;padding:8px 2px!important;border:0!important;border-radius:20px!important;background:transparent!important;color:inherit!important;opacity:.55;-webkit-tap-highlight-color:transparent;transition:background-color .22s ease,opacity .22s ease,color .22s ease,transform .1s ease!important}
+#nav button svg{width:22px;height:22px;flex:none}
+#nav button span,#nav button label{font-size:11px;line-height:1.1;letter-spacing:0}
+#nav button.active{opacity:1;color:var(--accent)!important;background:rgba(255,159,10,.16)!important}
+#nav button:active{transform:scale(.94)}
+#nav button::after{display:none!important}
+
+/* ---- Upcoming (neutral cards, full names always visible) ---- */
 #holidays{position:relative!important;flex:1 1 auto!important;display:flex!important;flex-direction:column;min-height:320px;padding:0!important;animation:none!important}
 .hhead{position:static!important;display:flex!important;justify-content:space-between;align-items:baseline;gap:10px;padding:14px 20px 8px!important;white-space:nowrap;pointer-events:auto;font-size:20px;letter-spacing:-.02em}
 .hhead::before{display:none!important}
@@ -199,22 +212,22 @@ body .time .txt{font-size:min(calc(var(--size)*1),20vw);letter-spacing:0;line-he
 #hList.swR{animation:swR .26s cubic-bezier(.22,.8,.25,1) both}
 .hgrp{flex:none;padding:14px 4px 2px;font-size:13px;opacity:.55}
 .hgrp:first-child{padding-top:2px}
-.hcard{width:auto!important;flex:none!important;display:flex!important;align-items:center;gap:14px;padding:10px 14px 10px 10px!important;border-radius:18px!important;background:var(--surf)!important;-webkit-backdrop-filter:none!important;backdrop-filter:none!important;border:1px solid var(--line);box-shadow:none!important;transition:transform .14s ease,border-color .2s ease}
+.hcard{width:auto!important;flex:none!important;display:flex!important;align-items:center;gap:12px;padding:10px 14px 10px 10px!important;border-radius:18px!important;background:var(--surf)!important;-webkit-backdrop-filter:none!important;backdrop-filter:none!important;border:1px solid var(--line);box-shadow:none!important;transition:transform .14s ease,border-color .2s ease}
 .hcard:active{transform:scale(.985)}
 .hcard.today{border-color:rgba(var(--ink),.34);background:var(--surf2)!important}
 ${typeCss}
 .hd{flex:none;display:flex;flex-direction:column;align-items:center;justify-content:center;width:54px;height:58px;border-radius:15px;background:var(--surf2)!important;border:1px solid var(--line)!important}
 .hd .hmon{font-size:10.5px;letter-spacing:.08em;opacity:.55;color:inherit!important}
 .hd .hday{font-size:26px;line-height:1.05}
-.hmid{flex:1;min-width:0}
-.hmid .hname{margin:0;font-size:15px;line-height:1.25;overflow:hidden;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical}
-.hbn{margin-top:2px;font-size:12px;opacity:.55;overflow:hidden;white-space:nowrap;text-overflow:ellipsis}
+.hmid{flex:1 1 0;min-width:0}
+.hmid .hname{margin:0;font-size:15px;line-height:1.3;white-space:normal;overflow:visible;overflow-wrap:anywhere}
+.hbn{margin-top:2px;font-size:12px;line-height:1.3;opacity:.55;white-space:normal;overflow-wrap:anywhere}
 .hbn:empty{display:none}
-.hright{flex:none;display:flex;flex-direction:column;align-items:flex-end;gap:3px;text-align:right}
-.hright .hleft{margin:0;padding:0!important;border:0!important;background:none!important;font-size:13px;color:inherit!important;opacity:.55}
+.hright{flex:none;max-width:104px;display:flex;flex-direction:column;align-items:flex-end;gap:3px;text-align:right}
+.hright .hleft{margin:0;padding:0!important;border:0!important;background:none!important;font-size:13px;white-space:nowrap;color:inherit!important;opacity:.55}
 .hright .hleft.soon{opacity:1}
-.hwd{margin:0;display:flex;align-items:center;gap:5px;font-size:11.5px;opacity:.7}
-.hwd::before{content:"";width:6px;height:6px;border-radius:50%;background:var(--tc,#8e8e93)}
+.hwd{margin:0;display:flex;align-items:center;justify-content:flex-end;gap:5px;font-size:11.5px;line-height:1.25;opacity:.7}
+.hwd::before{content:"";flex:none;width:6px;height:6px;border-radius:50%;background:var(--tc,#8e8e93)}
 .hempty{padding:36px 24px;text-align:center;font-size:14px;line-height:1.5;opacity:.55}
 .hmore{flex:none;align-self:center;margin-top:6px;padding:10px 22px;border-radius:999px;font-size:14px;color:inherit;background:var(--surf2);border:1px solid var(--line);cursor:pointer;-webkit-tap-highlight-color:transparent}
 .hmore:active{transform:scale(.96)}
@@ -229,6 +242,12 @@ ${typeCss}
 .qcard:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
 .hd.qd{width:72px}
 .qd .hday{font-size:20px;letter-spacing:-.02em;white-space:nowrap}
+
+/* ---- on/off switch (alarm list) ---- */
+.tgl{position:relative;flex:none;width:52px;height:32px;padding:0!important;border:0!important;border-radius:16px!important;background:var(--surf2)!important;cursor:pointer;-webkit-tap-highlight-color:transparent;transition:background .22s ease}
+.tgl span{position:absolute!important;top:2px!important;left:2px!important;width:28px!important;height:28px!important;border-radius:50%!important;background:#fff!important;box-shadow:0 2px 5px rgba(0,0,0,.32)!important;transform:none;transition:transform .24s cubic-bezier(.3,1.4,.5,1)}
+.tgl.on{background:var(--accent)!important}
+.tgl.on span{transform:translateX(20px)!important}
 
 /* ---- Alarms: wheel time picker ---- */
 #sheet .aw{position:relative;display:flex;align-items:stretch;justify-content:center;gap:2px;height:${AW_H * 5}px;padding:0 8px;border-radius:16px;overflow:hidden;background:var(--surf);border:1px solid var(--line)}
@@ -291,13 +310,15 @@ body.light #sheet{color-scheme:light;box-shadow:0 24px 60px rgba(0,0,0,.16)}
 #sheet select option{color:#111;background:#fff}
 #sheet input::placeholder{color:inherit;opacity:.4}
 
-.seg{display:flex;gap:2px;padding:3px;border-radius:11px;background:var(--surf2);min-width:150px}
-.seg button{flex:1;padding:7px 10px;border:0;border-radius:8px;font-size:13px;font-family:inherit;color:inherit;background:none;opacity:.65;white-space:nowrap;cursor:pointer;transition:background .2s ease,opacity .2s ease}
-.seg button.on{opacity:1;background:rgba(255,255,255,.22);box-shadow:0 1px 3px rgba(0,0,0,.2)}
-body.light .seg button.on{background:#fff}
+/* ---- segmented toggle: a sliding pill follows the chosen option ---- */
+.seg{position:relative;display:flex;gap:2px;padding:3px;border-radius:12px;background:var(--surf2);min-width:150px;--n:2;--i:0}
+.seg::before{content:"";position:absolute;top:3px;bottom:3px;left:3px;width:calc((100% - 6px - (var(--n) - 1) * 2px) / var(--n));border-radius:9px;background:rgba(255,255,255,.2);box-shadow:0 1px 4px rgba(0,0,0,.28);transform:translateX(calc(var(--i) * (100% + 2px)));transition:transform .3s cubic-bezier(.3,1.25,.5,1)}
+body.light .seg::before{background:#fff;box-shadow:0 1px 4px rgba(0,0,0,.18)}
+.seg button{position:relative;z-index:1;flex:1;padding:7px 10px;border:0;border-radius:9px;font-size:13px;font-family:inherit;color:inherit;background:none;opacity:.6;white-space:nowrap;cursor:pointer;-webkit-tap-highlight-color:transparent;transition:opacity .2s ease}
+.seg button.on{opacity:1}
 
-#sheet .sx{position:relative;flex:none;width:50px;height:30px;border-radius:15px;background:var(--surf2);transition:background .2s ease}
-#sheet .sx::after{content:"";position:absolute;top:2px;left:2px;width:26px;height:26px;border-radius:50%;background:#fff;box-shadow:0 2px 4px rgba(0,0,0,.3);transition:transform .22s cubic-bezier(.3,1.4,.5,1)}
+#sheet .sx{position:relative;flex:none;width:52px;height:32px;border-radius:16px;background:var(--surf2);transition:background .22s ease}
+#sheet .sx::after{content:"";position:absolute;top:2px;left:2px;width:28px;height:28px;border-radius:50%;background:#fff;box-shadow:0 2px 5px rgba(0,0,0,.32);transition:transform .24s cubic-bezier(.3,1.4,.5,1)}
 #sheet .sx.on{background:var(--accent)}
 #sheet .sx.on::after{transform:translateX(20px)}
 
@@ -346,7 +367,7 @@ body.light .seg button.on{background:#fff}
 #add.out .plusi{transform:rotate(135deg)}
 
 /* ---- toast ---- */
-#toast{position:fixed;left:50%;bottom:calc(88px + env(safe-area-inset-bottom,0px));transform:translate(-50%,12px);z-index:70;display:flex;align-items:center;gap:12px;max-width:min(92vw,420px);padding:11px 16px;border-radius:999px;background:var(--pop);color:inherit;-webkit-backdrop-filter:blur(20px) saturate(1.5);backdrop-filter:blur(20px) saturate(1.5);border:1px solid var(--line);box-shadow:0 10px 30px rgba(0,0,0,.3);font-size:14px;line-height:1.3;opacity:0;pointer-events:none;transition:opacity .25s ease,transform .25s ease}
+#toast{position:fixed;left:50%;bottom:calc(92px + env(safe-area-inset-bottom,0px));transform:translate(-50%,12px);z-index:70;display:flex;align-items:center;gap:12px;max-width:min(92vw,420px);padding:11px 16px;border-radius:999px;background:var(--pop);color:inherit;-webkit-backdrop-filter:blur(20px) saturate(1.5);backdrop-filter:blur(20px) saturate(1.5);border:1px solid var(--line);box-shadow:0 10px 30px rgba(0,0,0,.3);font-size:14px;line-height:1.3;opacity:0;pointer-events:none;transition:opacity .25s ease,transform .25s ease}
 #toast.show{opacity:1;transform:translate(-50%,0);pointer-events:auto}
 #toast .tact{background:none;border:0;color:var(--accent);padding:0;font-size:14px;white-space:nowrap}
 
@@ -406,12 +427,9 @@ body.light .round:not(.main){color:#1c1c1e}
 .fx.flash{background:radial-gradient(circle,rgba(var(--gc),.60) 0,rgba(var(--gc),0) 72%);animation:flash .55s ease-out forwards}
 @keyframes burst{from{opacity:.95;transform:scale(1)}to{opacity:0;transform:scale(1.75)}}
 @keyframes flash{from{opacity:1;transform:scale(.7)}to{opacity:0;transform:scale(1.25)}}
-@media (prefers-reduced-motion:reduce){#sheet.open,#sheet.open.closing,#hList.swL,#hList.swR{animation:none}#swGo.live,#tmGo.live{animation:none}.fx{display:none}}
+@media (prefers-reduced-motion:reduce){#sheet.open,#sheet.open.closing,#hList.swL,#hList.swR{animation:none}#swGo.live,#tmGo.live{animation:none}.fx{display:none}.seg::before,.tgl span{transition:none}}
 
 .phead button{color:var(--accent)!important}
-#nav button{transition:background-color .14s ease,opacity .14s ease,transform .1s ease!important}
-#nav button:active{transform:scale(.94)}
-#nav button::after{display:none!important}
 `;
 
   const st = document.createElement('style');
@@ -563,9 +581,12 @@ function sec(label, inner, note) {
     (note ? '<div class="sn">' + note + '</div>' : '');
 }
 
+// segmented toggle: --n = number of options, --i = chosen index (drives the sliding pill)
 function seg(id, opts, cur) {
-  return '<div class="seg" id="' + id + '">' + opts.map(function (o) {
-    return '<button data-v="' + o[0] + '"' + (String(o[0]) === String(cur) ? ' class="on"' : '') + '>' + o[1] + '</button>';
+  let idx = 0;
+  opts.forEach(function (o, i) { if (String(o[0]) === String(cur)) idx = i; });
+  return '<div class="seg" id="' + id + '" style="--n:' + opts.length + ';--i:' + idx + '">' + opts.map(function (o, i) {
+    return '<button data-v="' + o[0] + '"' + (i === idx ? ' class="on"' : '') + '>' + o[1] + '</button>';
   }).join('') + '</div>';
 }
 
@@ -593,14 +614,16 @@ function chipRow(id, list, cur) {
   }).join('') + '</div>';
 }
 
-// segmented control or swatch row: marks the tapped button and reports its value
+// segmented toggle or swatch row: marks the tapped button, moves the pill and reports its value
 function pick(id, fn) {
   const box = $(id);
   if (!box) return;
   box.onclick = function (e) {
-    const b = e.target.closest ? e.target.closest('[data-v]') : null;
+    const b = hit(e, '[data-v]');
     if (!b) return;
-    box.querySelectorAll('[data-v]').forEach(function (x) { x.classList.toggle('on', x === b); });
+    const all = Array.prototype.slice.call(box.querySelectorAll('[data-v]'));
+    all.forEach(function (x) { x.classList.toggle('on', x === b); });
+    if (box.classList.contains('seg')) box.style.setProperty('--i', all.indexOf(b));
     fn(b.dataset.v);
   };
 }
@@ -639,7 +662,7 @@ function bindSnooze(fn) {
       $(p[1]).querySelectorAll('[data-v]').forEach(function (b) { b.classList.toggle('on', b.dataset.v === v); });
     }
     $(p[1]).onclick = function (e) {
-      const b = e.target.closest ? e.target.closest('[data-v]') : null;
+      const b = hit(e, '[data-v]');
       if (!b) return;
       $(p[0]).value = b.dataset.v;
       mark();
@@ -1789,7 +1812,7 @@ function initWidgetsTab() {
 
   pick('wgFmt', function (x) { globalSet.wgFmt = x; saveGlobal(); paintAll(); });
   v.addEventListener('click', function (e) {
-    const el = e.target.closest ? e.target.closest('.wgt[data-wg]') : null;
+    const el = hit(e, '.wgt[data-wg]');
     if (el) openWidgetSheet(el.dataset.wg, pt(e));
   });
 }
@@ -1831,18 +1854,42 @@ function openFull(id) {
   if (f.requestFullscreen) f.requestFullscreen().catch(function () {});
 }
 
-// A website cannot draw on the phone launcher. This explains the options honestly.
+/* ---- real launcher widgets (Android APK only) ----
+   The APK contains two native widgets (ClockWidget / ClockWidgetAnalog).
+   They are always listed in the phone's widget picker after install; the buttons
+   below also ask Android to place one directly on the home screen. */
+const WIDGET_HELP = 'Long-press an empty spot on the home screen, tap Widgets, then choose Clock.';
+
+function pinWidget(type) {
+  if (!CW) return;
+  CW.pin({ type: type }).then(function (r) {
+    toast(r && r.requested ? 'Confirm on the screen to place the widget' : WIDGET_HELP, { ms: 5000 });
+  }).catch(function () { toast(WIDGET_HELP, { ms: 5000 }); });
+}
+
 function openPhoneSheet(id) {
   const standalone = window.matchMedia && matchMedia('(display-mode: standalone)').matches;
-  let h = head('Phone home screen', 'phBack') +
-    '<div class="sn mid" style="line-height:1.55;text-align:left">' +
-    'A web app cannot put a live widget on the launcher by itself. What works today: install this app to the home screen ' +
-    '(it opens like a normal app), then use <b>Full screen</b> on any design to turn the phone into a desk clock. ' +
-    'Real launcher widgets need a native Android wrapper app.</div>';
-  if (installEvt && !standalone) h += '<div class="acts"><button class="bt pri" id="phInstall">Install app</button></div>';
+  let h = head('Phone home screen', 'phBack');
+
+  if (CW) {
+    h += '<div class="sn mid" style="text-align:left;line-height:1.55">' +
+      'Real Android widgets that keep the time by themselves, even when the app is closed. Tap one to place it on the home screen.</div>' +
+      '<div class="acts"><button class="bt pri" id="phDig">Digital widget</button><button class="bt pri" id="phAna">Analog widget</button></div>' +
+      '<div class="sn mid" style="line-height:1.5">' + WIDGET_HELP + '</div>';
+  } else {
+    h += '<div class="sn mid" style="line-height:1.55;text-align:left">' +
+      'A web app cannot put a live widget on the launcher by itself. Install the Android APK to get real home screen widgets. ' +
+      'Meanwhile, install this page to the home screen and use <b>Full screen</b> on any design to turn the phone into a desk clock.</div>';
+    if (installEvt && !standalone) h += '<div class="acts"><button class="bt pri" id="phInstall">Install app</button></div>';
+  }
   h += '<div class="acts"><button class="bt" id="done">Close</button></div>';
   openSheet(h, 'widget');
-  $('phBack').onclick = function () { openWidgetSheet(id); };
+
+  $('phBack').onclick = id ? function () { openWidgetSheet(id); } : openSettings;
+  if (CW) {
+    $('phDig').onclick = function () { pinWidget('digital'); };
+    $('phAna').onclick = function () { pinWidget('analog'); };
+  }
   const i = $('phInstall');
   if (i) i.onclick = function () {
     installEvt.prompt();
@@ -1901,6 +1948,7 @@ function openSettings() {
   h += sec('General',
     toggleRow('awake', 'Keep screen awake', globalSet.awake) +
     navRow('id="upbtn"', 'Upcoming dates', esc(countryName(detectCountry()) || 'Auto')) +
+    (CW ? navRow('id="whbtn"', 'Home screen widgets', '') : '') +
     navRow('id="fs"', 'Fullscreen', '') +
     navRow('id="permbtn"', 'Permissions &amp; connection', ''));
   h += '<div class="acts"><button class="bt pri" id="done">Done</button></div>';
@@ -1937,6 +1985,7 @@ function openSettings() {
   $('snbtn').onclick = openSnoozeSettings;
   $('upbtn').onclick = openUpcomingSettings;
   $('permbtn').onclick = openPermissions;
+  if ($('whbtn')) $('whbtn').onclick = function () { openPhoneSheet(null); };
   $('fs').onclick = function () {
     if (document.fullscreenElement) document.exitFullscreen();
     else if (document.documentElement.requestFullscreen) document.documentElement.requestFullscreen().catch(function () {});
@@ -2092,14 +2141,16 @@ function openEdit(id, origin) {
   if ($('fmtSeg')) pick('fmtSeg', function (v) { w.hour12 = v === '12'; saveWidgets(); renderAll(); });
   if ($('rt')) bindToggle('rt', !!w.retro, function (on) { w.retro = on; saveWidgets(); renderAll(); });
 
-  $('up').onclick = function () {
+  function move(step) {
     const i = widgets.indexOf(w);
-    if (i > 0) { widgets.splice(i, 1); widgets.splice(i - 1, 0, w); saveWidgets(); renderAll(); }
-  };
-  $('down').onclick = function () {
-    const i = widgets.indexOf(w);
-    if (i < widgets.length - 1) { widgets.splice(i, 1); widgets.splice(i + 1, 0, w); saveWidgets(); renderAll(); }
-  };
+    const j = i + step;
+    if (j < 0 || j >= widgets.length) return;
+    widgets.splice(i, 1);
+    widgets.splice(j, 0, w);
+    saveWidgets(); renderAll();
+  }
+  $('up').onclick = function () { move(-1); };
+  $('down').onclick = function () { move(1); };
   $('del').onclick = function () {
     widgets = widgets.filter(function (x) { return x !== w; });
     saveWidgets(); closeSheet(); renderAll();
@@ -2257,6 +2308,11 @@ function renderAlarms() {
 }
 
 /* ---- wheel time picker ---- */
+// index of the row that sits in the middle of a scroll wheel
+function wpos(el, rowH) {
+  return Math.max(0, Math.min(el.children.length - 1, Math.round(el.scrollTop / rowH)));
+}
+
 function wheelCol(id, items, idx) {
   return '<div class="awc" id="' + id + '">' + items.map(function (t, i) {
     return '<div class="awi' + (i === idx ? ' sel' : '') + '" data-i="' + i + '">' + t + '</div>';
@@ -2278,10 +2334,6 @@ function wheelsHtml(fmt, h, m) {
     '</div>';
 }
 
-function wheelPos(el) {
-  return Math.max(0, Math.min(el.children.length - 1, Math.round(el.scrollTop / AW_H)));
-}
-
 function initWheels() {
   sheet.querySelectorAll('.awc').forEach(function (el) {
     const cur = el.querySelector('.sel');
@@ -2289,7 +2341,7 @@ function initWheels() {
     el.scrollTop = last * AW_H;
 
     el.addEventListener('scroll', function () {
-      const i = wheelPos(el);
+      const i = wpos(el, AW_H);
       if (i === last) return;
       last = i;
       Array.prototype.forEach.call(el.children, function (c, n) { c.classList.toggle('sel', n === i); });
@@ -2297,17 +2349,17 @@ function initWheels() {
     }, { passive: true });
 
     el.onclick = function (e) {
-      const it = e.target.closest ? e.target.closest('.awi') : null;
+      const it = hit(e, '.awi');
       if (it) el.scrollTo({ top: Number(it.dataset.i) * AW_H, behavior: 'smooth' });
     };
   });
 }
 
 function readWheelTime(fmt) {
-  const hi = wheelPos($('awH'));
-  const m = wheelPos($('awM'));
+  const hi = wpos($('awH'), AW_H);
+  const m = wpos($('awM'), AW_H);
   if (fmt === '24') return { h: hi, m: m };
-  return { h: ((hi + 1) % 12) + (wheelPos($('awP')) === 1 ? 12 : 0), m: m };
+  return { h: ((hi + 1) % 12) + (wpos($('awP'), AW_H) === 1 ? 12 : 0), m: m };
 }
 
 /* ---- one editor for alarms and quick alarms ----
@@ -2341,7 +2393,7 @@ function openAlarmEditor(cfg) {
   drawRep();
 
   $('asDays').onclick = function (e) {
-    const b = e.target.closest ? e.target.closest('[data-d]') : null;
+    const b = hit(e, '[data-d]');
     if (!b) return;
     const d = Number(b.dataset.d);
     const i = days.indexOf(d);
@@ -2564,15 +2616,15 @@ function initAlarmPage() {
   }
 
   function onPress(e) {
-    if (e.target.closest('#qCust')) { openQuickSheet(); return; }
-    const c = e.target.closest('[data-q]');
+    if (hit(e, '#qCust')) { openQuickSheet(); return; }
+    const c = hit(e, '[data-q]');
     if (!c) return;
     const q = quick.find(function (x) { return x.id === c.dataset.q; });
     if (q) addQuick(q);
   }
   box.addEventListener('click', onPress);
   box.addEventListener('keydown', function (e) {
-    if ((e.key === 'Enter' || e.key === ' ') && e.target.closest('[data-q]')) { e.preventDefault(); onPress(e); }
+    if ((e.key === 'Enter' || e.key === ' ') && hit(e, '[data-q]')) { e.preventDefault(); onPress(e); }
   });
 
   renderQuick();
@@ -2582,7 +2634,7 @@ function checkAlarms() {
   const now = new Date();
   const nowMin = now.getHours() * 60 + now.getMinutes();
   const dk = dayKey(now);
-  const wd = now.getDay();
+  const dow = now.getDay();
   alarms.forEach(function (a) {
     if (a.on && !a.days.length && a.at && Date.now() > a.at + 180000) {
       a.on = false;
@@ -2591,7 +2643,7 @@ function checkAlarms() {
     }
     const x = parseTime(a.time);
     const late = nowMin - (x.h * 60 + x.m);
-    const today = !a.days.length || a.days.indexOf(wd) > -1;
+    const today = !a.days.length || a.days.indexOf(dow) > -1;
     if (a.on && today && late >= 0 && late <= 2 && a.last !== dk + a.time) {
       a.last = dk + a.time;
       if (!a.days.length) a.on = false;
@@ -2768,20 +2820,15 @@ function initTimerTyping() {
   $('tmTypeIn').onkeydown = function (e) { if (e.key === 'Enter') { e.preventDefault(); go(); } };
 }
 
-function wheelIndex(id) {
-  const el = $(id);
-  return el ? Math.round(el.scrollTop / ITEM_H) : 0;
-}
-
 function wheelMs() {
-  return (wheelIndex('pH') * 3600 + wheelIndex('pM') * 60 + wheelIndex('pS')) * 1000;
+  return (wpos($('pH'), ITEM_H) * 3600 + wpos($('pM'), ITEM_H) * 60 + wpos($('pS'), ITEM_H)) * 1000;
 }
 
 function markSelected() {
   ['pH', 'pM', 'pS'].forEach(function (id) {
     const el = $(id);
     if (!el || !el.children.length) return;
-    const idx = Math.max(0, Math.min(el.children.length - 1, Math.round(el.scrollTop / ITEM_H)));
+    const idx = wpos(el, ITEM_H);
     if (idx !== selIdx[id]) {
       if (el.children[selIdx[id]]) el.children[selIdx[id]].classList.remove('sel');
       el.children[idx].classList.add('sel');
@@ -3094,8 +3141,8 @@ function loadScript(url) {
 function saveLibCopy(url) {
   if (!window.caches || navigator.onLine === false) return;
   caches.open(LIB_CACHE).then(function (c) {
-    return c.match(url).then(function (hit) {
-      if (hit) return;
+    return c.match(url).then(function (found) {
+      if (found) return;
       return fetch(url).then(function (r) { return r.ok ? r.text() : ''; }).then(function (t) {
         if (t.indexOf('getHolidays') > -1) return c.put(url, new Response(t));
       });
@@ -3704,13 +3751,13 @@ function openUpcomingSettings() {
   $('done').onclick = closeSheet;
 }
 
-// the list leaves room for the bottom bar, so the last card is never hidden
+// the list leaves room for the floating bottom bar, so the last card is never hidden
 function measureUpcoming() {
   const box = $('hList');
   const hol = $('holidays');
   const nav = $('nav');
   if (!box || !hol || !box.offsetParent) return;
-  const ov = nav ? Math.round(nav.getBoundingClientRect().height) : 0;
+  const ov = nav ? Math.max(0, Math.round(window.innerHeight - nav.getBoundingClientRect().top)) : 0;
   if (ov !== lastOv) { lastOv = ov; hol.style.setProperty('--ov', ov + 'px'); }
 }
 
@@ -3730,7 +3777,7 @@ function initUpcoming() {
     bar.id = 'hFilter';
     bar.className = 'hfilter';
     bar.onclick = function (e) {
-      const b = e.target.closest ? e.target.closest('[data-f]') : null;
+      const b = hit(e, '[data-f]');
       if (!b || b.dataset.f === (globalSet.upFilter || 'all')) return;
       const order = UP_FILTERS.map(function (x) { return x[0]; });
       setFilter(b.dataset.f, order.indexOf(b.dataset.f) > order.indexOf(globalSet.upFilter || 'all') ? 1 : -1);
@@ -3740,7 +3787,7 @@ function initUpcoming() {
   drawChips();
 
   box.addEventListener('click', function (e) {
-    if (e.target.closest && e.target.closest('[data-more]')) {
+    if (hit(e, '[data-more]')) {
       upLimit += UP_PAGE;
       renderUpcoming();
     }
@@ -3761,7 +3808,7 @@ function initUpcoming() {
     sx = t.clientX; sy = t.clientY; st = Date.now();
   }, { passive: true });
   hol.addEventListener('touchend', function (e) {
-    if (e.target.closest && e.target.closest('#hFilter')) return;
+    if (hit(e, '#hFilter')) return;
     const t = e.changedTouches[0];
     const dx = t.clientX - sx, dy = t.clientY - sy;
     if (Math.abs(dx) < 60 || Math.abs(dx) < Math.abs(dy) * 1.6 || Date.now() - st > 700) return;
@@ -3774,7 +3821,6 @@ function initUpcoming() {
     [hol, $('nav')].forEach(function (el) { if (el) ro.observe(el); });
   }
 }
-
 
 /* ==========================================================================
    16. BOTTOM BAR, BUTTON EFFECTS, SETTINGS BUTTON, PLUS BUTTON
@@ -3795,17 +3841,16 @@ function burst(btn) {
 
 function initPressFeedback() {
   document.addEventListener('pointerdown', function (e) {
-    const t = (e.target && e.target.closest)
-      ? e.target.closest('#swGo,#tmGo,.round,.fab,#nav button') : null;
+    const t = hit(e, '#swGo,#tmGo,.round,.fab,#nav button');
     if (t) haptic(t.id === 'swGo' || t.id === 'tmGo' ? 16 : 8);
-    const f = (e.target && e.target.closest) ? e.target.closest(FX_BUTTONS) : null;
+    const f = hit(e, FX_BUTTONS);
     if (f) burst(f);
   }, true);
 
   // keyboard presses (no pointer) get the same light
   document.addEventListener('click', function (e) {
     if (e.detail !== 0) return;
-    const f = (e.target && e.target.closest) ? e.target.closest(FX_BUTTONS) : null;
+    const f = hit(e, FX_BUTTONS);
     if (f) burst(f);
   }, true);
 }
@@ -3816,14 +3861,14 @@ function initNav() {
   let downAt = 0;
 
   nav.addEventListener('pointerdown', function (e) {
-    const b = (e.target && e.target.closest) ? e.target.closest('[data-tab]') : null;
+    const b = hit(e, '[data-tab]');
     if (!b) return;
     downAt = Date.now();
     showTab(b.dataset.tab);
   }, true);
 
   nav.addEventListener('click', function (e) {
-    const b = (e.target && e.target.closest) ? e.target.closest('[data-tab]') : null;
+    const b = hit(e, '[data-tab]');
     if (!b) return;
     if (Date.now() - downAt < 1500) {
       e.stopImmediatePropagation();
@@ -4220,7 +4265,7 @@ function openPermissions() {
       '<div class="li"><span class="k">Keep screen awake</span><span class="v">' +
       (('wakeLock' in navigator) ? 'Supported' : 'Not supported') + '</span></div>' +
       '<div class="li"><span class="k">Scheduled alerts (app closed)</span><span class="v">' +
-      (window.TimestampTrigger ? 'Supported' : 'Not supported') + '</span></div>');
+      (window.TimestampTrigger || LN ? 'Supported' : 'Not supported') + '</span></div>');
     h += '<div class="acts"><button class="bt pri" id="done">Done</button></div>';
     openSheet(h, 'settings');
 
