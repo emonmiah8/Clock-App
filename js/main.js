@@ -93,6 +93,8 @@ let ringAction = null;
 let snz = readJson(SKEY);
 let wakeLock = null;
 const popOut = { cog: false, add: false };
+// Capacitor (Android app): native notifications. null in a normal browser.
+const LN = (window.Capacitor && Capacitor.isNativePlatform && Capacitor.isNativePlatform() && Capacitor.Plugins) ? (Capacitor.Plugins.LocalNotifications || null) : null;
 
 const sheet = document.getElementById('sheet');
 const overlay = document.getElementById('overlay');
@@ -927,6 +929,7 @@ function startRing(c) {
   ringTimer = setInterval(function () { haptic(300); }, 900);
   setAwake(true);
   setMedia(true, title);
+  if (LN && !document.hidden) setTimeout(function () { LN.removeAllDeliveredNotifications().catch(function () {}); }, 1500);
 }
 
 function stopRing() {
@@ -948,10 +951,20 @@ function handleRingAction(action, kind, id) {
     else if (action && ringAction) ringAction.fn();
     return;
   }
-  if (action === 'snooze' && kind === 'alarm') {
-    const a = alarms.find(function (x) { return x.id === id; });
-    const c = a ? alarmCtx(a, 1) : null;
-    if (c && c.sn > 0) setSnooze({ at: Date.now() + c.sn * 60000, ctx: c });
+  const a = kind === 'alarm' ? alarms.find(function (x) { return x.id === id; }) : null;
+  // the alarm already rang (from the notification): do not ring it again when the app opens
+  function done() {
+    a.last = dayKey(new Date()) + a.time;
+    if (!a.days.length) a.on = false;
+    saveAlarms(); renderAlarms(); renderQuick();
+  }
+  if (action === 'stop') {
+    if (a) { done(); if (snz && snz.ctx.id === id) setSnooze(null); }
+    else if (kind === 'timer') { tm.running = false; tm.remaining = tm.total; saveTm(); renderTm(); }
+  } else if (action === 'snooze' && a) {
+    const c = alarmCtx(a, 1);
+    done();
+    if (c.sn > 0) setSnooze({ at: Date.now() + c.sn * 60000, ctx: c });
   } else if (action === 'again' && kind === 'timer' && tm.total > 0) {
     restartTimer();
   }
@@ -2235,7 +2248,7 @@ function renderAlarms() {
 
     row.querySelector('.tgl').onclick = function () {
       a.on = !a.on;
-      if (a.on) a.last = lateGuard(a.time);
+      if (a.on) { a.last = lateGuard(a.time); arm(a); }
       saveAlarms(); renderAlarms(); renderQuick();
     };
     row.querySelector('.ainfo').onclick = function (e) { openAlarmSheet(a, pt(e)); };
@@ -2387,9 +2400,11 @@ function openAlarmSheet(a, origin) {
     origin: origin,
     onSave: function (d) {
       if (isNew) {
-        alarms.push({ id: 'a' + Date.now(), time: d.time, on: true, days: d.days, label: d.label, sn: d.sn, sc: d.sc, last: lateGuard(d.time) });
+        const na = { id: 'a' + Date.now(), time: d.time, on: true, days: d.days, label: d.label, sn: d.sn, sc: d.sc, last: lateGuard(d.time) };
+        arm(na);
+        alarms.push(na);
       } else {
-        a.time = d.time; a.label = d.label; a.days = d.days; a.sn = d.sn; a.sc = d.sc; a.on = true; a.last = lateGuard(d.time);
+        a.time = d.time; a.label = d.label; a.days = d.days; a.sn = d.sn; a.sc = d.sc; a.on = true; a.last = lateGuard(d.time); arm(a);
       }
       sortAlarms(); saveAlarms(); renderAlarms(); renderQuick(); closeSheet();
       maybeAskNotifications();
@@ -2436,6 +2451,7 @@ function addQuick(q) {
     if (have.on) { toast('Already in your alarms'); return; }
     have.on = true;
     have.last = lateGuard(have.time);
+    arm(have);
     saveAlarms(); renderAlarms(); renderQuick();
     toast('Alarm on \u00b7 ' + fmtClock(q.time, fmt));
     return;
@@ -2443,6 +2459,7 @@ function addQuick(q) {
   const a = { id: 'a' + Date.now(), time: q.time, on: true, days: q.days.slice(), label: q.name, last: lateGuard(q.time) };
   if (q.sn != null) a.sn = q.sn;
   if (q.sc != null) a.sc = q.sc;
+  arm(a);
   alarms.push(a);
   sortAlarms(); saveAlarms(); renderAlarms(); renderQuick();
   haptic(12);
@@ -2567,6 +2584,11 @@ function checkAlarms() {
   const dk = dayKey(now);
   const wd = now.getDay();
   alarms.forEach(function (a) {
+    if (a.on && !a.days.length && a.at && Date.now() > a.at + 180000) {
+      a.on = false;
+      saveAlarms(); renderAlarms(); renderQuick();
+      return;
+    }
     const x = parseTime(a.time);
     const late = nowMin - (x.h * 60 + x.m);
     const today = !a.days.length || a.days.indexOf(wd) > -1;
@@ -3965,6 +3987,7 @@ function initConnection() {
 function notifSupported() { return 'Notification' in window; }
 
 function requestNotifications() {
+  if (LN) return LN.requestPermissions().then(function (r) { exactCheck(); return r.display; }).catch(function () { return 'denied'; });
   if (!notifSupported()) return Promise.resolve('unsupported');
   if (Notification.permission !== 'default') return Promise.resolve(Notification.permission);
   return new Promise(function (resolve) {
@@ -3976,6 +3999,13 @@ function requestNotifications() {
 }
 
 function maybeAskNotifications() {
+  if (LN) {
+    LN.checkPermissions().then(function (r) {
+      if (r.display === 'granted') exactCheck();
+      else if (r.display !== 'denied') requestNotifications();
+    }).catch(function () {});
+    return;
+  }
   if (!notifSupported() || Notification.permission !== 'default') return;
   let asked = false;
   try { asked = !!localStorage.getItem(NOTIF_ASKED); } catch (e) {}
@@ -3985,6 +4015,7 @@ function maybeAskNotifications() {
 }
 
 function notify(title, body, tag, extra) {
+  if (LN) return;
   if (!notifSupported() || Notification.permission !== 'granted') return;
   const opts = Object.assign({ body: body, tag: tag || 'clock', renotify: true, requireInteraction: true, vibrate: [300, 150, 300, 150, 300] }, extra || {});
   function plain() { try { delete opts.actions; new Notification(title, opts); } catch (e) {} }
@@ -3993,6 +4024,7 @@ function notify(title, body, tag, extra) {
 }
 
 function closeNotifs() {
+  if (LN) { LN.removeAllDeliveredNotifications().catch(function () {}); return; }
   try {
     if (swReg && swReg.getNotifications) {
       swReg.getNotifications().then(function (list) {
@@ -4003,6 +4035,7 @@ function closeNotifs() {
 }
 
 function nextAlarmTime(a) {
+  if (!a.days.length && a.at) return a.at > Date.now() ? a.at : 0;
   const x = parseTime(a.time);
   const now = new Date();
   for (let i = 0; i < 8; i++) {
@@ -4019,6 +4052,7 @@ function schedSoon() {
 }
 
 function syncSchedule() {
+  if (LN) { nativeSync(); return; }
   if (!swReg || !window.TimestampTrigger || !notifSupported() || Notification.permission !== 'granted') return;
   const A = [{ action: 'snooze', title: 'Snooze' }, { action: 'stop', title: 'Stop' }];
   const T = [{ action: 'again', title: 'Restart' }, { action: 'stop', title: 'Stop' }];
@@ -4039,6 +4073,85 @@ function syncSchedule() {
     if (tm.running) add('sch-timer', tm.endAt, 'Timer finished', 'timer', '', T);
     if (snz) add('sch-snz', snz.at, snz.ctx.title, 'alarm', snz.ctx.id || '', A);
   }).catch(function () {});
+}
+
+/* ---- Android app (Capacitor Local Notifications) ----
+   Every alarm is handed to Android's alarm manager, so it shows on the lock
+   screen with Snooze / Stop buttons even when the app is closed. Repeating
+   alarms use a weekly schedule per selected day. */
+function hashId(s) {
+  let h = 7;
+  for (let i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) % 9000000;
+  return (h + 100) * 10;
+}
+
+function nativeSync() {
+  LN.getPending().then(function (r) {
+    const ids = (r.notifications || []).map(function (n) { return { id: n.id }; });
+    return ids.length ? LN.cancel({ notifications: ids }) : null;
+  }).then(function () {
+    const list = [];
+    function item(id, title, body, kind, rid, schedule) {
+      schedule.allowWhileIdle = true;
+      return {
+        id: id, title: title, body: body, schedule: schedule, channelId: 'alarm',
+        actionTypeId: kind === 'timer' ? 'TIMER' : 'ALARM', extra: { kind: kind, id: rid }, autoCancel: true
+      };
+    }
+    alarms.forEach(function (a) {
+      if (!a.on) return;
+      const x = parseTime(a.time);
+      const title = a.label || 'Alarm';
+      const body = fmtClock(a.time, alarmFmt());
+      const base = hashId(a.id);
+      if (!a.days.length) {
+        const ts = nextAlarmTime(a);
+        if (ts) list.push(item(base + 7, title, body, 'alarm', a.id, { at: new Date(ts) }));
+      } else {
+        a.days.forEach(function (d) {
+          list.push(item(base + d, title, body, 'alarm', a.id, { on: { weekday: d + 1, hour: x.h, minute: x.m } }));
+        });
+      }
+    });
+    if (tm.running && tm.endAt > Date.now()) list.push(item(1, 'Timer finished', 'Tap to open', 'timer', '', { at: new Date(tm.endAt) }));
+    if (snz && snz.at > Date.now()) list.push(item(2, snz.ctx.title, 'Snoozed alarm', 'alarm', snz.ctx.id || '', { at: new Date(snz.at) }));
+    return list.length ? LN.schedule({ notifications: list }) : null;
+  }).catch(function () {});
+}
+
+// Android 12+: alarms are only exact when "Alarms & reminders" is allowed
+function exactCheck() {
+  if (!LN || !LN.checkExactNotificationSetting) return;
+  LN.checkExactNotificationSetting().then(function (r) {
+    if (r && r.exact_alarm === 'denied') {
+      toast('Allow "Alarms & reminders" so alarms ring on time', {
+        ms: 7000,
+        action: { label: 'Open', fn: function () { LN.changeExactNotificationSetting().catch(function () {}); } }
+      });
+    }
+  }).catch(function () {});
+}
+
+function initNative() {
+  if (!LN) return;
+  LN.createChannel({ id: 'alarm', name: 'Alarms and timers', description: 'Alarm and timer alerts', importance: 5, visibility: 1, vibration: true, lights: true }).catch(function () {});
+  LN.registerActionTypes({ types: [
+    { id: 'ALARM', actions: [{ id: 'snooze', title: 'Snooze' }, { id: 'stop', title: 'Stop', destructive: true }] },
+    { id: 'TIMER', actions: [{ id: 'again', title: 'Restart' }, { id: 'stop', title: 'Stop', destructive: true }] }
+  ] }).catch(function () {});
+  LN.addListener('localNotificationActionPerformed', function (ev) {
+    const x = (ev.notification && ev.notification.extra) || {};
+    const act = ev.actionId === 'tap' ? '' : ev.actionId;
+    handleRingAction(act, x.kind || 'alarm', x.id || '');
+    if (!act) checkAlarms();   // tapping the notification opens the app and lets it ring
+  });
+  nativeSync();
+}
+
+// a once-alarm remembers its exact time (at); repeating alarms do not need it
+function arm(a) {
+  delete a.at;
+  if (!a.days.length) a.at = nextAlarmTime(a);
 }
 
 // the app was opened by a notification button while it was closed (?ring=snooze&kind=alarm&id=...)
@@ -4064,6 +4177,7 @@ function geoPermState() {
 }
 
 function notifState() {
+  if (LN) return LN.checkPermissions().then(function (r) { return r.display === 'granted' ? 'granted' : (r.display === 'denied' ? 'denied' : 'prompt'); }).catch(function () { return 'unknown'; });
   if (!notifSupported()) return 'unsupported';
   return Notification.permission === 'default' ? 'prompt' : Notification.permission;
 }
@@ -4266,6 +4380,7 @@ function initApp() {
   initConnection();
   initWorldHome();
   registerSW();
+  initNative();
   requestPersistentStorage();
   watchPermissions();
 
