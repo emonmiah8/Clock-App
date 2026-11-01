@@ -1,8 +1,8 @@
 /* ==========================================================================
    CLOCK APP - main.js
-   1 Config & state         7 Digits & time HTML        13 Stopwatch
+   1 Config & state         7 Digits & time HTML        13 Stopwatch (+ scroll fade)
    2 Helpers & icons        8 Home widgets              14 Timer, presets, typed time
-   3 Injected styles        9 Widget designs + tab      15 Upcoming (swipe filters)
+   3 Injected styles        9 Widget designs + tab      15 Upcoming (fully dynamic)
    4 Storage               10 Settings & snooze         16 Bottom bar & button effects
    5 Sheet system & UI     11 Edit / Add widget         17 Connection, notifications, SW
    6 Tones & ringing       12 Tabs, alarms, quick       18 Init
@@ -24,11 +24,14 @@ const NOTIF_ASKED = 'clockNotifAsked';
 const CUSTOM_KEY = 'customUpcomingEvents';
 const HKEY = 'clockHol2_';
 const IPKEY = 'clockIpCc';
+const WDKEY = 'clockWorldDays';
 const GEO_URL = 'https://geocoding-api.open-meteo.com/v1/search';
 const REVERSE_URL = 'https://api.bigdatacloud.net/data/reverse-geocode-client';
 const HOL_URL = 'https://date.nager.at/api/v3/PublicHolidays/';
+const WD_URL = 'https://api.wikimedia.org/feed/v1/wikipedia/en/onthisday/holidays/';
 const PLACE_FRESH_MS = 20 * 60 * 1000;
 const HOL_TTL = 7 * 24 * 3600 * 1000;
+const WD_TTL = 60 * 24 * 3600 * 1000;
 
 const RETRO = ['#4aa3d8', '#ef5b55', '#f4f1ea'];
 const COLORS = ['#ffffff', '#4fc3f7', '#81c784', '#ffb74d', '#f06292'];
@@ -47,6 +50,7 @@ const ITEM_H = 60;   // timer wheel row height
 const AW_H = 46;     // alarm wheel row height
 const DAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 const ALL_DAYS = [0, 1, 2, 3, 4, 5, 6];
+const VIB = [300, 150, 300, 150, 300];
 
 let widgets = loadWidgets();
 let alarms = loadAlarms();
@@ -73,6 +77,7 @@ let installEvt = null;
 let sw = { running: false, start: 0, elapsed: 0, laps: [] };
 let lastSwMain = '';
 let lastSwCs = '';
+let swRaf = 0;
 
 let tm = { total: 300000, remaining: 300000, running: false, endAt: 0 };
 try {
@@ -118,6 +123,10 @@ function clampN(v, a, b) { v = Math.round(Number(v)); return isNaN(v) ? a : Math
 function hit(e, sel) { return e && e.target && e.target.closest ? e.target.closest(sel) : null; }
 // Bangla digits are accepted in typed fields
 function bnDigits(s) { return String(s).replace(/[\u09E6-\u09EF]/g, function (d) { return '\u09E6\u09E7\u09E8\u09E9\u09EA\u09EB\u09EC\u09ED\u09EE\u09EF'.indexOf(d); }); }
+function addDays(d, n) { return new Date(d.getFullYear(), d.getMonth(), d.getDate() + n); }
+
+// vibration while an alarm / timer rings (Settings > Vibration)
+function hapOn(kind) { return (kind === 'timer' ? globalSet.hapTimer : globalSet.hapAlarm) !== false; }
 
 // click point for the pop-in origin
 function pt(e) {
@@ -378,8 +387,11 @@ body.light .seg::before{background:#fff;box-shadow:0 1px 4px rgba(0,0,0,.18)}
 #swHand line{stroke:var(--accent)!important}
 #swHand circle:first-of-type{fill:var(--accent)!important}
 .dialtime .cs,.dialtime .time.cs,#swCs{color:var(--accent)!important}
-.dialwrap{isolation:isolate}
-.dialwrap::before{content:"";position:absolute;inset:.8%;border-radius:50%;z-index:-1;background:rgba(255,255,255,.05);-webkit-backdrop-filter:blur(20px) saturate(1.6) brightness(.6);backdrop-filter:blur(20px) saturate(1.6) brightness(.6);box-shadow:0 20px 40px rgba(0,0,0,.4)}
+.dialwrap{isolation:isolate;--fade:1}
+.dialwrap::before{content:"";position:absolute;inset:.8%;border-radius:50%;z-index:-1;background:rgba(255,255,255,.05);-webkit-backdrop-filter:blur(20px) saturate(1.6) brightness(.6);backdrop-filter:blur(20px) saturate(1.6) brightness(.6);box-shadow:0 20px 40px rgba(0,0,0,.4);opacity:var(--fade)}
+/* scrolling down fades the dial (face, ticks, hands); the time text stays */
+.dialwrap svg:not(.dg){opacity:var(--fade);will-change:opacity}
+#laps .lap{will-change:opacity}
 
 /* ---- Widgets tab: every design is a pure function of the time ---- */
 .wgpage{padding:72px 14px 150px}
@@ -484,7 +496,7 @@ function loadGlobal() {
   const g = {
     bg: '#000000', bgLight: '#f2f2f7', theme: 'dark', awake: false, font: 'sf', country: 'auto',
     alarmTone: 't31', timerTone: 't43', swTone: 'off', customName: '', upFilter: 'all', alarmFmt: '12',
-    snoozeMin: 5, snoozeMax: 3, wgFmt: '24'
+    snoozeMin: 5, snoozeMax: 3, wgFmt: '24', hapAlarm: true, hapTimer: true
   };
   const s = readJson(GKEY);
   return s && typeof s === 'object' ? Object.assign(g, s) : g;
@@ -944,12 +956,15 @@ function startRing(c) {
   const acts = [{ action: 'stop', title: 'Stop' }];
   if (ringAction) acts.unshift({ action: c.kind === 'timer' ? 'again' : 'snooze', title: c.kind === 'timer' ? 'Restart' : 'Snooze' });
   if (document.hidden || !document.hasFocus()) {
-    notify(title, 'Tap to open the clock', 'clock-ring', { silent: true, actions: acts, data: { kind: c.kind, id: c.id || '' } });
+    notify(title, 'Tap to open the clock', 'clock-ring', {
+      silent: true, actions: acts, data: { kind: c.kind, id: c.id || '' },
+      vibrate: hapOn(c.kind) ? VIB : []
+    });
   }
 
   playTone(c.tone || TONES[0].id, true);
-  haptic(300);
-  ringTimer = setInterval(function () { haptic(300); }, 900);
+  if (hapOn(c.kind)) haptic(300);
+  ringTimer = setInterval(function () { if (ringCtx && hapOn(ringCtx.kind)) haptic(300); }, 900);
   setAwake(true);
   setMedia(true, title);
   if (LN && !document.hidden) setTimeout(function () { LN.removeAllDeliveredNotifications().catch(function () {}); }, 1500);
@@ -961,6 +976,7 @@ function stopRing() {
   ringAction = null;
   closeNotifs();
   if (ringTimer) { clearInterval(ringTimer); ringTimer = null; }
+  haptic(0);
   stopTone();
   setMedia(false);
   $('ring').classList.remove('open');
@@ -1361,14 +1377,11 @@ function cacheSearch(key, list) {
   if (searchKeys.length > 40) delete searchCache[searchKeys.shift()];
 }
 
+// offline fallback: the time zone names the browser knows
 function localZoneSearch(q) {
   if (!zoneIndex) {
     let all = [];
     try { all = Intl.supportedValuesOf('timeZone'); } catch (e) {}
-    if (!all.length) {
-      all = ['Asia/Dhaka', 'Asia/Kolkata', 'Asia/Karachi', 'Asia/Dubai', 'Asia/Riyadh', 'Asia/Tokyo', 'Asia/Singapore',
-        'Europe/London', 'Europe/Paris', 'America/New_York', 'America/Los_Angeles', 'Australia/Sydney', 'UTC'];
-    }
     zoneIndex = all.filter(validZone).map(function (z) {
       return { name: tzCity(z), timezone: z, admin1: z.split('/')[0], country: '' };
     });
@@ -1609,7 +1622,7 @@ function calHtml(n) {
 
 function agendaHtml(n) {
   const today = new Date(n.getFullYear(), n.getMonth(), n.getDate());
-  const k = dayKey(today) + detectCountry();
+  const k = dayKey(today) + detectCountry() + wdVersion;
   if (agMemo.k !== k) agMemo = { k: k, list: getUpcoming(today) };
   const l = agMemo.list;
   const e = l[0];
@@ -1945,6 +1958,10 @@ function openSettings() {
   h += sec('Sounds', Object.keys(TONE_KINDS).map(function (k) {
     return navRow('data-tone="' + k + '"', TONE_KINDS[k].label, esc(toneName(globalSet[TONE_KINDS[k].key])));
   }).join('') + navRow('id="snbtn"', 'Snooze', snoozeSummary()));
+  h += sec('Vibration',
+    toggleRow('hapA', 'Alarm vibration', hapOn('alarm')) +
+    toggleRow('hapT', 'Timer vibration', hapOn('timer')),
+    'Vibrate while an alarm or timer is ringing.');
   h += sec('General',
     toggleRow('awake', 'Keep screen awake', globalSet.awake) +
     navRow('id="upbtn"', 'Upcoming dates', esc(countryName(detectCountry()) || 'Auto')) +
@@ -1973,6 +1990,17 @@ function openSettings() {
   });
 
   pick('alFmt', setAlarmFmt);
+
+  bindToggle('hapA', hapOn('alarm'), function (on) {
+    globalSet.hapAlarm = on;
+    saveGlobal(); schedSoon();
+    if (on) haptic(40);
+  });
+  bindToggle('hapT', hapOn('timer'), function (on) {
+    globalSet.hapTimer = on;
+    saveGlobal(); schedSoon();
+    if (on) haptic(40);
+  });
 
   bindToggle('awake', globalSet.awake, function (on) {
     globalSet.awake = on;
@@ -2203,6 +2231,7 @@ function showTab(name) {
   window.scrollTo(0, 0);
   closeSheet();
   if (name === 'timer') setTimeout(syncWheels, 50);
+  if (name === 'stopwatch') setTimeout(schedSwFade, 30);
   if (name === 'home') {
     renderUpcoming();
     setTimeout(measureUpcoming, 60);
@@ -2659,7 +2688,7 @@ function checkAlarms() {
 }
 
 /* ==========================================================================
-   13. STOPWATCH
+   13. STOPWATCH  (+ scroll fade)
    ========================================================================== */
 function swMs() { return sw.elapsed + (sw.running ? Date.now() - sw.start : 0); }
 
@@ -2759,6 +2788,57 @@ function renderLaps() {
     row.textContent = 'Lap ' + (i + 1) + '   +' + split.main + '.' + split.cs + '   ' + total.main + '.' + total.cs;
     box.appendChild(row);
   }
+  schedSwFade();
+}
+
+/* Scrolling down fades the dial out (face, ticks, hands) while the big time
+   stays pinned near the top, and lap rows fade as they slide under it.
+   It works whichever element scrolls: the page, the stopwatch tab or the lap list. */
+const SW_PIN = 64;   // px from the top where the time stays
+
+function schedSwFade() {
+  if (!swRaf) swRaf = requestAnimationFrame(swFade);
+}
+
+function swFade() {
+  swRaf = 0;
+  const view = $('v-stopwatch');
+  const wrap = view ? view.querySelector('.dialwrap') : null;
+  if (!wrap || !wrap.offsetParent) return;
+
+  const laps = $('laps');
+  const s = Math.max(
+    window.scrollY || 0, view.scrollTop || 0,
+    laps ? laps.scrollTop : 0,
+    laps && laps.parentElement ? laps.parentElement.scrollTop : 0
+  );
+  const p = Math.min(1, s / Math.max(120, wrap.offsetHeight * 0.55));
+  wrap.style.setProperty('--fade', (1 - p).toFixed(3));
+
+  // keep the time visible at the top once its natural place scrolls away
+  const t = view.querySelector('.dialtime');
+  let limit = -1;
+  if (t) {
+    const cur = t._sh || 0;
+    const natural = t.getBoundingClientRect().top - cur;
+    const want = s > 0 ? Math.max(0, SW_PIN - natural) : 0;
+    if (want !== cur) { t.style.translate = want ? '0 ' + want + 'px' : ''; t._sh = want; }
+    if (want > 0) limit = t.getBoundingClientRect().bottom;
+  }
+
+  // lap rows fade out as they reach the pinned time
+  if (laps) {
+    Array.prototype.forEach.call(laps.children, function (r) {
+      const o = limit < 0 ? 1 : Math.max(0, Math.min(1, (r.getBoundingClientRect().top - limit) / 48));
+      r.style.opacity = o === 1 ? '' : o.toFixed(2);
+    });
+  }
+}
+
+function initSwFade() {
+  // scroll events do not bubble, so listen in the capture phase to catch any scroller
+  document.addEventListener('scroll', schedSwFade, { passive: true, capture: true });
+  window.addEventListener('resize', schedSwFade);
 }
 
 /* ==========================================================================
@@ -2989,21 +3069,25 @@ function openPresetSheet(origin) {
 }
 
 /* ==========================================================================
-   15. UPCOMING  (every important day of the calendar, nothing typed by hand)
+   15. UPCOMING  (nothing typed by hand, everything is fetched or calculated)
    --------------------------------------------------------------------------
-   Country  : Settings choice, otherwise GPS -> internet (IP) -> time zone -> language
-   Sources, merged into one list for the next 12 months:
-     1. date-holidays library (about 200 countries), cached for offline use
+   Country : Settings choice, otherwise GPS -> internet (IP) -> time zone -> language
+   Sources merged into one list for the next 12 months:
+     1. date-holidays library: public, bank, optional and observance days and the
+        religious days of about 200 countries (copy kept in the browser cache)
      2. Nager.Date API as a backup when the library has nothing for a country
-     3. Built-in calendar (works offline): Islamic, Hebrew and Chinese calendars,
-        Easter, seasons, world days, a few local days
-     4. Your own dates
-   Duplicates (same name within 3 days) are removed.
+     3. Wikipedia "holidays and observances" feed, one request per calendar day,
+        for world days and other observances (saved for 60 days, then refreshed)
+     4. Seasons: equinoxes and solstices, calculated with astronomy formulas
+     5. Your own dates
+   Duplicates (same name within 3 days) are removed. Everything refreshes by
+   itself when the app opens, comes back online, or a new day starts.
    Swipe left / right on the list to move between the filters.
    ========================================================================== */
 const LIB_URLS = ['holidays.min.js', 'https://cdn.jsdelivr.net/npm/date-holidays@3/dist/umd.min.js', 'https://unpkg.com/date-holidays@3/dist/umd.min.js'];
 const LIB_CACHE = 'clock-holidays-lib';
-const REL_RE = /christmas|\beaster|good friday|epiphany|ascension|pentecost|\bwhit(sun|\s|$)|corpus christi|assumption|all saints|all souls|immaculate|diwali|deepavali|\bholi\b|vesak|buddha|navratri|dussehra|durga|janmashtami|ramadan|\beid|fitr|adha|ashura|mawlid|passover|hanukkah|yom kippur|rosh hashan|nyepi|waisak|thaipusam|palm sunday|maundy|ramazan|bayram|kurban|\braya\b|nuzul|arafah|shab-e|miladun|isra|qadr|purim|sukkot|shavuot|ash wednesday|nanak|baisakhi|vaisakhi|mahavir|onam|pongal|ganesh|rath yatra|shivaratri|ram navami|poya/i;
+// names that are religious by wording; world days by wording
+const REL_RE = /christmas|\beaster|good friday|epiphany|ascension|pentecost|\bwhit(sun|\s|$)|corpus christi|assumption|all saints|all souls|immaculate|diwali|deepavali|\bholi\b|vesak|buddha|navratri|dussehra|durga|janmashtami|ramadan|\beid|fitr|adha|ashura|mawlid|passover|hanukkah|yom kippur|rosh hashan|nyepi|waisak|thaipusam|palm sunday|maundy|ramazan|bayram|kurban|\braya\b|nuzul|arafah|shab-e|miladun|isra|qadr|purim|sukkot|shavuot|ash wednesday|nanak|baisakhi|vaisakhi|mahavir|onam|pongal|ganesh|rath yatra|shivaratri|ram navami|poya|new year/i;
 const WORLD_RE = /^(world|international|global|universal|united nations)\b/i;
 const UP_FILTERS = [['all', 'All'], ['h', 'Holidays'], ['r', 'Religious'], ['i', 'Observances'], ['w', 'World days'], ['s', 'Seasons']];
 const UP_ORDER = 'hrisw';
@@ -3020,7 +3104,9 @@ let holLoading = false;
 let lastUpSig = '';
 let lastOv = -1;
 let upLimit = UP_PAGE;
-let calMemo = { sig: '', list: [] };
+let wdData = readJson(WDKEY) || {};   // 'MM-DD' -> { t: saved at, l: [[name, type], ...] }
+let wdBusy = false;
+let wdVersion = 0;                    // grows whenever new world days arrive
 const holMemo = {};
 const extraBusy = {};
 
@@ -3190,7 +3276,7 @@ function loadLib() {
 }
 
 // null = library not loaded yet, [] = no data for this country
-// every type is kept: public days are "h", everything else is "i" (sorted later)
+// every type is kept: public days are "h", everything else is "i" (refined later)
 function libList(cc, yr) {
   const k = cc + yr;
   if (holMemo[k]) return holMemo[k];
@@ -3252,6 +3338,7 @@ function holItems(cc, yr) {
 }
 
 function loadHolidays(cc) {
+  loadWorldDays();
   if (!cc) return;
   const y = new Date().getFullYear();
   holLoading = true;
@@ -3268,144 +3355,64 @@ function loadHolidays(cc) {
   });
 }
 
-/* ---- source 3: built-in worldwide calendar ---- */
-// [month, day, name, type, regex of other names for the same day]
-const FIXED = [
-  [1, 1, "New Year's Day", 'h', "new year'?s day|^new year$"],
-  [1, 24, 'International Day of Education', 'w'],
-  [1, 27, 'International Holocaust Remembrance Day', 'w'],
-  [2, 4, 'World Cancer Day', 'w'],
-  [2, 11, 'International Day of Women and Girls in Science', 'w'],
-  [2, 13, 'World Radio Day', 'w'],
-  [2, 14, "Valentine's Day", 'i', "valentine"],
-  [2, 20, 'World Day of Social Justice', 'w'],
-  [2, 21, 'International Mother Language Day', 'w'],
-  [3, 3, 'World Wildlife Day', 'w'],
-  [3, 8, "International Women's Day", 'w', "women'?s day"],
-  [3, 14, 'Pi Day', 'i'],
-  [3, 20, 'International Day of Happiness', 'w'],
-  [3, 21, 'Nowruz (Persian New Year)', 'i', 'nowruz|norouz|nawruz'],
-  [3, 21, 'International Day of Forests', 'w'],
-  [3, 21, 'World Poetry Day', 'w'],
-  [3, 22, 'World Water Day', 'w'],
-  [3, 23, 'World Meteorological Day', 'w'],
-  [3, 24, 'World Tuberculosis Day', 'w'],
-  [4, 1, "April Fools' Day", 'i'],
-  [4, 2, 'World Autism Awareness Day', 'w'],
-  [4, 7, 'World Health Day', 'w'],
-  [4, 22, 'Earth Day', 'w', '^earth day|mother earth'],
-  [4, 23, 'World Book Day', 'w'],
-  [4, 25, 'World Malaria Day', 'w'],
-  [4, 30, 'International Jazz Day', 'w'],
-  [5, 1, "International Workers' Day", 'h', "labou?r day|workers|may day"],
-  [5, 3, 'World Press Freedom Day', 'w'],
-  [5, 8, 'World Red Cross Day', 'w'],
-  [5, 12, "International Nurses Day", 'w'],
-  [5, 15, 'International Day of Families', 'w'],
-  [5, 17, 'World Telecommunication Day', 'w'],
-  [5, 22, 'International Day for Biological Diversity', 'w'],
-  [5, 31, 'World No Tobacco Day', 'w'],
-  [6, 1, "Global Day of Parents", 'w'],
-  [6, 5, 'World Environment Day', 'w'],
-  [6, 8, 'World Oceans Day', 'w'],
-  [6, 14, 'World Blood Donor Day', 'w'],
-  [6, 20, 'World Refugee Day', 'w'],
-  [6, 21, 'International Day of Yoga', 'w', 'yoga'],
-  [6, 21, 'World Music Day', 'w'],
-  [6, 26, 'International Day against Drug Abuse', 'w'],
-  [7, 11, 'World Population Day', 'w'],
-  [7, 18, 'Nelson Mandela International Day', 'w'],
-  [7, 30, 'International Day of Friendship', 'w'],
-  [8, 9, "International Day of the World's Indigenous Peoples", 'w'],
-  [8, 12, 'International Youth Day', 'w'],
-  [8, 19, 'World Humanitarian Day', 'w'],
-  [9, 8, 'International Literacy Day', 'w'],
-  [9, 15, 'International Day of Democracy', 'w'],
-  [9, 21, 'International Day of Peace', 'w'],
-  [9, 27, 'World Tourism Day', 'w'],
-  [10, 1, 'International Day of Older Persons', 'w'],
-  [10, 4, 'World Animal Day', 'w'],
-  [10, 5, "World Teachers' Day", 'w', "teachers'? day"],
-  [10, 10, 'World Mental Health Day', 'w'],
-  [10, 16, 'World Food Day', 'w'],
-  [10, 24, 'United Nations Day', 'w'],
-  [10, 31, 'Halloween', 'i'],
-  [11, 14, 'World Diabetes Day', 'w'],
-  [11, 16, 'International Day for Tolerance', 'w'],
-  [11, 19, "International Men's Day", 'w'],
-  [11, 20, "Universal Children's Day", 'w', "children'?s day"],
-  [11, 25, 'International Day for the Elimination of Violence against Women', 'w'],
-  [12, 1, 'World AIDS Day', 'w'],
-  [12, 3, 'International Day of Persons with Disabilities', 'w'],
-  [12, 10, 'Human Rights Day', 'w'],
-  [12, 18, 'International Migrants Day', 'w'],
-  [12, 24, 'Christmas Eve', 'r', 'christmas eve'],
-  [12, 25, 'Christmas Day', 'r', 'christmas day|^christmas$'],
-  [12, 31, "New Year's Eve", 'i', "new year'?s eve"]
-];
+/* ---- source 3: Wikipedia holidays and observances (per calendar day) ---- */
+function wdKey(d) { return pad(d.getMonth() + 1) + '-' + pad(d.getDate()); }
 
-// extra national days for some countries (library names are matched, so no duplicates)
-const LOCAL = {
-  BD: [
-    [2, 21, "Language Martyrs' Day (Shaheed Dibash)", 'h', 'martyrs|shaheed|language'],
-    [3, 25, 'Genocide Remembrance Day', 'i', 'genocide'],
-    [3, 26, 'Independence Day', 'h', 'independence'],
-    [4, 14, 'Pohela Boishakh (Bengali New Year)', 'h', 'boishakh|baisakh|bengali new year'],
-    [12, 14, 'Martyred Intellectuals Day', 'i', 'intellectual'],
-    [12, 16, 'Victory Day', 'h', 'victory']
-  ]
-};
+// keeps world days, religious days and "... Day / Week" observances; drops saints' feasts
+function wdClass(name) {
+  if (!name || name.length > 70 || /\bsaint\b|\bst\. |\bfeast\b|\bsolemnity\b|\bour lady\b/i.test(name)) return '';
+  if (WORLD_RE.test(name)) return 'w';
+  if (REL_RE.test(name)) return 'r';
+  if (/\b(day|week|eve)\b/i.test(name)) return 'i';
+  return '';
+}
 
-// days counted from Western Easter: [offset, name, regex]
-const EASTER = [
-  [-46, 'Ash Wednesday', 'ash wednesday'],
-  [-7, 'Palm Sunday', 'palm sunday'],
-  [-3, 'Maundy Thursday', 'maundy|holy thursday'],
-  [-2, 'Good Friday', 'good friday'],
-  [0, 'Easter Sunday', '^easter( sunday| day)?$'],
-  [39, 'Ascension Day', 'ascension'],
-  [49, 'Pentecost', 'pentecost|whit sunday']
-];
+function wdSave() { writeJson(WDKEY, wdData); }
 
-// Islamic calendar: 'month-day' -> [name, regex]
-const ISL = {
-  '1-1': ['Islamic New Year', 'islamic new year|hijri new year|muharram|awal muharram'],
-  '1-10': ['Day of Ashura', 'ashura'],
-  '3-12': ["Mawlid (Prophet's Birthday)", 'mawlid|milad|prophet.*birthday|birthday of the prophet'],
-  '7-27': ["Isra and Mi'raj", "isra|mi'?raj"],
-  '8-15': ['Shab-e-Barat', 'shab-e-barat|shab e barat|bara.?at|mid-?sha'],
-  '9-1': ['Ramadan begins', 'ramadan.*(begin|start)|first day of ramadan|^ramadan$'],
-  '9-27': ['Laylat al-Qadr (Shab-e-Qadr)', 'qadr|qadar'],
-  '10-1': ['Eid al-Fitr', 'fitr'],
-  '12-9': ['Day of Arafah', 'arafah|arafat'],
-  '12-10': ['Eid al-Adha', 'adha|kurban|qurban|bakr']
-};
-const ISL_MONTHS = ['Muharram', 'Safar', "Rabi' al-awwal", "Rabi' al-thani", 'Jumada al-awwal', 'Jumada al-thani',
-  'Rajab', "Sha'ban", 'Ramadan', 'Shawwal', "Dhu al-Qi'dah", 'Dhu al-Hijjah'];
+function loadWorldDays() {
+  if (wdBusy || navigator.onLine === false) return;
+  const today = new Date();
+  const todo = [];
+  for (let i = 0; i <= UP_DAYS; i++) {
+    const k = wdKey(addDays(today, i));
+    const c = wdData[k];
+    if ((!c || Date.now() - c.t > WD_TTL) && todo.indexOf(k) < 0) todo.push(k);
+  }
+  if (!todo.length) return;
 
-// Hebrew calendar: 'month-day' (month in lower case)
-const HEB = {
-  'tishri-1': ['Rosh Hashanah', 'rosh hashan'],
-  'tishri-10': ['Yom Kippur', 'yom kippur'],
-  'tishri-15': ['Sukkot', 'sukkot'],
-  'kislev-25': ['Hanukkah (first day)', 'hanukkah|chanukah'],
-  'adar-14': ['Purim', 'purim'],
-  'adar ii-14': ['Purim', 'purim'],
-  'nisan-15': ['Passover (first day)', 'passover|pesach'],
-  'sivan-6': ['Shavuot', 'shavuot']
-};
+  wdBusy = true;
+  let fails = 0, done = 0;
 
-// Chinese calendar: 'month-day'
-const CHI = {
-  '1-1': ['Chinese New Year (Lunar New Year)', 'chinese new year|lunar new year|spring festival'],
-  '1-15': ['Lantern Festival', 'lantern'],
-  '5-5': ['Dragon Boat Festival', 'dragon boat|duanwu'],
-  '7-7': ['Qixi Festival', 'qixi'],
-  '8-15': ['Mid-Autumn Festival', 'mid-?autumn|moon festival'],
-  '9-9': ['Double Ninth Festival', 'double ninth|chongyang']
-};
+  // three requests at a time, nearest days first; stops early when the service is unreachable
+  function next() {
+    if (fails >= 5 || !todo.length) return Promise.resolve();
+    const k = todo.shift();
+    const p = k.split('-');
+    return fetchJson(WD_URL + p[0] + '/' + p[1], { timeout: 10000, retries: 0 })
+      .then(function (d) {
+        const seen = {};
+        const l = [];
+        ((d && d.holidays) || []).forEach(function (x) {
+          const n = String(x.text || '').split(/\s*[\(\[]/)[0].trim();
+          const t = wdClass(n);
+          if (t && !seen[n]) { seen[n] = 1; l.push([n, t]); }
+        });
+        wdData[k] = { t: Date.now(), l: l };
+        wdVersion++;
+        if (++done === 20) renderUpcoming();
+      })
+      .catch(function () { fails++; })
+      .then(next);
+  }
 
-// equinoxes and solstices (Meeus mean-event polynomials, accurate to within minutes)
+  Promise.all([next(), next(), next()]).then(function () {
+    wdBusy = false;
+    wdSave();
+    renderUpcoming();
+  });
+}
+
+/* ---- source 4: seasons (equinoxes and solstices, Meeus mean-event polynomials) ---- */
 const SEASON_C = [
   [2451623.80984, 365242.37404, 0.05169, -0.00411, -0.00057],
   [2451716.56767, 365241.62603, 0.00325, 0.00888, -0.00030],
@@ -3413,33 +3420,6 @@ const SEASON_C = [
   [2451900.05952, 365242.74049, -0.06223, -0.00823, 0.00032]
 ];
 const SEASON_N = ['March Equinox', 'June Solstice', 'September Equinox', 'December Solstice'];
-
-function addDays(d, n) { return new Date(d.getFullYear(), d.getMonth(), d.getDate() + n); }
-
-// n-th weekday of a month (month 0-11, weekday 0 = Sunday)
-function nthWeekday(y, m, wdy, n) {
-  const first = new Date(y, m, 1);
-  return new Date(y, m, 1 + ((wdy - first.getDay() + 7) % 7) + (n - 1) * 7);
-}
-
-function easterWestern(y) {
-  const a = y % 19, b = Math.floor(y / 100), c = y % 100;
-  const d = Math.floor(b / 4), e = b % 4, f = Math.floor((b + 8) / 25);
-  const g = Math.floor((b - f + 1) / 3), h = (19 * a + b - d - g + 15) % 30;
-  const i = Math.floor(c / 4), k = c % 4, l = (32 + 2 * e + 2 * i - h - k) % 7;
-  const m = Math.floor((a + 11 * h + 22 * l) / 451);
-  const mo = Math.floor((h + l - 7 * m + 114) / 31);
-  const da = ((h + l - 7 * m + 114) % 31) + 1;
-  return new Date(y, mo - 1, da);
-}
-
-function easterOrthodox(y) {
-  const a = y % 4, b = y % 7, c = y % 19, d = (19 * c + 15) % 30;
-  const e = (2 * a + 4 * b - d + 34) % 7;
-  const mo = Math.floor((d + e + 114) / 31);
-  const da = ((d + e + 114) % 31) + 1;
-  return new Date(y, mo - 1, da + 13); // Julian date + 13 days (valid 1900-2099)
-}
 
 function seasonDates(y) {
   const t = (y - 2000) / 1000;
@@ -3450,82 +3430,7 @@ function seasonDates(y) {
   });
 }
 
-function calFmt(cals, opt) {
-  for (let i = 0; i < cals.length; i++) {
-    try {
-      const f = new Intl.DateTimeFormat('en-u-ca-' + cals[i], opt);
-      if (f.resolvedOptions().calendar === cals[i]) return f;
-    } catch (e) {}
-  }
-  return null;
-}
-
-function calParts(f, d) {
-  const o = {};
-  f.formatToParts(d).forEach(function (p) { o[p.type] = p.value; });
-  return o;
-}
-
-function rx(s) { return s ? new RegExp(s, 'i') : null; }
-
-// walks every day of the next year through the Islamic, Hebrew and Chinese calendars
-function lunarEvents(today) {
-  const out = [];
-  const isl = calFmt(['islamic-umalqura', 'islamic-civil', 'islamic'], { day: 'numeric', month: 'numeric', year: 'numeric' });
-  const heb = calFmt(['hebrew'], { day: 'numeric', month: 'long' });
-  const chi = calFmt(['chinese'], { day: 'numeric', month: 'numeric' });
-  if (!isl && !heb && !chi) return out;
-
-  for (let i = 0; i <= UP_DAYS + 1; i++) {
-    const noon = new Date(today.getFullYear(), today.getMonth(), today.getDate() + i, 12);
-    const dt = new Date(noon.getFullYear(), noon.getMonth(), noon.getDate());
-
-    if (isl) {
-      const p = calParts(isl, noon);
-      const e = ISL[(+p.month) + '-' + (+p.day)];
-      if (e) out.push({ dt: dt, n: e[0], t: 'r', k: rx(e[1]), b: p.day + ' ' + ISL_MONTHS[p.month - 1] + ' ' + p.year + ' AH' });
-    }
-    if (heb) {
-      const p = calParts(heb, noon);
-      const e = HEB[String(p.month).toLowerCase() + '-' + (+p.day)];
-      if (e) out.push({ dt: dt, n: e[0], t: 'r', k: rx(e[1]), b: '' });
-    }
-    if (chi) {
-      const p = calParts(chi, noon);
-      if (/^\d+$/.test(p.month)) {
-        const e = CHI[(+p.month) + '-' + (+p.day)];
-        if (e) out.push({ dt: dt, n: e[0], t: 'i', k: rx(e[1]), b: '' });
-      }
-    }
-  }
-  return out;
-}
-
-// every built-in event for this year and the next (kept for the whole day)
-function calEvents(today, cc) {
-  const sig = dayKey(today) + cc;
-  if (calMemo.sig === sig) return calMemo.list;
-
-  const y = today.getFullYear();
-  const out = [];
-  function ev(dt, n, t, k, b) { out.push({ dt: dt, n: n, t: t, k: rx(k), b: b || '' }); }
-
-  for (let yr = y; yr <= y + 1; yr++) {
-    FIXED.concat(LOCAL[cc] || []).forEach(function (x) { ev(new Date(yr, x[0] - 1, x[1]), x[2], x[3], x[4]); });
-    ev(nthWeekday(yr, 4, 0, 2), "Mother's Day", 'i', "mother'?s day");
-    ev(nthWeekday(yr, 5, 0, 3), "Father's Day", 'i', "father'?s day");
-    const easter = easterWestern(yr);
-    EASTER.forEach(function (x) { ev(addDays(easter, x[0]), x[1], 'r', x[2]); });
-    ev(easterOrthodox(yr), 'Orthodox Easter', 'r', 'orthodox easter');
-    seasonDates(yr).forEach(function (s) { ev(s.dt, s.n, 's', null); });
-  }
-  lunarEvents(today).forEach(function (e) { out.push(e); });
-
-  calMemo = { sig: sig, list: out };
-  return out;
-}
-
-/* ---- source 4: your own dates ---- */
+/* ---- source 5: your own dates ---- */
 function loadCustom() {
   const c = readJson(CUSTOM_KEY);
   return Array.isArray(c) ? c : [];
@@ -3541,8 +3446,10 @@ function upType(name, base) {
   return base;
 }
 
-function sameName(e, b) {
-  return norm(e.n) === norm(b.n) || (e.k && e.k.test(b.n));
+// same event under a slightly different name ("Eid al-Fitr" / "Eid al-Fitr Holiday")
+function sameName(a, b) {
+  const x = norm(a), y = norm(b);
+  return x === y || (x.length > 5 && y.length > 5 && (x.indexOf(y) > -1 || y.indexOf(x) > -1));
 }
 
 function getUpcoming(today) {
@@ -3570,14 +3477,22 @@ function getUpcoming(today) {
     }
   }
 
-  // 3: built-in calendar, skipped when the same day is already listed (name match within 3 days)
+  // 3 + 4: world days and seasons, skipped when the same event is already listed within 3 days
   const base = out.slice();
-  calEvents(today, cc).forEach(function (e) {
-    const clash = base.some(function (b) { return Math.abs(b.dt - e.dt) <= 3.5 * 864e5 && sameName(e, b); });
-    if (!clash) push(e.dt, e.n, e.b, e.t);
-  });
+  function addExtra(dt, n, t) {
+    const clash = base.some(function (b) { return Math.abs(b.dt - dt) <= 3.5 * 864e5 && sameName(n, b.n); });
+    if (!clash) push(dt, n, '', t);
+  }
+  for (let i = 0; i <= UP_DAYS; i++) {
+    const d = addDays(today, i);
+    const c = wdData[wdKey(d)];
+    if (c) c.l.forEach(function (x) { addExtra(d, x[0], x[1]); });
+  }
+  for (let yr = y; yr <= y + 1; yr++) {
+    seasonDates(yr).forEach(function (s) { push(s.dt, s.n, '', 's'); });
+  }
 
-  // 4: your own dates
+  // 5: your own dates
   loadCustom().forEach(function (c) {
     const p = String(c.d).split('-');
     if (p.length !== 3 || !c.n) return;
@@ -3646,15 +3561,16 @@ function renderUpcoming() {
 
   const all = getUpcoming(today).filter(function (it) { return f === 'all' || it.t === f; });
   const list = all.slice(0, upLimit);
+  const loading = holLoading || wdBusy;
 
   // draw again only when something really changed (keeps the scroll position)
-  const sig = [dayKey(today), cc, f, holLoading, upLimit, all.length,
+  const sig = [dayKey(today), cc, f, loading, upLimit, all.length,
     list.map(function (it) { return dayKey(it.dt) + it.n + it.t; }).join('|')].join('#');
   if (sig === lastUpSig) return;
   lastUpSig = sig;
 
   if (!list.length) {
-    box.innerHTML = '<div class="hempty">' + (holLoading ? 'Loading dates...' : 'Nothing here for the next 12 months. Swipe to another filter, or add your own date in Settings.') + '</div>';
+    box.innerHTML = '<div class="hempty">' + (loading ? 'Loading dates...' : 'Nothing here for the next 12 months. Swipe to another filter, or add your own date in Settings.') + '</div>';
     return;
   }
 
@@ -3692,8 +3608,9 @@ function openUpcomingSettings() {
     opt('auto', 'Auto (' + esc(countryName(autoCountry()) || 'unknown') + ')', sel === 'auto') +
     countryList().map(function (x) { return opt(x.c, esc(flagOf(x.c) + ' ' + x.n), sel === x.c); }).join('') +
     '</select></div>',
-    'Public holidays follow this country. Religious days, world days, seasons and other calendars are shown for everyone. ' +
-    'Moon-based days (Eid, Ramadan...) are calculated, so the real date can differ by a day.');
+    'Public and religious days follow this country. World days and seasons are shown for everyone. ' +
+    'Dates are loaded from the internet, saved for offline use and update by themselves. ' +
+    'Moon-based days (Eid, Ramadan...) can differ by a day.');
   h += sec('Add your own date',
     '<div class="li"><span class="k">Date</span><input type="date" class="inp" id="upDate"></div>' +
     '<div class="li"><span class="k">Name</span><input type="text" class="inp" id="upName" placeholder="Birthday" maxlength="40"></div>' +
@@ -4062,7 +3979,7 @@ function maybeAskNotifications() {
 function notify(title, body, tag, extra) {
   if (LN) return;
   if (!notifSupported() || Notification.permission !== 'granted') return;
-  const opts = Object.assign({ body: body, tag: tag || 'clock', renotify: true, requireInteraction: true, vibrate: [300, 150, 300, 150, 300] }, extra || {});
+  const opts = Object.assign({ body: body, tag: tag || 'clock', renotify: true, requireInteraction: true, vibrate: VIB }, extra || {});
   function plain() { try { delete opts.actions; new Notification(title, opts); } catch (e) {} }
   if (swReg && swReg.showNotification) swReg.showNotification(title, opts).catch(plain);
   else plain();
@@ -4106,7 +4023,7 @@ function syncSchedule() {
     if (!ts || ts <= Date.now()) return;
     swReg.showNotification(title, {
       tag: tag, showTrigger: new TimestampTrigger(ts), requireInteraction: true,
-      vibrate: [300, 150, 300, 150, 300], actions: acts, data: { kind: kind, id: id }
+      vibrate: hapOn(kind) ? VIB : [], actions: acts, data: { kind: kind, id: id }
     }).catch(function () {});
   }
 
@@ -4123,7 +4040,9 @@ function syncSchedule() {
 /* ---- Android app (Capacitor Local Notifications) ----
    Every alarm is handed to Android's alarm manager, so it shows on the lock
    screen with Snooze / Stop buttons even when the app is closed. Repeating
-   alarms use a weekly schedule per selected day. */
+   alarms use a weekly schedule per selected day. Two channels exist:
+   'alarm' (vibrates) and 'alarm_q' (no vibration); the vibration setting
+   picks the channel. */
 function hashId(s) {
   let h = 7;
   for (let i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) % 9000000;
@@ -4139,7 +4058,7 @@ function nativeSync() {
     function item(id, title, body, kind, rid, schedule) {
       schedule.allowWhileIdle = true;
       return {
-        id: id, title: title, body: body, schedule: schedule, channelId: 'alarm',
+        id: id, title: title, body: body, schedule: schedule, channelId: hapOn(kind) ? 'alarm' : 'alarm_q',
         actionTypeId: kind === 'timer' ? 'TIMER' : 'ALARM', extra: { kind: kind, id: rid }, autoCancel: true
       };
     }
@@ -4179,7 +4098,9 @@ function exactCheck() {
 
 function initNative() {
   if (!LN) return;
-  LN.createChannel({ id: 'alarm', name: 'Alarms and timers', description: 'Alarm and timer alerts', importance: 5, visibility: 1, vibration: true, lights: true }).catch(function () {});
+  const ch = { name: 'Alarms and timers', description: 'Alarm and timer alerts', importance: 5, visibility: 1, lights: true };
+  LN.createChannel(Object.assign({ id: 'alarm', vibration: true }, ch)).catch(function () {});
+  LN.createChannel(Object.assign({ id: 'alarm_q', vibration: false }, ch, { name: 'Alarms and timers (no vibration)' })).catch(function () {});
   LN.registerActionTypes({ types: [
     { id: 'ALARM', actions: [{ id: 'snooze', title: 'Snooze' }, { id: 'stop', title: 'Stop', destructive: true }] },
     { id: 'TIMER', actions: [{ id: 'again', title: 'Restart' }, { id: 'stop', title: 'Stop', destructive: true }] }
@@ -4264,6 +4185,8 @@ function openPermissions() {
     }).join('') +
       '<div class="li"><span class="k">Keep screen awake</span><span class="v">' +
       (('wakeLock' in navigator) ? 'Supported' : 'Not supported') + '</span></div>' +
+      '<div class="li"><span class="k">Vibration</span><span class="v">' +
+      (navigator.vibrate ? 'Supported' : 'Not supported') + '</span></div>' +
       '<div class="li"><span class="k">Scheduled alerts (app closed)</span><span class="v">' +
       (window.TimestampTrigger || LN ? 'Supported' : 'Not supported') + '</span></div>');
     h += '<div class="acts"><button class="bt pri" id="done">Done</button></div>';
@@ -4412,6 +4335,7 @@ function initApp() {
   initUpcoming();
   initAlarmPage();
   initTimerTyping();
+  initSwFade();
 
   buildDial();
   buildWheels();
