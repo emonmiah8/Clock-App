@@ -167,8 +167,8 @@ function setIcon(id, svg, label) {
 
 /* ==========================================================================
    3. INJECTED STYLES
-   One design system: calm neutral surfaces, one orange accent, one serif font.
-   To change the font, edit FONT_URL and --sf below.
+   One design system: calm neutral surfaces, one orange accent.
+   App font: ClockNum / Poppins. Only the lap table uses the serif Newsreader.
    ========================================================================== */
 // type of an upcoming day: name, colour. "Holidays" filter = every public holiday (any type)
 const UP_TYPES = {
@@ -177,7 +177,7 @@ const UP_TYPES = {
   c: ['Cultural', '#bf5af2'],
   r: ['Religious', '#30d158']
 };
-const FONT_URL = 'https://fonts.googleapis.com/css2?family=Newsreader:opsz,wght@6..72,400..800&family=Permanent+Marker&family=Playfair+Display:wght@800;900&display=swap';
+const FONT_URL = 'https://fonts.googleapis.com/css2?family=Poppins:wght@600;700;800&family=Newsreader:opsz,wght@6..72,500..700&family=Permanent+Marker&family=Playfair+Display:wght@800;900&display=swap';
 
 function injectStyles() {
   if (navigator.onLine !== false && !document.querySelector('link[data-clock-font]')) {
@@ -193,11 +193,11 @@ function injectStyles() {
   }).join('');
 
   const css = `
-:root{--sf:"Newsreader","Source Serif 4",Georgia,"Times New Roman",serif;--accent:#ff9f0a;--danger:#ff453a;--ok:#30d158;--info:#0a84ff;--ink:255,255,255;--surf:rgba(255,255,255,.06);--surf2:rgba(255,255,255,.11);--line:rgba(255,255,255,.10);--pop:rgba(28,30,36,.80)}
+@font-face{font-family:"ClockNum";src:url("digits.ttf") format("truetype");font-weight:100 900;font-style:normal;font-display:swap;unicode-range:U+0030-0039}
+:root{--sf:"ClockNum","Poppins",system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;--accent:#ff9f0a;--danger:#ff453a;--ok:#30d158;--info:#0a84ff;--ink:255,255,255;--surf:rgba(255,255,255,.06);--surf2:rgba(255,255,255,.11);--line:rgba(255,255,255,.10);--pop:rgba(28,30,36,.80)}
 body.light{--ink:0,0,0;--surf:rgba(0,0,0,.04);--surf2:rgba(0,0,0,.07);--line:rgba(0,0,0,.09);--pop:rgba(255,255,255,.84)}
 html,body,button,input,select,textarea,svg text,.time .txt,.hcard,.preset,.btn{font-family:var(--sf)!important}
-*{font-weight:500!important}
-.time,.time .txt,svg text,.stitle,#sheet .k,.hname,.atitle,.title,.qhead,.hhead,.wgh,.lrow,.pcn{font-weight:700!important}
+*{font-weight:800!important}
 body{letter-spacing:-.01em;-webkit-font-smoothing:antialiased}
 .atitle,.title,.hname{letter-spacing:-.03em}
 body .time .txt{font-size:min(calc(var(--size)*1),20vw);letter-spacing:0;line-height:1}
@@ -302,15 +302,15 @@ body.light #sheet{color-scheme:light;box-shadow:0 24px 60px rgba(0,0,0,.16)}
 #sheet .shead+.sl{margin-top:2px}
 #sheet .grp{margin-top:14px;border-radius:16px;overflow:hidden;background:var(--surf);border:1px solid var(--line)}
 #sheet .sl+.grp,#sheet .shead+.grp,#sheet .pcard+.grp{margin-top:0}
-#sheet .li{display:flex;align-items:center;gap:12px;width:100%;min-height:50px;padding:10px 14px;box-sizing:border-box;text-align:left;font-size:16px}
+#sheet .li{display:flex;align-items:center;gap:12px;width:100%;min-height:50px;padding:10px 14px;box-sizing:border-box;text-align:left;font-size:15px}
 #sheet .li+.li,#sheet .li+.days{border-top:1px solid var(--line)}
 #sheet button.li{transition:background .12s ease}
 #sheet button.li:active{background:var(--surf2)}
 #sheet .k{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 #sheet .kk{flex:1;min-width:0}
 #sheet .kk .k{white-space:normal}
-#sheet .d{font-size:13px;line-height:1.4;margin-top:2px;opacity:.6;white-space:normal}
-#sheet .v{display:flex;align-items:center;gap:6px;min-width:0;max-width:52%;font-size:15px;opacity:.6;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+#sheet .d{font-size:12px;line-height:1.35;margin-top:2px;opacity:.6;white-space:normal}
+#sheet .v{display:flex;align-items:center;gap:6px;min-width:0;max-width:52%;font-size:14px;opacity:.6;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 #sheet .nav::after{content:"\\203A";flex:none;font-size:22px;line-height:1;opacity:.4;margin-left:-4px}
 #sheet .sn{margin:8px 8px 0;font-size:12px;line-height:1.4;opacity:.6}
 #sheet .sn.mid{text-align:center;margin:14px 0 4px}
@@ -399,11 +399,11 @@ body.light .seg::before{background:#fff;box-shadow:0 1px 4px rgba(0,0,0,.18)}
 .dialwrap{isolation:isolate}
 .dialwrap::before{content:"";position:absolute;inset:.8%;border-radius:50%;z-index:-1;background:rgba(255,255,255,.05);-webkit-backdrop-filter:blur(20px) saturate(1.6) brightness(.6);backdrop-filter:blur(20px) saturate(1.6) brightness(.6);box-shadow:0 20px 40px rgba(0,0,0,.4)}
 
-/* ---- stopwatch: lap table (Lap | Lap time | Total), fastest red, slowest blue ---- */
-#laps{display:block;width:min(94vw,520px);margin:20px auto 0;padding:0 0 150px;max-height:none;overflow:visible}
-.lhead,.lrow{display:grid;grid-template-columns:1fr 1.5fr 1fr;align-items:center;padding:0 22px;column-gap:6px}
-.lhead{padding-top:12px;padding-bottom:14px;font-size:19px;opacity:.55;border-bottom:1px solid var(--line)}
-.lrow{position:relative;padding-top:20px;padding-bottom:20px;font-size:25px;letter-spacing:-.01em;font-variant-numeric:lining-nums tabular-nums}
+/* ---- stopwatch: lap table (only this block uses the serif font) ---- */
+#laps{display:block;width:min(94vw,520px);margin:22px auto 0;padding:0 0 150px;max-height:none;overflow:visible}
+.lhead,.lrow{font-family:"Newsreader","Source Serif 4",Georgia,"Times New Roman",serif!important;font-variant-numeric:lining-nums tabular-nums;display:grid;grid-template-columns:1fr 1.5fr 1fr;align-items:center;column-gap:6px;padding:0 22px}
+.lhead{padding-top:14px;padding-bottom:16px;font-size:21px;font-weight:500!important;letter-spacing:0;color:rgba(var(--ink),.5);border-bottom:1px solid var(--line)}
+.lrow{position:relative;padding-top:21px;padding-bottom:21px;font-size:27px;font-weight:600!important;letter-spacing:-.005em}
 .lrow+.lrow::before{content:"";position:absolute;top:0;left:22px;right:22px;border-top:1px solid var(--line)}
 .lhead span:nth-child(2),.lrow span:nth-child(2){text-align:center}
 .lhead span:last-child,.lrow span:last-child{text-align:right}
@@ -2853,7 +2853,7 @@ function buildDial() {
   for (let k = 1; k <= 12; k++) {
     const a = k * 30 * Math.PI / 180;
     s += '<text x="' + (150 + 108 * Math.sin(a)).toFixed(1) + '" y="' + (150 - 108 * Math.cos(a) + 5).toFixed(1) +
-      '" text-anchor="middle" font-size="15" fill="#ececec">' + (k * 5) + '</text>';
+      '" text-anchor="middle" font-size="15" font-weight="700" fill="#ececec">' + (k * 5) + '</text>';
   }
   g.innerHTML = s;
 
@@ -2866,7 +2866,7 @@ function buildDial() {
   for (let q = 0; q < 6; q++) {
     const b = q * 60 * Math.PI / 180;
     t += '<text x="' + (150 + 25 * Math.sin(b)).toFixed(1) + '" y="' + (208 - 25 * Math.cos(b) + 3).toFixed(1) +
-      '" text-anchor="middle" font-size="9" fill="#cfcfcf">' + labels[q] + '</text>';
+      '" text-anchor="middle" font-size="9" font-weight="700" fill="#cfcfcf">' + labels[q] + '</text>';
   }
   sg.innerHTML = t;
 }
