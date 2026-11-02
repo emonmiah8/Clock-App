@@ -399,14 +399,16 @@ body.light .seg::before{background:#fff;box-shadow:0 1px 4px rgba(0,0,0,.18)}
 .dialwrap{isolation:isolate}
 .dialwrap::before{content:"";position:absolute;inset:.8%;border-radius:50%;z-index:-1;background:rgba(255,255,255,.05);-webkit-backdrop-filter:blur(20px) saturate(1.6) brightness(.6);backdrop-filter:blur(20px) saturate(1.6) brightness(.6);box-shadow:0 20px 40px rgba(0,0,0,.4)}
 
-/* ---- stopwatch: lap table, three centred columns, same font as the rest of the UI ---- */
-#laps{display:block;width:min(94vw,520px);margin:22px auto 0;padding:0 0 150px;max-height:none;overflow:visible}
-.lhead,.lrow{display:grid;grid-template-columns:repeat(3,1fr);align-items:center;justify-items:center;text-align:center;column-gap:8px;padding:0 14px;font-variant-numeric:tabular-nums}
-.lhead{padding-top:14px;padding-bottom:16px;font-size:15px;opacity:.55;border-bottom:1px solid var(--line)}
-.lrow{position:relative;padding-top:19px;padding-bottom:19px;font-size:21px;letter-spacing:-.01em}
-.lrow+.lrow::before{content:"";position:absolute;top:0;left:14px;right:14px;border-top:1px solid var(--line)}
-.lrow.fast span:nth-child(-n+2){color:#ff6b61}
-.lrow.slow span:nth-child(-n+2){color:#5b8ff0}
+/* ---- stopwatch: lap table. One centred box; every line and column share the same edges.
+   !important keeps older style.css rules for #laps from shifting it. ---- */
+#laps{display:block!important;position:relative!important;box-sizing:border-box!important;width:100%!important;max-width:520px!important;margin:18px auto 0!important;padding:0 16px 160px!important;left:auto!important;right:auto!important;transform:none!important;max-height:none!important;overflow:visible!important;text-align:center}
+.lhead,.lrow{display:grid;grid-template-columns:.8fr 1.5fr 1.3fr;align-items:center;column-gap:4px;box-sizing:border-box;width:100%;margin:0;text-align:center;white-space:nowrap;font-variant-numeric:tabular-nums}
+.lhead>span,.lrow>span{min-width:0;text-align:center}
+.lhead{padding:12px 0 14px;font-size:14px;letter-spacing:.02em;opacity:.55;border-bottom:1px solid var(--line)}
+.lrow{padding:17px 0;font-size:clamp(15px,4.7vw,20px);letter-spacing:-.01em}
+.lrow+.lrow{border-top:1px solid var(--line)}
+.lrow.fast>span:nth-child(-n+2){color:#ff6b61}
+.lrow.slow>span:nth-child(-n+2){color:#5b8ff0}
 
 #ringStop.holding{transform:scale(.94);opacity:.8}
 
