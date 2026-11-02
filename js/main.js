@@ -401,7 +401,7 @@ body.light .seg::before{background:#fff;box-shadow:0 1px 4px rgba(0,0,0,.18)}
 
 /* ---- stopwatch: lap table. One centred box; every line and column share the same edges.
    !important keeps older style.css rules for #laps from shifting it. ---- */
-#laps{display:block!important;position:relative!important;box-sizing:border-box!important;width:100%!important;max-width:520px!important;margin:18px auto 0!important;padding:0 16px 160px!important;left:auto!important;right:auto!important;transform:none!important;max-height:none!important;overflow:visible!important;text-align:center}
+#laps{display:block!important;position:relative!important;box-sizing:border-box!important;width:100%!important;max-width:520px!important;margin:18px auto 0!important;padding:0 60px 160px!important;left:auto!important;right:auto!important;transform:none!important;max-height:none!important;overflow:visible!important;text-align:center}
 .lhead,.lrow{display:grid;grid-template-columns:.8fr 1.5fr 1.3fr;align-items:center;column-gap:4px;box-sizing:border-box;width:100%;margin:0;text-align:center;white-space:nowrap;font-variant-numeric:tabular-nums}
 .lhead>span,.lrow>span{min-width:0;text-align:center}
 .lhead{padding:12px 0 14px;font-size:14px;letter-spacing:.02em;opacity:.55;border-bottom:1px solid var(--line)}
