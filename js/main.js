@@ -1,5 +1,5 @@
 /* ==========================================================================
-   CLOCK APP - main.js
+   CLOCK APP - main.js (clean rewrite)
    1 Config & state         7 Digits & time HTML        13 Stopwatch (lap table)
    2 Helpers & icons        8 Home widgets              14 Timer, presets, typed time
    3 Injected styles        9 Widget designs + tab      15 Upcoming (dynamic data)
@@ -103,11 +103,11 @@ let snz = readJson(SKEY);
 let wakeLock = null;
 const preSent = {};
 const popOut = { cog: false, add: false };
+
 // Capacitor (Android app): native notifications. null in a normal browser.
 const CAP = window.Capacitor && Capacitor.isNativePlatform && Capacitor.isNativePlatform() && Capacitor.Plugins ? Capacitor.Plugins : null;
 const LN = CAP ? (CAP.LocalNotifications || null) : null;
-// native home-screen widget plugin (ClockWidgetPlugin.java). null in a browser.
-const CW = CAP ? (CAP.ClockWidget || null) : null;
+const CW = CAP ? (CAP.ClockWidget || null) : null;   // native home-screen widget plugin
 
 const sheet = document.getElementById('sheet');
 const overlay = document.getElementById('overlay');
@@ -134,7 +134,6 @@ function clampN(v, a, b) { v = Math.round(Number(v)); return isNaN(v) ? a : Math
 function hit(e, sel) { return e && e.target && e.target.closest ? e.target.closest(sel) : null; }
 // Bangla digits are accepted in typed fields
 function bnDigits(s) { return String(s).replace(/[\u09E6-\u09EF]/g, function (d) { return '\u09E6\u09E7\u09E8\u09E9\u09EA\u09EB\u09EC\u09ED\u09EE\u09EF'.indexOf(d); }); }
-
 // click point for the pop-in origin
 function pt(e) {
   if (!e || e.clientX == null || (e.clientX === 0 && e.clientY === 0)) return null;
@@ -168,7 +167,6 @@ function setIcon(id, svg, label) {
 /* ==========================================================================
    3. INJECTED STYLES
    One design system: calm neutral surfaces, one orange accent.
-   App font: ClockNum (digits) / Poppins, used everywhere.
    ========================================================================== */
 // type of an upcoming day: name, colour. "Holidays" filter = every public holiday (any type)
 const UP_TYPES = {
@@ -203,7 +201,7 @@ body{letter-spacing:-.01em;-webkit-font-smoothing:antialiased}
 body .time .txt{font-size:min(calc(var(--size)*1),20vw);letter-spacing:0;line-height:1}
 #stage{padding:64px 12px 12px!important;margin:0 auto!important}
 
-/* ---- bottom tab bar: floating glass pill, active tab highlighted ---- */
+/* ---- bottom tab bar: floating glass pill ---- */
 #nav{position:fixed!important;left:12px!important;right:12px!important;bottom:calc(10px + env(safe-area-inset-bottom,0px))!important;width:auto!important;max-width:520px;margin:0 auto!important;transform:none!important;display:flex!important;align-items:stretch;gap:2px;padding:5px!important;border-radius:26px!important;background:var(--pop)!important;-webkit-backdrop-filter:blur(24px) saturate(1.6);backdrop-filter:blur(24px) saturate(1.6);border:1px solid var(--line)!important;box-shadow:0 12px 34px rgba(0,0,0,.34)!important}
 #nav button{flex:1;min-width:0;display:flex!important;flex-direction:column;align-items:center;justify-content:center;gap:3px;padding:8px 2px!important;border:0!important;border-radius:20px!important;background:transparent!important;color:inherit!important;opacity:.55;-webkit-tap-highlight-color:transparent;transition:background-color .22s ease,opacity .22s ease,color .22s ease,transform .1s ease!important}
 #nav button svg{width:22px;height:22px;flex:none}
@@ -212,18 +210,17 @@ body .time .txt{font-size:min(calc(var(--size)*1),20vw);letter-spacing:0;line-he
 #nav button:active{transform:scale(.94)}
 #nav button::after{display:none!important}
 
-/* ---- Upcoming (neutral cards, full names always visible) ---- */
+/* ---- Upcoming ---- */
 #holidays{position:relative!important;flex:1 1 auto!important;display:flex!important;flex-direction:column;min-height:320px;padding:0!important;animation:none!important}
 .hhead{position:static!important;display:flex!important;justify-content:space-between;align-items:baseline;gap:10px;padding:14px 20px 8px!important;white-space:nowrap;pointer-events:auto;font-size:20px;letter-spacing:-.02em}
 .hhead::before{display:none!important}
 .hsub{font-size:13px;letter-spacing:0;opacity:.65;overflow:hidden;text-overflow:ellipsis}
 .hfilter{flex:none;display:flex;gap:8px;padding:2px 16px 12px;overflow-x:auto;scrollbar-width:none}
-.hfilter::-webkit-scrollbar{display:none}
+.hfilter::-webkit-scrollbar,#hList::-webkit-scrollbar,#sheet.open::-webkit-scrollbar,#sheet .tonebox::-webkit-scrollbar,#sheet .awc::-webkit-scrollbar{display:none}
 .hchip{flex:none;padding:7px 15px;border-radius:999px;font-size:13px;color:inherit;background:var(--surf);border:1px solid var(--line);cursor:pointer;-webkit-tap-highlight-color:transparent;transition:background .18s ease,color .18s ease,border-color .18s ease,transform .12s ease}
 .hchip:active{transform:scale(.95)}
 .hchip.on{background:var(--accent);border-color:var(--accent);color:#1a1100}
 #hList{flex:1 1 0!important;display:flex!important;flex-direction:column!important;gap:9px!important;min-height:220px;max-height:none!important;overflow-y:auto!important;overflow-x:hidden!important;padding:6px 16px calc(var(--ov,0px) + 28px)!important;scroll-snap-type:none!important;overscroll-behavior:contain;touch-action:pan-y;scrollbar-width:none}
-#hList::-webkit-scrollbar{display:none}
 @keyframes swL{from{opacity:0;transform:translateX(34px)}to{opacity:1;transform:none}}
 @keyframes swR{from{opacity:0;transform:translateX(-34px)}to{opacity:1;transform:none}}
 #hList.swL{animation:swL .26s cubic-bezier(.22,.8,.25,1) both}
@@ -261,17 +258,20 @@ ${typeCss}
 .hd.qd{width:72px}
 .qd .hday{font-size:20px;letter-spacing:-.02em;white-space:nowrap}
 
-/* ---- on/off switch (alarm list) ---- */
-.tgl{position:relative;flex:none;width:52px;height:32px;padding:0!important;border:0!important;border-radius:16px!important;background:var(--surf2)!important;cursor:pointer;-webkit-tap-highlight-color:transparent;transition:background .22s ease}
+/* ---- on/off switches (alarm list + settings rows) ---- */
+.tgl,#sheet .sx{position:relative;flex:none;width:52px;height:32px;border-radius:16px;background:var(--surf2);transition:background .22s ease}
+.tgl{padding:0!important;border:0!important;border-radius:16px!important;background:var(--surf2)!important;cursor:pointer;-webkit-tap-highlight-color:transparent}
 .tgl span{position:absolute!important;top:2px!important;left:2px!important;width:28px!important;height:28px!important;border-radius:50%!important;background:#fff!important;box-shadow:0 2px 5px rgba(0,0,0,.32)!important;transform:none;transition:transform .24s cubic-bezier(.3,1.4,.5,1)}
 .tgl.on{background:var(--accent)!important}
 .tgl.on span{transform:translateX(20px)!important}
+#sheet .sx::after{content:"";position:absolute;top:2px;left:2px;width:28px;height:28px;border-radius:50%;background:#fff;box-shadow:0 2px 5px rgba(0,0,0,.32);transition:transform .24s cubic-bezier(.3,1.4,.5,1)}
+#sheet .sx.on{background:var(--accent)}
+#sheet .sx.on::after{transform:translateX(20px)}
 
 /* ---- Alarms: wheel time picker ---- */
 #sheet .aw{position:relative;display:flex;align-items:stretch;justify-content:center;gap:2px;height:${AW_H * 5}px;padding:0 8px;border-radius:16px;overflow:hidden;background:var(--surf);border:1px solid var(--line)}
 #sheet .awband{position:absolute;left:8px;right:8px;top:${AW_H * 2}px;height:${AW_H}px;border-radius:12px;background:var(--surf2);pointer-events:none}
 #sheet .awc{position:relative;z-index:1;flex:1;min-width:0;height:100%;box-sizing:border-box;padding:${AW_H * 2}px 0;overflow-y:auto;overscroll-behavior:contain;scroll-snap-type:y mandatory;scroll-padding-top:${AW_H * 2}px;scrollbar-width:none;touch-action:pan-y;-webkit-mask-image:linear-gradient(transparent,#000 32%,#000 68%,transparent);mask-image:linear-gradient(transparent,#000 32%,#000 68%,transparent)}
-#sheet .awc::-webkit-scrollbar{display:none}
 #sheet .awi{height:${AW_H}px;display:flex;align-items:center;justify-content:center;font-size:27px;letter-spacing:-.02em;scroll-snap-align:start;opacity:.32;cursor:pointer;transition:opacity .12s ease}
 #sheet .awi.sel{opacity:1}
 #sheet .awc#awP .awi{font-size:21px}
@@ -290,7 +290,6 @@ body.light #sheet{color-scheme:light;box-shadow:0 24px 60px rgba(0,0,0,.16)}
 @keyframes popOut{from{opacity:1;transform:none}to{opacity:0;transform:scale(.9) translateY(-6px)}}
 #sheet:not(.open){pointer-events:none}
 #sheet.open{left:auto!important;right:12px!important;bottom:auto!important;top:calc(64px + env(safe-area-inset-top,0px))!important;width:min(92vw,360px)!important;max-height:calc(100vh - 150px);max-height:calc(100dvh - 150px);overflow-y:auto;border-radius:26px!important;padding:18px 16px 16px!important;animation:popIn .26s cubic-bezier(.22,.8,.25,1) both;scrollbar-width:none}
-#sheet.open::-webkit-scrollbar{display:none}
 #sheet.open.closing{animation:popOut .16s ease both;pointer-events:none}
 
 #sheet button{background:none;border:0;color:inherit;font:inherit;padding:0;margin:0;cursor:pointer;-webkit-tap-highlight-color:transparent}
@@ -335,11 +334,6 @@ body.light .seg::before{background:#fff;box-shadow:0 1px 4px rgba(0,0,0,.18)}
 .seg button{position:relative;z-index:1;flex:1;padding:7px 10px;border:0;border-radius:9px;font-size:13px;font-family:inherit;color:inherit;background:none;opacity:.6;white-space:nowrap;cursor:pointer;-webkit-tap-highlight-color:transparent;transition:opacity .2s ease}
 .seg button.on{opacity:1}
 
-#sheet .sx{position:relative;flex:none;width:52px;height:32px;border-radius:16px;background:var(--surf2);transition:background .22s ease}
-#sheet .sx::after{content:"";position:absolute;top:2px;left:2px;width:28px;height:28px;border-radius:50%;background:#fff;box-shadow:0 2px 5px rgba(0,0,0,.32);transition:transform .24s cubic-bezier(.3,1.4,.5,1)}
-#sheet .sx.on{background:var(--accent)}
-#sheet .sx.on::after{transform:translateX(20px)}
-
 #sheet .sws{display:flex;flex-wrap:wrap;justify-content:flex-end;gap:9px}
 #sheet .sw{width:27px;height:27px;border-radius:50%;border:2px solid var(--line);transition:transform .15s ease}
 #sheet .sw:active{transform:scale(.88)}
@@ -367,7 +361,6 @@ body.light .seg::before{background:#fff;box-shadow:0 1px 4px rgba(0,0,0,.18)}
 #sheet .trip select{width:100%;padding:8px 0;border-radius:10px;font-size:24px;text-align:center;text-align-last:center;background:var(--surf2)}
 #sheet .trip i{display:block;margin-top:5px;font-style:normal;font-size:12px;opacity:.55}
 #sheet .tonebox{max-height:52vh;overflow-y:auto;margin:0 -6px;padding:0 6px;scrollbar-width:none}
-#sheet .tonebox::-webkit-scrollbar{display:none}
 
 /* ---- timer: typed time ---- */
 .tmtype{display:flex;gap:8px;justify-content:center;align-items:center;margin:14px auto 0;width:min(88vw,380px)}
@@ -389,7 +382,7 @@ body.light .seg::before{background:#fff;box-shadow:0 1px 4px rgba(0,0,0,.18)}
 #toast.show{opacity:1;transform:translate(-50%,0);pointer-events:auto}
 #toast .tact{background:none;border:0;color:var(--accent);padding:0;font-size:14px;white-space:nowrap}
 
-/* ---- widgets & stopwatch ---- */
+/* ---- widgets & stopwatch dial ---- */
 .wdate{margin-top:6px;opacity:.8}
 .woff{margin-top:2px!important;opacity:.6}
 .clsvg{width:calc(var(--size)*3.5);height:calc(var(--size)*3.5);filter:drop-shadow(0 6px 14px rgba(0,0,0,.3))}
@@ -401,10 +394,10 @@ body.light .seg::before{background:#fff;box-shadow:0 1px 4px rgba(0,0,0,.18)}
 
 /* ---- stopwatch: lap table ----
    Lap = left edge, Lap time = exact centre, Total = right edge.
-   The box is sized by the screen (vw) and centred with left:50%, so it does not
-   depend on the width of its parent. */
-#laps{display:block!important;position:relative!important;box-sizing:border-box!important;float:none!important;align-self:flex-start!important;left:50%!important;transform:translateX(-50%)!important;width:min(92vw,520px)!important;max-width:none!important;margin:18px 0 0!important;padding:0 0 160px!important;max-height:none!important;overflow:visible!important}
-.lhead,.lrow{display:grid;grid-template-columns:1fr auto 1fr;align-items:center;column-gap:8px;box-sizing:border-box;width:100%;margin:0;padding-left:6px;padding-right:6px;white-space:nowrap;font-variant-numeric:tabular-nums}
+   Three-column grid: 1fr | auto | 1fr keeps the middle column in the exact
+   centre; centerLaps() in JS only nudges the box if its parent is off-centre. */
+#laps{display:block!important;position:relative!important;box-sizing:border-box!important;float:none!important;left:auto!important;right:auto!important;align-self:center!important;justify-self:center!important;width:min(92vw,520px)!important;min-width:0!important;max-width:none!important;margin:18px auto 0!important;padding:0 0 160px!important;max-height:none!important;overflow:visible!important}
+.lhead,.lrow{display:grid;grid-template-columns:1fr auto 1fr;align-items:center;column-gap:8px;box-sizing:border-box;width:100%;margin:0;padding-left:6px;padding-right:6px;white-space:nowrap;font-variant-numeric:tabular-nums;font-feature-settings:"tnum" 1}
 .lhead>span,.lrow>span{min-width:0}
 .lhead>span:nth-child(1),.lrow>span:nth-child(1){text-align:left}
 .lhead>span:nth-child(2),.lrow>span:nth-child(2){text-align:center}
@@ -503,6 +496,8 @@ function loadAlarms() {
   return a;
 }
 function saveAlarms() { writeJson(AKEY, alarms); schedSoon(); }
+// save + redraw everything that shows alarms
+function refreshAlarms() { saveAlarms(); renderAlarms(); renderQuick(); }
 
 function defaultQuick() {
   return [
@@ -619,6 +614,12 @@ function sec(label, inner, note) {
     (note ? '<div class="sn">' + note + '</div>' : '');
 }
 
+// wires the back arrow (if any) and the Done / Close button of a sheet
+function finishSheet(backId, backFn) {
+  if (backId && $(backId)) $(backId).onclick = backFn;
+  if ($('done')) $('done').onclick = closeSheet;
+}
+
 // segmented toggle: --n = number of options, --i = chosen index (drives the sliding pill)
 function seg(id, opts, cur) {
   let idx = 0;
@@ -717,9 +718,9 @@ function bindSnooze(fn) {
    6. TONES & RINGING
    --------------------------------------------------------------------------
    50 built-in tones are drawn by the browser into a small WAV file and played
-   with a normal <audio> element. That is what lets a ringing alarm take the
-   audio focus from music or video, show on the lock screen (Media Session)
-   and keep going while the screen is off. One custom tone from your own file.
+   with a normal <audio> element. That lets a ringing alarm take the audio
+   focus, show on the lock screen (Media Session) and keep going with the
+   screen off. One custom tone from your own file.
    S(notes, step, length) builds a note list: [midi, start s, length s]
    w = wave   ov = [overtone ratio, gain]   env = 'soft'   g0 = loudness
    ========================================================================== */
@@ -1038,7 +1039,7 @@ function alarmOff(id) {
   const a = alarms.find(function (x) { return x.id === id; });
   if (!a) return;
   a.on = false;
-  saveAlarms(); renderAlarms(); renderQuick();
+  refreshAlarms();
   toast('Alarm turned off');
 }
 
@@ -1058,7 +1059,7 @@ function handleRingAction(action, kind, id) {
   function done() {
     a.last = dayKey(new Date()) + a.time;
     if (!a.days.length) a.on = false;
-    saveAlarms(); renderAlarms(); renderQuick();
+    refreshAlarms();
   }
   if (action === 'stop') {
     if (a) { done(); if (snz && snz.ctx.id === id) setSnooze(null); }
@@ -1149,8 +1150,7 @@ function openToneSheet(kind) {
     draw();
   };
 
-  $('tnBack').onclick = openSettings;
-  $('done').onclick = closeSheet;
+  finishSheet('tnBack', openSettings);
 }
 
 /* ==========================================================================
@@ -1599,8 +1599,8 @@ function renderAll() {
    --------------------------------------------------------------------------
    Every design is a function of the time that returns HTML. The tile is a CSS
    container, so sizes are written in cqmin (1 = 1% of the tile's short side)
-   and every design scales with the tile. One painter updates all copies (the
-   Widgets tab, the Home tab, previews, full screen) once per second.
+   and every design scales with the tile. One painter updates all copies once
+   per second.
    ========================================================================== */
 const FONT57 = {
   '0': '01110 10001 10011 10101 11001 10001 01110', '1': '00100 01100 00100 00100 00100 00100 01110',
@@ -1913,7 +1913,7 @@ function openWidgetSheet(id, origin) {
   };
   $('wgFs').onclick = function () { closeSheet(); openFull(id); };
   $('wgPhone').onclick = function () { openPhoneSheet(id); };
-  $('done').onclick = closeSheet;
+  finishSheet();
 }
 
 function openFull(id) {
@@ -1933,10 +1933,7 @@ function openFull(id) {
   if (f.requestFullscreen) f.requestFullscreen().catch(function () {});
 }
 
-/* ---- real launcher widgets (Android APK only) ----
-   The APK contains two native widgets (ClockWidget / ClockWidgetAnalog).
-   They are always listed in the phone's widget picker after install; the buttons
-   below also ask Android to place one directly on the home screen. */
+/* ---- real launcher widgets (Android APK only) ---- */
 const WIDGET_HELP = 'Long-press an empty spot on the home screen, tap Widgets, then choose Clock.';
 
 function pinWidget(type) {
@@ -1964,7 +1961,6 @@ function openPhoneSheet(id) {
   h += '<div class="acts"><button class="bt" id="done">Close</button></div>';
   openSheet(h, 'widget');
 
-  $('phBack').onclick = id ? function () { openWidgetSheet(id); } : openSettings;
   if (CW) {
     $('phDig').onclick = function () { pinWidget('digital'); };
     $('phAna').onclick = function () { pinWidget('analog'); };
@@ -1974,7 +1970,7 @@ function openPhoneSheet(id) {
     installEvt.prompt();
     installEvt.userChoice.then(function () { installEvt = null; closeSheet(); });
   };
-  $('done').onclick = closeSheet;
+  finishSheet('phBack', id ? function () { openWidgetSheet(id); } : openSettings);
 }
 
 /* ==========================================================================
@@ -2113,7 +2109,7 @@ function openSettings() {
     if (document.fullscreenElement) document.exitFullscreen();
     else if (document.documentElement.requestFullscreen) document.documentElement.requestFullscreen().catch(function () {});
   };
-  $('done').onclick = closeSheet;
+  finishSheet();
 }
 
 function openStopSettings() {
@@ -2135,8 +2131,7 @@ function openStopSettings() {
       haptic(8);
     };
   });
-  $('spBack').onclick = openSettings;
-  $('done').onclick = closeSheet;
+  finishSheet('spBack', openSettings);
 }
 
 function openSnoozeSettings() {
@@ -2149,8 +2144,7 @@ function openSnoozeSettings() {
     globalSet.snoozeMax = v.sc;
     saveGlobal();
   });
-  $('snBack').onclick = openSettings;
-  $('done').onclick = closeSheet;
+  finishSheet('snBack', openSettings);
 }
 
 /* ==========================================================================
@@ -2301,7 +2295,7 @@ function openEdit(id, origin) {
     widgets = widgets.filter(function (x) { return x !== w; });
     saveWidgets(); closeSheet(); renderAll();
   };
-  $('done').onclick = closeSheet;
+  finishSheet();
 }
 
 function openAddWidget() {
@@ -2328,7 +2322,7 @@ function openAddWidget() {
       saveWidgets(); closeSheet(); renderAll();
     }
   };
-  $('done').onclick = closeSheet;
+  finishSheet();
 }
 
 /* ==========================================================================
@@ -2349,6 +2343,7 @@ function showTab(name) {
   window.scrollTo(0, 0);
   closeSheet();
   if (name === 'timer') setTimeout(syncWheels, 50);
+  if (name === 'stopwatch') setTimeout(centerLaps, 0);
   if (name === 'home') {
     renderUpcoming();
     setTimeout(measureUpcoming, 60);
@@ -2446,7 +2441,7 @@ function renderAlarms() {
     row.querySelector('.tgl').onclick = function () {
       a.on = !a.on;
       if (a.on) { a.last = lateGuard(a.time); arm(a); }
-      saveAlarms(); renderAlarms(); renderQuick();
+      refreshAlarms();
     };
     row.querySelector('.ainfo').onclick = function (e) { openAlarmSheet(a, pt(e)); };
     box.appendChild(row);
@@ -2604,12 +2599,12 @@ function openAlarmSheet(a, origin) {
       } else {
         a.time = d.time; a.label = d.label; a.days = d.days; a.sn = d.sn; a.sc = d.sc; a.on = true; a.last = lateGuard(d.time); arm(a);
       }
-      sortAlarms(); saveAlarms(); renderAlarms(); renderQuick(); closeSheet();
+      sortAlarms(); refreshAlarms(); closeSheet();
       maybeAskNotifications();
     },
     onDelete: function () {
       alarms = alarms.filter(function (x) { return x !== a; });
-      saveAlarms(); renderAlarms(); renderQuick(); closeSheet();
+      refreshAlarms(); closeSheet();
     }
   });
 }
@@ -2650,7 +2645,7 @@ function addQuick(q) {
     have.on = true;
     have.last = lateGuard(have.time);
     arm(have);
-    saveAlarms(); renderAlarms(); renderQuick();
+    refreshAlarms();
     toast('Alarm on \u00b7 ' + fmtClock(q.time, fmt));
     return;
   }
@@ -2659,14 +2654,14 @@ function addQuick(q) {
   if (q.sc != null) a.sc = q.sc;
   arm(a);
   alarms.push(a);
-  sortAlarms(); saveAlarms(); renderAlarms(); renderQuick();
+  sortAlarms(); refreshAlarms();
   haptic(12);
   toast('Alarm added \u00b7 ' + fmtClock(q.time, fmt), {
     action: {
       label: 'Undo',
       fn: function () {
         alarms = alarms.filter(function (x) { return x !== a; });
-        saveAlarms(); renderAlarms(); renderQuick();
+        refreshAlarms();
       }
     }
   });
@@ -2697,7 +2692,7 @@ function openQuickSheet() {
     quick = defaultQuick();
     saveQuick(); renderQuick(); openQuickSheet();
   };
-  $('done').onclick = closeSheet;
+  finishSheet();
 }
 
 function editQuick(q) {
@@ -2808,7 +2803,7 @@ function checkAlarms() {
   alarms.forEach(function (a) {
     if (a.on && !a.days.length && a.at && Date.now() > a.at + 180000) {
       a.on = false;
-      saveAlarms(); renderAlarms(); renderQuick();
+      refreshAlarms();
       return;
     }
     const x = parseTime(a.time);
@@ -2817,7 +2812,7 @@ function checkAlarms() {
     if (a.on && today && late >= 0 && late <= 2 && a.last !== dk + a.time) {
       a.last = dk + a.time;
       if (!a.days.length) a.on = false;
-      saveAlarms(); renderAlarms(); renderQuick();
+      refreshAlarms();
       startRing(alarmCtx(a, 0));
     }
   });
@@ -2917,7 +2912,19 @@ function renderSw() {
   if (h2) h2.setAttribute('transform', 'rotate(' + (((ms / 60000) % 30) / 30 * 360).toFixed(2) + ' 150 208)');
 }
 
-// Lap table: newest on top. Shortest lap = red, longest lap = blue (needs 2+ laps).
+// keeps the lap table exactly in the middle of the screen, whatever its parent does
+function centerLaps() {
+  const box = $('laps');
+  if (!box) return;
+  box.style.transform = '';
+  const r = box.getBoundingClientRect();
+  if (!r.width) return;   // stopwatch tab is hidden
+  const dx = document.documentElement.clientWidth / 2 - (r.left + r.width / 2);
+  if (Math.abs(dx) > 1) box.style.transform = 'translateX(' + dx.toFixed(1) + 'px)';
+}
+
+// Lap table: Lap (left) | Lap time (centre) | Total (right). Newest lap on top.
+// Shortest lap = red, longest lap = blue (needs 2+ laps).
 function renderLaps() {
   const box = $('laps');
   if (!box) return;
@@ -2940,6 +2947,7 @@ function renderLaps() {
       '</span><span>' + t.main + '.' + t.cs + '</span></div>';
   }
   box.innerHTML = html;
+  centerLaps();
 }
 
 /* ==========================================================================
@@ -3043,16 +3051,12 @@ function buildWheels() {
   });
 }
 
-function setWheel(id, i) {
-  const el = $(id);
-  if (el) el.scrollTop = i * ITEM_H;
-}
-
 function syncWheels() {
   const total = Math.round(tm.total / 1000);
-  setWheel('pH', Math.floor(total / 3600) % 24);
-  setWheel('pM', Math.floor((total % 3600) / 60));
-  setWheel('pS', total % 60);
+  [['pH', Math.floor(total / 3600) % 24], ['pM', Math.floor((total % 3600) / 60)], ['pS', total % 60]].forEach(function (p) {
+    const el = $(p[0]);
+    if (el) el.scrollTop = p[1] * ITEM_H;
+  });
   markSelected();
 }
 
@@ -3175,15 +3179,11 @@ function openPresetSheet(origin) {
    Country : Settings choice, otherwise GPS -> internet (IP) -> time zone -> language
    Sources for the next 12 months, merged into one list:
      1. date-holidays library (about 200 countries), cached for offline use
-        -> public holidays, bank days, observances, local-language names
      2. Nager.Date API, only when the library has nothing for the country
-     3. Wikidata (SPARQL): every recurring national / historic / cultural day
-        that is linked to the country (e.g. Bangladesh: Language Martyrs' Day,
-        Genocide Remembrance Day, Martyred Intellectuals Day ...). Saved 30 days.
+     3. Wikidata (SPARQL): recurring national / historic / cultural days. Saved 30 days.
      4. Your own dates
    Duplicates (same / similar name within 3 days) are merged.
    Each day gets one type: Religious, National & historic, Cultural or Holiday.
-   "Holidays" filter shows every public holiday, whatever its type.
    Swipe left / right on the list to move between the filters.
    ========================================================================== */
 const LIB_URLS = ['holidays.min.js', 'https://cdn.jsdelivr.net/npm/date-holidays@3/dist/umd.min.js', 'https://unpkg.com/date-holidays@3/dist/umd.min.js'];
@@ -3341,14 +3341,8 @@ function loadCachedLib(url) {
     if (!r) throw new Error('miss');
     return r.text();
   }).then(function (t) {
-    return new Promise(function (res, rej) {
-      const u = URL.createObjectURL(new Blob([t], { type: 'text/javascript' }));
-      const s = document.createElement('script');
-      s.src = u;
-      s.onload = function () { URL.revokeObjectURL(u); res(); };
-      s.onerror = function () { URL.revokeObjectURL(u); s.remove(); rej(new Error('script')); };
-      document.head.appendChild(s);
-    });
+    const u = URL.createObjectURL(new Blob([t], { type: 'text/javascript' }));
+    return loadScript(u).then(function () { URL.revokeObjectURL(u); }, function (e) { URL.revokeObjectURL(u); throw e; });
   });
 }
 
@@ -3552,10 +3546,10 @@ function getUpcoming(today) {
       });
     }
     // 3: Wikidata (fixed-date national, historic and cultural days)
-    const wd = readWd(cc);
-    if (wd) {
+    const wdata = readWd(cc);
+    if (wdata) {
       for (let yr = y; yr <= y + 1; yr++) {
-        wd.list.forEach(function (x) { push(new Date(yr, x.m, x.d), x.n, '', x.p); });
+        wdata.list.forEach(function (x) { push(new Date(yr, x.m, x.d), x.n, '', x.p); });
       }
     }
   }
@@ -3739,8 +3733,7 @@ function openUpcomingSettings() {
     drawCustom(); renderUpcoming();
   };
 
-  $('upBack').onclick = openSettings;
-  $('done').onclick = closeSheet;
+  finishSheet('upBack', openSettings);
 }
 
 // the list leaves room for the floating bottom bar, so the last card is never hidden
@@ -3807,7 +3800,7 @@ function initUpcoming() {
     stepFilter(dx < 0 ? 1 : -1);
   }, { passive: true });
 
-  window.addEventListener('resize', measureUpcoming);
+  window.addEventListener('resize', function () { measureUpcoming(); centerLaps(); });
   if (window.ResizeObserver) {
     const ro = new ResizeObserver(measureUpcoming);
     [hol, $('nav')].forEach(function (el) { if (el) ro.observe(el); });
@@ -4016,9 +4009,9 @@ function initConnection() {
 
 /* ---- notifications ----
    While the app is open an alarm / timer rings with sound and also posts a
-   notification with Snooze / Stop buttons (shown on the lock screen and in the
-   notification centre). The buttons are handled by sw-notify.js and arrive
-   here as a message. Where the browser supports scheduled notifications
+   notification with Snooze / Stop buttons (lock screen and notification
+   centre). The buttons are handled by the service worker and arrive here as a
+   message. Where the browser supports scheduled notifications
    (TimestampTrigger) the next alarm is also scheduled, so it can show even if
    the page was closed. */
 function notifSupported() { return 'Notification' in window; }
@@ -4284,8 +4277,7 @@ function openPermissions() {
         Promise.resolve(job).then(openPermissions);
       };
     });
-    $('pback').onclick = openSettings;
-    $('done').onclick = closeSheet;
+    finishSheet('pback', openSettings);
   });
 }
 
