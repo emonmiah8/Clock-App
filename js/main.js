@@ -399,13 +399,18 @@ body.light .seg::before{background:#fff;box-shadow:0 1px 4px rgba(0,0,0,.18)}
 .dialwrap{isolation:isolate}
 .dialwrap::before{content:"";position:absolute;inset:.8%;border-radius:50%;z-index:-1;background:rgba(255,255,255,.05);-webkit-backdrop-filter:blur(20px) saturate(1.6) brightness(.6);backdrop-filter:blur(20px) saturate(1.6) brightness(.6);box-shadow:0 20px 40px rgba(0,0,0,.4)}
 
-/* ---- stopwatch: lap table. One centred box; every line and column share the same edges.
-   !important keeps older style.css rules for #laps from shifting it. ---- */
-#laps{display:block!important;position:relative!important;box-sizing:border-box!important;width:100%!important;max-width:520px!important;margin:18px auto 0!important;padding:0 60px 160px!important;left:auto!important;right:auto!important;transform:none!important;max-height:none!important;overflow:visible!important;text-align:center}
-.lhead,.lrow{display:grid;grid-template-columns: 1fr 1fr 1fr;align-items:center;column-gap:4px;box-sizing:border-box;width:100%;margin:0;text-align:center;white-space:nowrap;font-variant-numeric:tabular-nums}
-.lhead>span,.lrow>span{min-width:0;text-align:center}
-.lhead{padding:12px 0 14px;font-size:14px;letter-spacing:.02em;opacity:.55;border-bottom:1px solid var(--line)}
-.lrow{padding:17px 0;font-size:clamp(15px,4.7vw,20px);letter-spacing:-.01em}
+/* ---- stopwatch: lap table ----
+   Lap = left edge, Lap time = exact centre, Total = right edge.
+   The box is sized by the screen (vw) and centred with left:50%, so it does not
+   depend on the width of its parent. */
+#laps{display:block!important;position:relative!important;box-sizing:border-box!important;float:none!important;align-self:flex-start!important;left:50%!important;transform:translateX(-50%)!important;width:min(92vw,520px)!important;max-width:none!important;margin:18px 0 0!important;padding:0 0 160px!important;max-height:none!important;overflow:visible!important}
+.lhead,.lrow{display:grid;grid-template-columns:1fr auto 1fr;align-items:center;column-gap:8px;box-sizing:border-box;width:100%;margin:0;padding-left:6px;padding-right:6px;white-space:nowrap;font-variant-numeric:tabular-nums}
+.lhead>span,.lrow>span{min-width:0}
+.lhead>span:nth-child(1),.lrow>span:nth-child(1){text-align:left}
+.lhead>span:nth-child(2),.lrow>span:nth-child(2){text-align:center}
+.lhead>span:nth-child(3),.lrow>span:nth-child(3){text-align:right}
+.lhead{padding-top:12px;padding-bottom:14px;font-size:14px;letter-spacing:.02em;opacity:.55;border-bottom:1px solid var(--line)}
+.lrow{padding-top:17px;padding-bottom:17px;font-size:clamp(15px,4.5vw,19px);letter-spacing:-.01em}
 .lrow+.lrow{border-top:1px solid var(--line)}
 .lrow.fast>span:nth-child(-n+2){color:#ff6b61}
 .lrow.slow>span:nth-child(-n+2){color:#5b8ff0}
