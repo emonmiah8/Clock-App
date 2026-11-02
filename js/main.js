@@ -168,7 +168,7 @@ function setIcon(id, svg, label) {
 /* ==========================================================================
    3. INJECTED STYLES
    One design system: calm neutral surfaces, one orange accent.
-   App font: ClockNum / Poppins. Only the lap table uses the serif Newsreader.
+   App font: ClockNum (digits) / Poppins, used everywhere.
    ========================================================================== */
 // type of an upcoming day: name, colour. "Holidays" filter = every public holiday (any type)
 const UP_TYPES = {
@@ -177,7 +177,7 @@ const UP_TYPES = {
   c: ['Cultural', '#bf5af2'],
   r: ['Religious', '#30d158']
 };
-const FONT_URL = 'https://fonts.googleapis.com/css2?family=Poppins:wght@600;700;800&family=Newsreader:opsz,wght@6..72,500..700&family=Permanent+Marker&family=Playfair+Display:wght@800;900&display=swap';
+const FONT_URL = 'https://fonts.googleapis.com/css2?family=Poppins:wght@600;700;800&family=Permanent+Marker&family=Playfair+Display:wght@800;900&display=swap';
 
 function injectStyles() {
   if (navigator.onLine !== false && !document.querySelector('link[data-clock-font]')) {
@@ -399,14 +399,12 @@ body.light .seg::before{background:#fff;box-shadow:0 1px 4px rgba(0,0,0,.18)}
 .dialwrap{isolation:isolate}
 .dialwrap::before{content:"";position:absolute;inset:.8%;border-radius:50%;z-index:-1;background:rgba(255,255,255,.05);-webkit-backdrop-filter:blur(20px) saturate(1.6) brightness(.6);backdrop-filter:blur(20px) saturate(1.6) brightness(.6);box-shadow:0 20px 40px rgba(0,0,0,.4)}
 
-/* ---- stopwatch: lap table (only this block uses the serif font) ---- */
+/* ---- stopwatch: lap table, three centred columns, same font as the rest of the UI ---- */
 #laps{display:block;width:min(94vw,520px);margin:22px auto 0;padding:0 0 150px;max-height:none;overflow:visible}
-.lhead,.lrow{font-family:"Newsreader","Source Serif 4",Georgia,"Times New Roman",serif!important;font-variant-numeric:lining-nums tabular-nums;display:grid;grid-template-columns:1fr 1.5fr 1fr;align-items:center;column-gap:6px;padding:0 22px}
-.lhead{padding-top:14px;padding-bottom:16px;font-size:21px;font-weight:500!important;letter-spacing:0;color:rgba(var(--ink),.5);border-bottom:1px solid var(--line)}
-.lrow{position:relative;padding-top:21px;padding-bottom:21px;font-size:27px;font-weight:600!important;letter-spacing:-.005em}
-.lrow+.lrow::before{content:"";position:absolute;top:0;left:22px;right:22px;border-top:1px solid var(--line)}
-.lhead span:nth-child(2),.lrow span:nth-child(2){text-align:center}
-.lhead span:last-child,.lrow span:last-child{text-align:right}
+.lhead,.lrow{display:grid;grid-template-columns:repeat(3,1fr);align-items:center;justify-items:center;text-align:center;column-gap:8px;padding:0 14px;font-variant-numeric:tabular-nums}
+.lhead{padding-top:14px;padding-bottom:16px;font-size:15px;opacity:.55;border-bottom:1px solid var(--line)}
+.lrow{position:relative;padding-top:19px;padding-bottom:19px;font-size:21px;letter-spacing:-.01em}
+.lrow+.lrow::before{content:"";position:absolute;top:0;left:14px;right:14px;border-top:1px solid var(--line)}
 .lrow.fast span:nth-child(-n+2){color:#ff6b61}
 .lrow.slow span:nth-child(-n+2){color:#5b8ff0}
 
