@@ -107,7 +107,7 @@ const popOut = { cog: false, add: false };
 // Capacitor (Android app): native notifications. null in a normal browser.
 const CAP = window.Capacitor && Capacitor.isNativePlatform && Capacitor.isNativePlatform() && Capacitor.Plugins ? Capacitor.Plugins : null;
 const LN = CAP ? (CAP.LocalNotifications || null) : null;
-const CW = CAP && Capacitor.registerPlugin ? Capacitor.registerPlugin('ClockWidget') : null;   // native home-screen widget plugin
+const CW = window.Capacitor && Capacitor.registerPlugin && Capacitor.isNativePlatform && Capacitor.isNativePlatform() ? Capacitor.registerPlugin('ClockWidget') : null;   // native home-screen widget plugin
 
 const sheet = document.getElementById('sheet');
 const overlay = document.getElementById('overlay');
