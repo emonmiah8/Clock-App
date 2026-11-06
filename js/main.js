@@ -107,7 +107,7 @@ const popOut = { cog: false, add: false };
 // Capacitor (Android app): native notifications. null in a normal browser.
 const CAP = window.Capacitor && Capacitor.isNativePlatform && Capacitor.isNativePlatform() && Capacitor.Plugins ? Capacitor.Plugins : null;
 const LN = CAP ? (CAP.LocalNotifications || null) : null;
-const CW = window.Capacitor && Capacitor.registerPlugin && Capacitor.isNativePlatform && Capacitor.isNativePlatform() ? Capacitor.registerPlugin('ClockWidget') : null;   // native home-screen widget plugin
+const CW = CAP ? (CAP.ClockWidget || (Capacitor.registerPlugin ? Capacitor.registerPlugin('ClockWidget') : null)) : null;   // native home-screen widget plugin
 
 const sheet = document.getElementById('sheet');
 const overlay = document.getElementById('overlay');
@@ -1736,6 +1736,8 @@ function openPhoneSheet(id) {
     '<div class="sn mid" style="line-height:1.55;text-align:left">A web app cannot put a live widget on the launcher by itself. ' +
     'Install the Android APK to get real home screen widgets. Meanwhile, install this page to the home screen and use ' +
     '<b>Full screen</b> on any design to turn the phone into a desk clock.</div>' +
+    '<div class="sn mid">Debug: native=' + !!(window.Capacitor && Capacitor.isNativePlatform && Capacitor.isNativePlatform()) +
+    ', plugins=' + esc(window.Capacitor && Capacitor.Plugins ? Object.keys(Capacitor.Plugins).join(', ') : 'none') + '</div>' +
     (installEvt && !standalone ? '<div class="acts"><button class="bt pri" id="phInstall">Install app</button></div>' : '') +
     '<div class="acts"><button class="bt" id="done">Close</button></div>';
   openSheet(h, 'widget');
