@@ -30,7 +30,7 @@ jobs:
         run: |
           rm -rf www
           mkdir www
-          cp -r index.html css js manifest.json digits.ttf icon-192.png icon-512.png www/
+          cp -r index.html css js widget.html manifest.json digits.ttf icon-192.png icon-512.png www/
 
       - name: Sync Capacitor
         run: npx cap sync android
